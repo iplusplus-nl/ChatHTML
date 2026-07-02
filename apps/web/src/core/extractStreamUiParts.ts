@@ -2,7 +2,7 @@ import type { ExtractedStreamUiParts } from "./types";
 
 function extractBetween(
   raw: string,
-  tagName: "chat" | "streamui"
+  tagName: "sessiontitle" | "chat" | "streamui"
 ): { content: string; hasOpen: boolean; hasClose: boolean } {
   const lower = raw.toLowerCase();
   const openTag = `<${tagName}>`;
@@ -33,6 +33,8 @@ function extractBetween(
 
 function removeProtocolTags(raw: string): string {
   return raw
+    .replace(/<sessiontitle>[\s\S]*?<\/sessiontitle>/gi, "")
+    .replace(/<sessiontitle>[\s\S]*$/gi, "")
     .replace(/<\/?chat>/gi, "")
     .replace(/<streamui>[\s\S]*?<\/streamui>/gi, "")
     .replace(/<streamui>[\s\S]*$/gi, "")
@@ -40,6 +42,7 @@ function removeProtocolTags(raw: string): string {
 }
 
 export function extractStreamUiParts(raw: string): ExtractedStreamUiParts {
+  const sessionTitle = extractBetween(raw, "sessiontitle");
   const chat = extractBetween(raw, "chat");
   const streamui = extractBetween(raw, "streamui");
   const fallbackText = chat.hasOpen
@@ -47,8 +50,11 @@ export function extractStreamUiParts(raw: string): ExtractedStreamUiParts {
     : removeProtocolTags(raw);
 
   return {
+    sessionTitle: sessionTitle.content.trim(),
     chat: chat.content.trim(),
     streamui: streamui.content,
+    hasSessionTitle: sessionTitle.hasOpen,
+    sessionTitleComplete: sessionTitle.hasClose,
     hasChat: chat.hasOpen,
     hasStreamUi: streamui.hasOpen,
     streamUiComplete: streamui.hasClose,

@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleOpenRouterChat } from "./openrouter.js";
+import { handleRetrievalRequest } from "./retrieval.js";
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -14,6 +15,7 @@ const clientDist = path.join(projectRoot, "dist");
 dotenv.config({ path: path.join(workspaceRoot, ".env") });
 dotenv.config({ path: path.join(projectRoot, ".env"), override: true });
 
+const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 8787);
 
 app.disable("x-powered-by");
@@ -24,6 +26,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/chat", handleOpenRouterChat);
+app.post("/api/retrieve", handleRetrievalRequest);
 
 if (existsSync(clientDist)) {
   app.use(express.static(clientDist));
@@ -36,6 +39,6 @@ if (existsSync(clientDist)) {
   });
 }
 
-app.listen(port, () => {
-  console.log(`StreamUI proxy listening on http://127.0.0.1:${port}`);
+app.listen(port, host, () => {
+  console.log(`StreamUI proxy listening on http://${host}:${port}`);
 });

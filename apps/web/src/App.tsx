@@ -13,6 +13,10 @@ import { ChatInput } from "./components/ChatInput";
 import { ChatMessage } from "./components/ChatMessage";
 import { ChatShell } from "./components/ChatShell";
 import {
+  SessionSidebar,
+  type SessionListItem
+} from "./components/SessionSidebar";
+import {
   StreamImageAttachmentAdapter,
   completeAttachmentToImage,
   imageAttachmentToCompleteAttachment
@@ -28,6 +32,7 @@ type ClientMessage = {
   content: string;
   attachments?: ImageAttachment[];
   reasoning?: string;
+  sessionTitle?: string;
   rawStream?: string;
   hasStreamUi?: boolean;
   streamUiComplete?: boolean;
@@ -36,15 +41,313 @@ type ClientMessage = {
   error?: string;
 };
 
+type ChatSession = {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ClientMessage[];
+};
+
+type SessionState = {
+  sessions: ChatSession[];
+  activeSessionId: string;
+};
+
 type ChatStreamEvent = {
   type?: "content" | "reasoning";
   text?: string;
 };
 
 const initialMessages: ClientMessage[] = [];
+const SESSION_STORAGE_KEY = "streamui.sessions.v1";
+const ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
+const UNTITLED_SESSION = "New Session";
 
 function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createEmptySession(): ChatSession {
+  const now = Date.now();
+
+  return {
+    id: createId("session"),
+    title: UNTITLED_SESSION,
+    createdAt: now,
+    updatedAt: now,
+    messages: initialMessages
+  };
+}
+
+function compactText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function titleFromText(value: string): string {
+  const compact = compactText(value);
+  if (!compact) {
+    return UNTITLED_SESSION;
+  }
+
+  const withoutProtocol = compact
+    .replace(/\b(sessiontitle|chat|streamui)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const firstSentence = withoutProtocol.split(/(?<=[.!?。！？])\s+/u)[0] ?? withoutProtocol;
+  const words = firstSentence.split(/\s+/).filter(Boolean);
+  const shortTitle =
+    words.length > 7 ? words.slice(0, 7).join(" ") : firstSentence;
+
+  if (shortTitle.length <= 58) {
+    return shortTitle;
+  }
+
+  return `${shortTitle.slice(0, 57).trimEnd()}…`;
+}
+
+function assistantMessageToSessionTitle(message: ClientMessage): string {
+  if (message.role !== "assistant") {
+    return "";
+  }
+
+  if (message.sessionTitle?.trim()) {
+    return message.sessionTitle;
+  }
+
+  if (message.rawStream) {
+    const parts = extractStreamUiParts(message.rawStream);
+    if (parts.sessionTitleComplete && parts.sessionTitle.trim()) {
+      return parts.sessionTitle;
+    }
+  }
+
+  return "";
+}
+
+function summarizeSession(messages: ClientMessage[]): string {
+  const explicitTitle = messages
+    .map(assistantMessageToSessionTitle)
+    .find((text) => text.trim());
+  if (explicitTitle) {
+    return titleFromText(explicitTitle);
+  }
+
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  if (!firstUserMessage) {
+    return UNTITLED_SESSION;
+  }
+
+  if (firstUserMessage.content.trim()) {
+    return titleFromText(firstUserMessage.content);
+  }
+
+  if (firstUserMessage.attachments?.length) {
+    return "Image conversation";
+  }
+
+  return UNTITLED_SESSION;
+}
+
+function countUserPrompts(messages: ClientMessage[]): number {
+  return messages.filter((message) => message.role === "user").length;
+}
+
+function rebuildAssistantSnapshot(message: ClientMessage): ClientMessage {
+  if (message.role !== "assistant" || !message.rawStream) {
+    return message;
+  }
+
+  const parts = extractStreamUiParts(message.rawStream);
+  if (!parts.hasStreamUi || !parts.streamui.trim()) {
+    return {
+      ...message,
+      status: message.status === "streaming" ? "complete" : message.status
+    };
+  }
+
+  const renderer = createStreamingRenderer();
+  renderer.feed(parts.streamui);
+  renderer.complete();
+
+  return {
+    ...message,
+    snapshot: renderer.getSnapshot(),
+    hasStreamUi: true,
+    streamUiComplete: parts.streamUiComplete,
+    status: message.status === "streaming" ? "complete" : message.status
+  };
+}
+
+function normalizeStoredMessage(message: unknown): ClientMessage | null {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+
+  const input = message as Partial<ClientMessage>;
+  if (
+    typeof input.id !== "string" ||
+    (input.role !== "user" && input.role !== "assistant")
+  ) {
+    return null;
+  }
+
+  return rebuildAssistantSnapshot({
+    id: input.id,
+    role: input.role,
+    content: typeof input.content === "string" ? input.content : "",
+    attachments: Array.isArray(input.attachments) ? input.attachments : undefined,
+    reasoning: typeof input.reasoning === "string" ? input.reasoning : undefined,
+    sessionTitle:
+      typeof input.sessionTitle === "string" ? input.sessionTitle : undefined,
+    rawStream: typeof input.rawStream === "string" ? input.rawStream : undefined,
+    hasStreamUi: Boolean(input.hasStreamUi),
+    streamUiComplete: Boolean(input.streamUiComplete),
+    status:
+      input.status === "streaming"
+        ? "complete"
+        : input.status === "complete" || input.status === "error"
+          ? input.status
+          : input.role === "assistant"
+            ? "complete"
+            : undefined,
+    error: typeof input.error === "string" ? input.error : undefined
+  });
+}
+
+function normalizeStoredSession(session: unknown): ChatSession | null {
+  if (!session || typeof session !== "object") {
+    return null;
+  }
+
+  const input = session as Partial<ChatSession>;
+  if (typeof input.id !== "string") {
+    return null;
+  }
+
+  const messages = Array.isArray(input.messages)
+    ? input.messages
+        .map(normalizeStoredMessage)
+        .filter((message): message is ClientMessage => message !== null)
+    : [];
+  const now = Date.now();
+  const createdAt =
+    typeof input.createdAt === "number" && Number.isFinite(input.createdAt)
+      ? input.createdAt
+      : now;
+  const updatedAt =
+    typeof input.updatedAt === "number" && Number.isFinite(input.updatedAt)
+      ? input.updatedAt
+      : createdAt;
+  const summarizedTitle = summarizeSession(messages);
+
+  return {
+    id: input.id,
+    title:
+      summarizedTitle !== UNTITLED_SESSION
+        ? summarizedTitle
+        : typeof input.title === "string" && input.title.trim()
+        ? input.title.trim()
+        : UNTITLED_SESSION,
+    createdAt,
+    updatedAt,
+    messages
+  };
+}
+
+function loadSessionState(): SessionState {
+  if (typeof window === "undefined") {
+    const session = createEmptySession();
+    return { sessions: [session], activeSessionId: session.id };
+  }
+
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "[]"
+    ) as unknown;
+    const sessions = Array.isArray(parsed)
+      ? parsed
+          .map(normalizeStoredSession)
+          .filter((session): session is ChatSession => session !== null)
+      : [];
+
+    if (sessions.length) {
+      const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+      const storedActiveId = window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+      const activeSessionId = sorted.some((session) => session.id === storedActiveId)
+        ? storedActiveId ?? sorted[0].id
+        : sorted[0].id;
+
+      return { sessions: sorted, activeSessionId };
+    }
+  } catch {
+    // Fall through to a clean local session when stored data cannot be parsed.
+  }
+
+  const session = createEmptySession();
+  return { sessions: [session], activeSessionId: session.id };
+}
+
+function serializeMessage(message: ClientMessage): Omit<ClientMessage, "snapshot"> {
+  const { snapshot: _snapshot, ...serializable } = message;
+  return {
+    ...serializable,
+    status: serializable.status === "streaming" ? "complete" : serializable.status
+  };
+}
+
+function serializeSessions(sessions: ChatSession[]) {
+  return sessions.map((session) => ({
+    ...session,
+    messages: session.messages.map(serializeMessage)
+  }));
+}
+
+function sortSessions(sessions: ChatSession[]): ChatSession[] {
+  return [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function decodeHtmlEntities(value: string): string {
+  if (typeof document === "undefined") {
+    return value;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = value;
+  return textarea.value;
+}
+
+function htmlToTranscriptText(html: string): string {
+  return decodeHtmlEntities(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
+function getApiMessageContent(message: ClientMessage): string {
+  const visibleContent = message.content.trim();
+  if (visibleContent) {
+    return visibleContent;
+  }
+
+  if (message.role !== "assistant" || !message.rawStream) {
+    return message.content;
+  }
+
+  const parts = extractStreamUiParts(message.rawStream);
+  const artifactText = htmlToTranscriptText(parts.streamui || parts.fallbackText);
+  if (!artifactText) {
+    return "[Assistant produced a StreamUI artifact for this turn.]";
+  }
+
+  return `[Assistant produced a StreamUI artifact for this turn. Text summary: ${artifactText.slice(
+    0,
+    4_000
+  )}]`;
 }
 
 function toApiMessages(messages: ClientMessage[]) {
@@ -53,12 +356,12 @@ function toApiMessages(messages: ClientMessage[]) {
     .filter(
       (message) =>
         message.role === "user" ||
-        message.content.trim() ||
+        getApiMessageContent(message).trim() ||
         (message.attachments?.length ?? 0) > 0
     )
     .map((message) => ({
       role: message.role,
-      content: message.content,
+      content: getApiMessageContent(message),
       images: message.attachments?.map((attachment) => ({
         name: attachment.name,
         mimeType: attachment.mimeType,
@@ -232,61 +535,215 @@ function StreamThread({ messages, onRuntimeError }: StreamThreadProps) {
 }
 
 export default function App() {
-  const [messages, setMessages] = useState<ClientMessage[]>(initialMessages);
+  const [sessionState, setSessionState] = useState<SessionState>(loadSessionState);
   const [isSending, setIsSending] = useState(false);
+  const activeSession =
+    sessionState.sessions.find(
+      (session) => session.id === sessionState.activeSessionId
+    ) ?? sessionState.sessions[0];
+  const messages = activeSession?.messages ?? initialMessages;
   const messagesRef = useRef(messages);
+  const activeSessionIdRef = useRef(sessionState.activeSessionId);
   const isSendingRef = useRef(isSending);
   const renderersRef = useRef<Map<string, StreamingRenderer>>(new Map());
   const attachmentAdapter = useMemo(() => new StreamImageAttachmentAdapter(), []);
 
   useEffect(() => {
     messagesRef.current = messages;
-  }, [messages]);
+    activeSessionIdRef.current = sessionState.activeSessionId;
+  }, [messages, sessionState.activeSessionId]);
 
   useEffect(() => {
     isSendingRef.current = isSending;
   }, [isSending]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const timeout = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          SESSION_STORAGE_KEY,
+          JSON.stringify(serializeSessions(sessionState.sessions))
+        );
+        window.localStorage.setItem(
+          ACTIVE_SESSION_STORAGE_KEY,
+          sessionState.activeSessionId
+        );
+      } catch (error) {
+        console.warn("Could not save StreamUI sessions.", error);
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [sessionState]);
+
+  const updateActiveSessionMessages = useCallback(
+    (updater: (messages: ClientMessage[]) => ClientMessage[]) => {
+      setSessionState((current) => {
+        const now = Date.now();
+        const sessions = current.sessions.map((session) => {
+          if (session.id !== current.activeSessionId) {
+            return session;
+          }
+
+          const nextMessages = updater(session.messages);
+          return {
+            ...session,
+            title: summarizeSession(nextMessages),
+            updatedAt: now,
+            messages: nextMessages
+          };
+        });
+
+        return {
+          ...current,
+          sessions: sortSessions(sessions)
+        };
+      });
+    },
+    []
+  );
+
   const updateAssistant = useCallback(
     (id: string, patch: Partial<ClientMessage>) => {
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === id ? { ...message, ...patch } : message
-        )
-      );
+      setSessionState((current) => {
+        let didUpdate = false;
+        const now = Date.now();
+        const sessions = current.sessions.map((session) => {
+          let sessionChanged = false;
+          const messages = session.messages.map((message) => {
+            if (message.id !== id) {
+              return message;
+            }
+
+            didUpdate = true;
+            sessionChanged = true;
+            return { ...message, ...patch };
+          });
+
+          if (!sessionChanged) {
+            return session;
+          }
+
+          return {
+            ...session,
+            title: summarizeSession(messages),
+            updatedAt: now,
+            messages
+          };
+        });
+
+        return didUpdate
+          ? {
+              ...current,
+              sessions: sortSessions(sessions)
+            }
+          : current;
+      });
     },
     []
   );
 
   const handleRuntimeError = useCallback(
     (id: string, error: RenderError) => {
-      setMessages((current) =>
-        current.map((message) => {
-          if (message.id !== id || !message.snapshot) {
-            return message;
-          }
-
-          const exists = message.snapshot.errors.some(
-            (existing) =>
-              existing.kind === error.kind && existing.message === error.message
-          );
-
-          if (exists) {
-            return message;
-          }
-
-          return {
-            ...message,
-            snapshot: {
-              ...message.snapshot,
-              errors: [...message.snapshot.errors, error]
+      setSessionState((current) => {
+        let didUpdate = false;
+        const sessions = current.sessions.map((session) => {
+          let sessionChanged = false;
+          const messages = session.messages.map((message) => {
+            if (message.id !== id || !message.snapshot) {
+              return message;
             }
-          };
-        })
-      );
+
+            const exists = message.snapshot.errors.some(
+              (existing) =>
+                existing.kind === error.kind && existing.message === error.message
+            );
+
+            if (exists) {
+              return message;
+            }
+
+            didUpdate = true;
+            sessionChanged = true;
+            return {
+              ...message,
+              snapshot: {
+                ...message.snapshot,
+                errors: [...message.snapshot.errors, error]
+              }
+            };
+          });
+
+          return sessionChanged ? { ...session, messages } : session;
+        });
+
+        return didUpdate ? { ...current, sessions } : current;
+      });
     },
     []
   );
+
+  const handleNewSession = useCallback(() => {
+    if (isSendingRef.current) {
+      return;
+    }
+
+    setSessionState((current) => {
+      const active = current.sessions.find(
+        (session) => session.id === current.activeSessionId
+      );
+      if (active && active.messages.length === 0) {
+        return current;
+      }
+
+      const session = createEmptySession();
+      return {
+        sessions: [session, ...current.sessions],
+        activeSessionId: session.id
+      };
+    });
+  }, []);
+
+  const handleSelectSession = useCallback((id: string) => {
+    if (isSendingRef.current && id !== activeSessionIdRef.current) {
+      return;
+    }
+
+    setSessionState((current) =>
+      current.sessions.some((session) => session.id === id)
+        ? { ...current, activeSessionId: id }
+        : current
+    );
+  }, []);
+
+  const handleDeleteSession = useCallback((id: string) => {
+    if (isSendingRef.current) {
+      return;
+    }
+
+    setSessionState((current) => {
+      const remaining = current.sessions.filter((session) => session.id !== id);
+      if (!remaining.length) {
+        const session = createEmptySession();
+        return {
+          sessions: [session],
+          activeSessionId: session.id
+        };
+      }
+
+      const activeSessionId =
+        current.activeSessionId === id ? remaining[0].id : current.activeSessionId;
+
+      return {
+        sessions: remaining,
+        activeSessionId
+      };
+    });
+  }, []);
 
   const sendStreamUiRequest = useCallback(
     async (text: string, attachments: ImageAttachment[] = []) => {
@@ -317,7 +774,12 @@ export default function App() {
         updateAssistant(assistantId, { snapshot });
       });
 
-      setMessages((current) => [...current, userMessage, assistantMessage]);
+      const requestHistory = [...messagesRef.current, userMessage];
+      updateActiveSessionMessages((current) => [
+        ...current,
+        userMessage,
+        assistantMessage
+      ]);
       setIsSending(true);
 
       let raw = "";
@@ -336,9 +798,15 @@ export default function App() {
           }
         }
 
+        const sessionTitle =
+          parts.sessionTitleComplete && parts.sessionTitle.trim()
+            ? parts.sessionTitle
+            : undefined;
+
         updateAssistant(assistantId, {
           content: parts.chat || (!parts.hasStreamUi ? parts.fallbackText : ""),
           rawStream: raw,
+          ...(sessionTitle ? { sessionTitle } : {}),
           hasStreamUi: parts.hasStreamUi,
           streamUiComplete: parts.streamUiComplete
         });
@@ -372,7 +840,7 @@ export default function App() {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            messages: toApiMessages([...messagesRef.current, userMessage]),
+            messages: toApiMessages(requestHistory),
             canvas: getCanvasContext()
           })
         });
@@ -415,6 +883,9 @@ export default function App() {
         updateAssistant(assistantId, {
           content: finalParts.chat || finalParts.fallbackText,
           reasoning,
+          ...(finalParts.sessionTitleComplete && finalParts.sessionTitle.trim()
+            ? { sessionTitle: finalParts.sessionTitle }
+            : {}),
           rawStream: raw,
           hasStreamUi: finalParts.hasStreamUi && finalParts.streamui.trim().length > 0,
           streamUiComplete: finalParts.streamUiComplete,
@@ -436,7 +907,7 @@ export default function App() {
         setIsSending(false);
       }
     },
-    [updateAssistant]
+    [updateActiveSessionMessages, updateAssistant]
   );
 
   const handleNewMessage = useCallback(
@@ -460,9 +931,30 @@ export default function App() {
     }
   });
 
+  const sessionItems = useMemo<SessionListItem[]>(
+    () =>
+      sessionState.sessions.map((session) => ({
+        id: session.id,
+        title: session.title || summarizeSession(session.messages),
+        promptCount: countUserPrompts(session.messages)
+      })),
+    [sessionState.sessions]
+  );
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ChatShell>
+      <ChatShell
+        sidebar={
+          <SessionSidebar
+            sessions={sessionItems}
+            activeSessionId={sessionState.activeSessionId}
+            isSending={isSending}
+            onNewSession={handleNewSession}
+            onSelectSession={handleSelectSession}
+            onDeleteSession={handleDeleteSession}
+          />
+        }
+      >
         <StreamThread
           messages={messages}
           onRuntimeError={handleRuntimeError}

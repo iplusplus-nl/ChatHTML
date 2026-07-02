@@ -26,8 +26,11 @@ export type StreamingRenderer = {
 };
 
 export type ExtractedStreamUiParts = {
+  sessionTitle: string;
   chat: string;
   streamui: string;
+  hasSessionTitle: boolean;
+  sessionTitleComplete: boolean;
   hasChat: boolean;
   hasStreamUi: boolean;
   streamUiComplete: boolean;

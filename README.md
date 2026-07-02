@@ -26,11 +26,11 @@ Add your OpenRouter key to `.env`:
 OPENROUTER_API_KEY=your_openrouter_key_here
 OPENROUTER_MODEL=google/gemini-3.1-pro-preview
 OPENROUTER_REASONING_EFFORT=low
-OPENROUTER_WEB_TOOLS=true
-OPENROUTER_DATETIME_TOOL=true
+STREAMUI_RETRIEVAL=true
+STREAMUI_SEARCH_PROVIDER=auto
 ```
 
-The default model is `google/gemini-3.1-pro-preview` when `OPENROUTER_MODEL` is not set. Reasoning effort defaults to `low` to keep the reasoning disclosure responsive. OpenRouter server-side web search, web fetch, and datetime tools are still enabled by default through provider extra body options. The backend loads `.env` from the repo root and can also read an overriding `apps/web/.env`.
+The default model is `google/gemini-3.1-pro-preview` when `OPENROUTER_MODEL` is not set. Reasoning effort defaults to `low` to keep the reasoning disclosure responsive. StreamUI runs its own retrieval/browser pass before final generation when a request asks for URLs, online resources, or current information. The backend loads `.env` from the repo root and can also read an overriding `apps/web/.env`.
 
 ## Run
 
@@ -49,32 +49,37 @@ npm --workspace @streamui/web run dev
 npm --workspace @streamui/web run build
 ```
 
-## Web Tools and External Resources
+## Retrieval and External Resources
 
-Each chat request includes OpenRouter server tools by default:
+StreamUI has an independent server-side retrieval service. It can:
 
-- `openrouter:web_search` for current web search.
-- `openrouter:web_fetch` for reading a URL or PDF that the user asks about.
-- `openrouter:datetime` for current date/time grounding.
+- Search the web through Brave, Tavily, Serper, or a DuckDuckGo HTML fallback.
+- Fetch requested URLs with Node `fetch`, or optional Playwright when `STREAMUI_BROWSER_ENGINE=playwright` and Playwright is installed.
+- Parse HTML into structured page excerpts, links, source metadata, and image candidates.
+- Inject those sources into the final model generation while keeping the current streaming HTML protocol. The HTML artifact is still assistant content, not a tool result.
 
-The model decides when to call these tools. OpenRouter executes them server-side, so StreamUI keeps the existing streaming HTML protocol instead of implementing a separate client-side agent loop.
+The backend decides whether retrieval is needed with a conservative local planner. It looks for explicit URLs and search/current/resource cues, streams retrieval progress into the reasoning panel, and then starts the final OpenRouter stream with the collected context. You can also call `POST /api/retrieve` directly for debugging or future agent-loop work.
 
 The chat input also supports local image attachments. Images are converted to data URLs in the browser, lightly resized when needed, and sent to Vercel AI SDK as multimodal `image` message parts. Use a vision-capable model for image analysis, OCR, comparison, or image-informed visual responses.
 
 Useful `.env` controls:
 
 ```bash
-OPENROUTER_WEB_TOOLS=true
-OPENROUTER_DATETIME_TOOL=true
-OPENROUTER_WEB_SEARCH_ENGINE=auto
-OPENROUTER_WEB_SEARCH_MAX_RESULTS=5
-OPENROUTER_WEB_SEARCH_MAX_TOTAL_RESULTS=12
-OPENROUTER_WEB_SEARCH_CONTEXT_SIZE=medium
-OPENROUTER_WEB_FETCH_ENGINE=auto
-OPENROUTER_WEB_FETCH_MAX_USES=6
-OPENROUTER_WEB_FETCH_MAX_CONTENT_TOKENS=50000
-OPENROUTER_WEB_ALLOWED_DOMAINS=
-OPENROUTER_WEB_BLOCKED_DOMAINS=
+STREAMUI_RETRIEVAL=true
+STREAMUI_SEARCH_PROVIDER=auto
+STREAMUI_SEARCH_MAX_RESULTS=5
+STREAMUI_SEARCH_ALLOW_DUCKDUCKGO=true
+STREAMUI_RETRIEVAL_MAX_PAGES=4
+STREAMUI_PAGE_MAX_CHARS=10000
+STREAMUI_RETRIEVAL_CONTEXT_MAX_CHARS=32000
+STREAMUI_RETRIEVAL_TIMEOUT_MS=12000
+STREAMUI_BROWSER_ENGINE=fetch
+STREAMUI_RETRIEVAL_ALLOWED_DOMAINS=
+STREAMUI_RETRIEVAL_BLOCKED_DOMAINS=
+STREAMUI_RETRIEVAL_ALLOW_PRIVATE_URLS=false
+BRAVE_SEARCH_API_KEY=
+TAVILY_API_KEY=
+SERPER_API_KEY=
 ```
 
 The sandboxed artifact can use HTTPS images, media, iframes, stylesheets, scripts, and CORS-friendly runtime requests. The preview iframe includes `allow-same-origin` so browser extensions that expect a page origin can run without noisy `null`-origin sandbox errors. The renderer still flags browser storage, cookies, parent/top/opener access, permissions APIs, and `document.write`.
@@ -84,6 +89,7 @@ The sandboxed artifact can use HTTPS images, media, iframes, stylesheets, script
 For visual, interactive, frontend, educational, or UI-like prompts, the system prompt asks the model to stream:
 
 ```html
+<sessiontitle>Concise hidden history title</sessiontitle>
 <chat></chat>
 
 <streamui>
@@ -101,6 +107,7 @@ For visual, interactive, frontend, educational, or UI-like prompts, the system p
 
 The frontend parses the stream as it arrives:
 
+- `<sessiontitle>` is hidden from the artifact and saved as the history sidebar title.
 - `<chat>` is intentionally empty for visual responses; the HTML artifact is the assistant's primary expression.
 - `<streamui>` is fed chunk by chunk into `createStreamingRenderer`.
 - Reasoning events render in an assistant-ui-style reasoning disclosure while the assistant is working, then auto-collapse when generation finishes.
@@ -112,14 +119,14 @@ The frontend parses the stream as it arrives:
 - Script blocks are ignored while streaming and only allowed once the artifact is complete.
 - The artifact renders inside `sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"`.
 - The iframe CSP allows HTTPS external resources and runtime requests, while keeping objects, forms, and base URLs disabled.
-- Completed artifacts can be downloaded as a full-height PNG from the artifact toolbar.
 - A lightweight Raw stream disclosure keeps the original model output available for debugging.
 
 If no valid `<streamui>` block appears, the assistant response stays as a normal assistant message.
 
 ## Important Files
 
-- `apps/web/server/openrouter.ts` uses Vercel AI SDK to stream OpenRouter responses back to the frontend as NDJSON `reasoning` and `content` chunks.
+- `apps/web/server/openrouter.ts` runs retrieval before final generation, then uses Vercel AI SDK to stream OpenRouter responses back to the frontend as NDJSON `reasoning` and `content` chunks.
+- `apps/web/server/retrieval.ts` owns search providers, URL fetching, optional Playwright browsing, HTML parsing, image/link extraction, and structured retrieval context.
 - `apps/web/server/index.ts` runs the local Express proxy and loads repo-root `.env`.
 - `apps/web/src/server/systemPrompt.ts` defines the model behavior and output protocol.
 - `apps/web/src/App.tsx` wires assistant-ui's external-store runtime to the StreamUI request/render pipeline.
@@ -128,4 +135,4 @@ If no valid `<streamui>` block appears, the assistant response stays as a normal
 - `apps/web/src/core/createStreamingRenderer.ts` owns the renderer lifecycle.
 - `apps/web/src/core/completePartialHtml.ts` performs speculative HTML completion.
 - `apps/web/src/core/buildIframeDocument.ts` builds the sandboxed iframe document.
-- `apps/web/src/core/extractStreamUiParts.ts` parses `<chat>` and `<streamui>` from the assistant stream.
+- `apps/web/src/core/extractStreamUiParts.ts` parses `<sessiontitle>`, `<chat>`, and `<streamui>` from the assistant stream.

@@ -2,18 +2,13 @@ import type { Request, Response } from "express";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { streamText, type ModelMessage, type TextStreamPart } from "ai";
 import { SYSTEM_PROMPT } from "./systemPrompt.js";
+import {
+  buildRetrievalContextPrompt,
+  collectRetrievalContext
+} from "./retrieval.js";
 
 const DEFAULT_MODEL = "google/gemini-3.1-pro-preview";
 const DEFAULT_REASONING_EFFORT: OpenRouterReasoningEffort = "low";
-const DEFAULT_WEB_TOOLS_ENABLED = true;
-const DEFAULT_DATETIME_TOOL_ENABLED = true;
-const DEFAULT_WEB_SEARCH_ENGINE = "auto";
-const DEFAULT_WEB_SEARCH_MAX_RESULTS = 5;
-const DEFAULT_WEB_SEARCH_MAX_TOTAL_RESULTS = 12;
-const DEFAULT_WEB_SEARCH_CONTEXT_SIZE = "medium";
-const DEFAULT_WEB_FETCH_ENGINE = "auto";
-const DEFAULT_WEB_FETCH_MAX_USES = 6;
-const DEFAULT_WEB_FETCH_MAX_CONTENT_TOKENS = 50_000;
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_IMAGE_DATA_URL_LENGTH = 3_000_000;
 
@@ -54,38 +49,11 @@ type StreamEvent = {
 };
 
 type ToolStreamState = {
-  seenToolLabels: Set<string>;
   contentChars: number;
   contentEvents: number;
   reasoningChars: number;
   reasoningEvents: number;
 };
-
-type OpenRouterServerTool =
-  | {
-      type: "openrouter:web_search";
-      parameters: {
-        engine: string;
-        max_results: number;
-        max_total_results: number;
-        search_context_size: string;
-        allowed_domains?: string[];
-        excluded_domains?: string[];
-      };
-    }
-  | {
-      type: "openrouter:web_fetch";
-      parameters: {
-        engine: string;
-        max_uses: number;
-        max_content_tokens: number;
-        allowed_domains?: string[];
-        blocked_domains?: string[];
-      };
-    }
-  | {
-      type: "openrouter:datetime";
-    };
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -93,71 +61,6 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
   }
 
   return Math.round(Math.min(max, Math.max(min, value)));
-}
-
-function clampInteger(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number
-) {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number.parseInt(value, 10)
-        : Number.NaN;
-
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.round(Math.min(max, Math.max(min, parsed)));
-}
-
-function normalizeBoolean(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value !== "string") {
-    return fallback;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) {
-    return true;
-  }
-  if (["0", "false", "no", "off"].includes(normalized)) {
-    return false;
-  }
-
-  return fallback;
-}
-
-function normalizeChoice<T extends string>(
-  value: unknown,
-  fallback: T,
-  allowed: readonly T[]
-): T {
-  if (typeof value === "string" && allowed.includes(value.trim() as T)) {
-    return value.trim() as T;
-  }
-
-  return fallback;
-}
-
-function normalizeDomainList(value: unknown): string[] | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const domains = value
-    .split(",")
-    .map((domain) => domain.trim())
-    .filter(Boolean);
-
-  return domains.length ? domains : undefined;
 }
 
 function normalizeUploadedImages(input: unknown): ClientImageAttachment[] {
@@ -188,91 +91,6 @@ function normalizeUploadedImages(input: unknown): ClientImageAttachment[] {
         )
       );
     });
-}
-
-function buildOpenRouterTools(): OpenRouterServerTool[] | undefined {
-  const webToolsEnabled = normalizeBoolean(
-    process.env.OPENROUTER_WEB_TOOLS,
-    DEFAULT_WEB_TOOLS_ENABLED
-  );
-  const datetimeToolEnabled = normalizeBoolean(
-    process.env.OPENROUTER_DATETIME_TOOL,
-    DEFAULT_DATETIME_TOOL_ENABLED
-  );
-  const tools: OpenRouterServerTool[] = [];
-
-  if (webToolsEnabled) {
-    const allowedDomains = normalizeDomainList(
-      process.env.OPENROUTER_WEB_ALLOWED_DOMAINS
-    );
-    const blockedDomains = normalizeDomainList(
-      process.env.OPENROUTER_WEB_BLOCKED_DOMAINS
-    );
-    const searchEngine = normalizeChoice(
-      process.env.OPENROUTER_WEB_SEARCH_ENGINE,
-      DEFAULT_WEB_SEARCH_ENGINE,
-      ["auto", "native", "exa", "firecrawl", "parallel", "perplexity"] as const
-    );
-    const fetchEngine = normalizeChoice(
-      process.env.OPENROUTER_WEB_FETCH_ENGINE,
-      DEFAULT_WEB_FETCH_ENGINE,
-      ["auto", "native", "exa", "openrouter", "firecrawl", "parallel"] as const
-    );
-    const searchContextSize = normalizeChoice(
-      process.env.OPENROUTER_WEB_SEARCH_CONTEXT_SIZE,
-      DEFAULT_WEB_SEARCH_CONTEXT_SIZE,
-      ["low", "medium", "high"] as const
-    );
-
-    tools.push({
-      type: "openrouter:web_search",
-      parameters: {
-        engine: searchEngine,
-        max_results: clampInteger(
-          process.env.OPENROUTER_WEB_SEARCH_MAX_RESULTS,
-          DEFAULT_WEB_SEARCH_MAX_RESULTS,
-          1,
-          25
-        ),
-        max_total_results: clampInteger(
-          process.env.OPENROUTER_WEB_SEARCH_MAX_TOTAL_RESULTS,
-          DEFAULT_WEB_SEARCH_MAX_TOTAL_RESULTS,
-          1,
-          100
-        ),
-        search_context_size: searchContextSize,
-        ...(allowedDomains ? { allowed_domains: allowedDomains } : {}),
-        ...(blockedDomains ? { excluded_domains: blockedDomains } : {})
-      }
-    });
-
-    tools.push({
-      type: "openrouter:web_fetch",
-      parameters: {
-        engine: fetchEngine,
-        max_uses: clampInteger(
-          process.env.OPENROUTER_WEB_FETCH_MAX_USES,
-          DEFAULT_WEB_FETCH_MAX_USES,
-          1,
-          50
-        ),
-        max_content_tokens: clampInteger(
-          process.env.OPENROUTER_WEB_FETCH_MAX_CONTENT_TOKENS,
-          DEFAULT_WEB_FETCH_MAX_CONTENT_TOKENS,
-          1_000,
-          200_000
-        ),
-        ...(allowedDomains ? { allowed_domains: allowedDomains } : {}),
-        ...(blockedDomains ? { blocked_domains: blockedDomains } : {})
-      }
-    });
-  }
-
-  if (datetimeToolEnabled) {
-    tools.push({ type: "openrouter:datetime" });
-  }
-
-  return tools.length ? tools : undefined;
 }
 
 function normalizeCanvasContext(input: unknown): CanvasContext {
@@ -327,14 +145,14 @@ function buildCanvasContextPrompt(canvas: CanvasContext): string {
 - Keep the design polished: coherent palette, strong typographic hierarchy, balanced negative space, clear focal point, and details that reward inspection without becoming clutter.
 - Keep the artifact focused: choose a strong visual idea and avoid repetitive filler, giant SVG paths, large embedded data, or exhaustive code unless the user explicitly asks for it.
 - The user may attach images. Inspect uploaded images directly and treat them as first-class context for analysis, OCR, comparison, critique, or visual redesign requests.
-- When useful, combine observations from uploaded images with external web sources in one coherent HTML artifact.
-- You can use server-side web_search, web_fetch, and datetime tools when the user asks for a page, URL, external resource, or current information.
-- If you use web information, render source links inside the HTML. Prefer concrete links and citations over vague "from the web" language.
+- When useful, combine observations from uploaded images with injected retrieval sources in one coherent HTML artifact.
+- If independent StreamUI retrieval context is provided, use it for URLs, external resources, current information, source images, and page details.
+- If you use retrieval information, render source links inside the HTML. Prefer concrete links and citations over vague "from the web" language.
 - Prefer real external images, media, documents, demos, datasets, official pages, and primary references over invented placeholders when they improve the response.
-- For visual or research-like requests, collect several complementary sources or resource types and synthesize them into one coherent HTML artifact.
+- For visual or research-like requests, synthesize the provided complementary sources or resource types into one coherent HTML artifact.
 - When embedding external media, use direct HTTPS URLs, meaningful alt text, lazy loading when possible, captions, and nearby source links.
 - The iframe may use HTTPS images, media, links, stylesheets, scripts, and CORS-friendly fetches when they directly help the user's request.
-- Prefer server-side web_fetch for reading web pages. Runtime fetch cannot read most ordinary pages because of browser CORS.
+- Prefer injected retrieval excerpts for reading web pages. Runtime fetch cannot read most ordinary pages because of browser CORS.
 - For custom visuals, make progress visible while streaming by alternating small style islands and matching visible HTML.
 - After <streamui>, emit visible HTML quickly. If custom CSS is needed, use one tiny <style> block, then immediately emit the matching HTML.
 - Keep each custom style island around 600 characters or less. Do not output one huge global CSS block before the visible canvas.
@@ -413,58 +231,6 @@ function writeStreamEvent(
   res.write(`${JSON.stringify(event)}\n`);
 }
 
-function describeToolCall(value: unknown): string {
-  if (!value || typeof value !== "object") {
-    return "";
-  }
-
-  const toolCall = value as {
-    type?: unknown;
-    name?: unknown;
-    toolName?: unknown;
-    function?: {
-      name?: unknown;
-    };
-  };
-  const rawName =
-    typeof toolCall.function?.name === "string"
-      ? toolCall.function.name
-      : typeof toolCall.toolName === "string"
-        ? toolCall.toolName
-        : typeof toolCall.name === "string"
-          ? toolCall.name
-          : typeof toolCall.type === "string"
-            ? toolCall.type
-            : "";
-  const name = rawName.toLowerCase();
-
-  if (name.includes("web_search")) {
-    return "Searching the web...";
-  }
-  if (name.includes("web_fetch")) {
-    return "Fetching the page...";
-  }
-  if (name.includes("datetime")) {
-    return "Checking the current time...";
-  }
-
-  return rawName ? `Using ${rawName}...` : "";
-}
-
-function writeToolCallHint(
-  value: unknown,
-  state: ToolStreamState,
-  res: Response
-): void {
-  const label = describeToolCall(value);
-  if (!label || state.seenToolLabels.has(label)) {
-    return;
-  }
-
-  state.seenToolLabels.add(label);
-  writeStreamEvent(res, { type: "reasoning", text: label }, state);
-}
-
 function normalizeReasoningEffort(value: unknown): OpenRouterReasoningEffort {
   const allowed = new Set<OpenRouterReasoningEffort>([
     "minimal",
@@ -505,7 +271,6 @@ function writeAiSdkStreamPart(
   state: ToolStreamState
 ): void {
   if (part.type === "tool-input-start" || part.type === "tool-call") {
-    writeToolCallHint(part, state, res);
     return;
   }
 
@@ -565,13 +330,38 @@ export async function handleOpenRouterChat(
   const reasoningEffort = normalizeReasoningEffort(
     body.reasoningEffort ?? process.env.OPENROUTER_REASONING_EFFORT
   );
-  const tools = buildOpenRouterTools();
   const requestId = Math.random().toString(36).slice(2, 9);
   const startedAt = Date.now();
 
   try {
     console.info(
       `[chat:${requestId}] start model=${model} messages=${messages.length} reasoning=${reasoningEffort}`
+    );
+
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+
+    const toolStreamState: ToolStreamState = {
+      contentChars: 0,
+      contentEvents: 0,
+      reasoningChars: 0,
+      reasoningEvents: 0
+    };
+
+    const retrievalContext = await collectRetrievalContext(
+      messages.map((message) => ({
+        role: message.role,
+        content: message.content
+      })),
+      {
+        onStatus: (text) => {
+          writeStreamEvent(res, { type: "reasoning", text }, toolStreamState);
+        }
+      }
     );
 
     const openrouter = createOpenRouter({
@@ -589,30 +379,16 @@ export async function handleOpenRouterChat(
             effort: reasoningEffort,
             exclude: false,
             enabled: true
-          },
-          ...(tools ? { tools } : {})
+          }
         }
       }),
-      system: [SYSTEM_PROMPT, buildCanvasContextPrompt(canvasContext)].join(
-        "\n\n"
-      ),
+      system: [
+        SYSTEM_PROMPT,
+        buildCanvasContextPrompt(canvasContext),
+        buildRetrievalContextPrompt(retrievalContext)
+      ].join("\n\n"),
       messages: messages.map(toModelMessage)
     });
-
-    res.writeHead(200, {
-      "Content-Type": "application/x-ndjson; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no"
-    });
-
-    const toolStreamState: ToolStreamState = {
-      seenToolLabels: new Set(),
-      contentChars: 0,
-      contentEvents: 0,
-      reasoningChars: 0,
-      reasoningEvents: 0
-    };
 
     for await (const part of result.fullStream) {
       writeAiSdkStreamPart(part, res, toolStreamState);
@@ -620,7 +396,7 @@ export async function handleOpenRouterChat(
 
     res.end();
     console.info(
-      `[chat:${requestId}] complete duration_ms=${Date.now() - startedAt} content_chars=${toolStreamState.contentChars} content_events=${toolStreamState.contentEvents} reasoning_chars=${toolStreamState.reasoningChars} reasoning_events=${toolStreamState.reasoningEvents}`
+      `[chat:${requestId}] complete duration_ms=${Date.now() - startedAt} retrieval_used=${retrievalContext.used} retrieval_sources=${retrievalContext.sources.length} content_chars=${toolStreamState.contentChars} content_events=${toolStreamState.contentEvents} reasoning_chars=${toolStreamState.reasoningChars} reasoning_events=${toolStreamState.reasoningEvents}`
     );
   } catch (error) {
     const message =
