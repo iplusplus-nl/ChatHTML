@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleOpenRouterChat } from "./openrouter.js";
 import { handleRetrievalRequest } from "./retrieval.js";
+import { handleGetSessions, handleSaveSessions } from "./sessions.js";
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,8 @@ app.get("/api/health", (_req, res) => {
 
 app.post("/api/chat", handleOpenRouterChat);
 app.post("/api/retrieve", handleRetrievalRequest);
+app.get("/api/sessions", handleGetSessions);
+app.put("/api/sessions", handleSaveSessions);
 
 if (existsSync(clientDist)) {
   app.use(express.static(clientDist));

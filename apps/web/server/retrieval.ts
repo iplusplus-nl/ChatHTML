@@ -1356,26 +1356,6 @@ function isDecorativeImage(image: RetrievedImage): boolean {
   );
 }
 
-function upgradeWikimediaThumbnailUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    if (
-      !matchesDomain(parsed.hostname.toLowerCase(), "upload.wikimedia.org") ||
-      !parsed.pathname.includes("/thumb/")
-    ) {
-      return url;
-    }
-
-    parsed.pathname = parsed.pathname.replace(
-      /\/\d+px-([^/]+)$/i,
-      "/1024px-$1"
-    );
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
-
 function imageDedupeKey(url: string): string {
   try {
     const parsed = new URL(url);
@@ -1444,7 +1424,7 @@ function formatImageCandidates(
         continue;
       }
 
-      const imageUrl = upgradeWikimediaThumbnailUrl(image.url);
+      const imageUrl = image.url;
       const key = imageDedupeKey(imageUrl);
       if (seen.has(key)) {
         continue;

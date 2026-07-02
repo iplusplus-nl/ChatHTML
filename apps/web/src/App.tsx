@@ -61,8 +61,8 @@ type ChatStreamEvent = {
 };
 
 const initialMessages: ClientMessage[] = [];
-const SESSION_STORAGE_KEY = "streamui.sessions.v1";
-const ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
+const LEGACY_SESSION_STORAGE_KEY = "streamui.sessions.v1";
+const LEGACY_ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
 const THEME_STORAGE_KEY = "streamui.theme.v1";
 const UNTITLED_SESSION = "New Session";
 
@@ -90,6 +90,11 @@ function createEmptySession(): ChatSession {
     updatedAt: now,
     messages: initialMessages
   };
+}
+
+function createInitialSessionState(): SessionState {
+  const session = createEmptySession();
+  return { sessions: [session], activeSessionId: session.id };
 }
 
 function compactText(value: string): string {
@@ -267,15 +272,43 @@ function normalizeStoredSession(session: unknown): ChatSession | null {
   };
 }
 
-function loadSessionState(): SessionState {
+function normalizeStoredSessionState(input: unknown): SessionState {
+  if (!input || typeof input !== "object") {
+    return createInitialSessionState();
+  }
+
+  const state = input as Partial<SessionState>;
+  const sessions = Array.isArray(state.sessions)
+    ? state.sessions
+        .map(normalizeStoredSession)
+        .filter((session): session is ChatSession => session !== null)
+    : [];
+
+  if (!sessions.length) {
+    return createInitialSessionState();
+  }
+
+  const sorted = sortSessions(sessions);
+  const activeSessionId =
+    typeof state.activeSessionId === "string" &&
+    sorted.some((session) => session.id === state.activeSessionId)
+      ? state.activeSessionId
+      : sorted[0].id;
+
+  return {
+    sessions: sorted,
+    activeSessionId
+  };
+}
+
+function loadLegacyLocalSessionState(): SessionState | null {
   if (typeof window === "undefined") {
-    const session = createEmptySession();
-    return { sessions: [session], activeSessionId: session.id };
+    return null;
   }
 
   try {
     const parsed = JSON.parse(
-      window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "[]"
+      window.localStorage.getItem(LEGACY_SESSION_STORAGE_KEY) ?? "[]"
     ) as unknown;
     const sessions = Array.isArray(parsed)
       ? parsed
@@ -283,21 +316,35 @@ function loadSessionState(): SessionState {
           .filter((session): session is ChatSession => session !== null)
       : [];
 
-    if (sessions.length) {
-      const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
-      const storedActiveId = window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
-      const activeSessionId = sorted.some((session) => session.id === storedActiveId)
-        ? storedActiveId ?? sorted[0].id
-        : sorted[0].id;
-
-      return { sessions: sorted, activeSessionId };
+    if (!sessions.length) {
+      return null;
     }
+
+    const sorted = sortSessions(sessions);
+    const storedActiveId = window.localStorage.getItem(
+      LEGACY_ACTIVE_SESSION_STORAGE_KEY
+    );
+    const activeSessionId = sorted.some((session) => session.id === storedActiveId)
+      ? storedActiveId ?? sorted[0].id
+      : sorted[0].id;
+
+    return { sessions: sorted, activeSessionId };
   } catch {
-    // Fall through to a clean local session when stored data cannot be parsed.
+    return null;
+  }
+}
+
+function hasPersistedMessages(state: SessionState): boolean {
+  return state.sessions.some((session) => session.messages.length > 0);
+}
+
+function clearLegacyLocalSessions(): void {
+  if (typeof window === "undefined") {
+    return;
   }
 
-  const session = createEmptySession();
-  return { sessions: [session], activeSessionId: session.id };
+  window.localStorage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+  window.localStorage.removeItem(LEGACY_ACTIVE_SESSION_STORAGE_KEY);
 }
 
 function serializeMessage(message: ClientMessage): Omit<ClientMessage, "snapshot"> {
@@ -547,7 +594,9 @@ function StreamThread({ messages, onRuntimeError }: StreamThreadProps) {
 }
 
 export default function App() {
-  const [sessionState, setSessionState] = useState<SessionState>(loadSessionState);
+  const [sessionState, setSessionState] =
+    useState<SessionState>(createInitialSessionState);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode);
   const [isSending, setIsSending] = useState(false);
   const activeSession =
@@ -558,6 +607,7 @@ export default function App() {
   const messagesRef = useRef(messages);
   const activeSessionIdRef = useRef(sessionState.activeSessionId);
   const isSendingRef = useRef(isSending);
+  const saveAbortRef = useRef<AbortController | null>(null);
   const renderersRef = useRef<Map<string, StreamingRenderer>>(new Map());
   const attachmentAdapter = useMemo(() => new StreamImageAttachmentAdapter(), []);
 
@@ -584,23 +634,78 @@ export default function App() {
       return undefined;
     }
 
+    let cancelled = false;
+
+    fetch("/api/sessions")
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Session load failed with HTTP ${response.status}.`);
+        }
+        return response.json() as Promise<unknown>;
+      })
+      .then((data) => {
+        if (!cancelled) {
+          const serverState = normalizeStoredSessionState(data);
+          const legacyState = loadLegacyLocalSessionState();
+          setSessionState(
+            !hasPersistedMessages(serverState) &&
+              legacyState &&
+              hasPersistedMessages(legacyState)
+              ? legacyState
+              : serverState
+          );
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("Could not load StreamUI sessions.", error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSessionsLoaded(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !sessionsLoaded) {
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    saveAbortRef.current?.abort();
+    saveAbortRef.current = controller;
+
     const timeout = window.setTimeout(() => {
-      try {
-        window.localStorage.setItem(
-          SESSION_STORAGE_KEY,
-          JSON.stringify(serializeSessions(sessionState.sessions))
-        );
-        window.localStorage.setItem(
-          ACTIVE_SESSION_STORAGE_KEY,
-          sessionState.activeSessionId
-        );
-      } catch (error) {
-        console.warn("Could not save StreamUI sessions.", error);
-      }
+      fetch("/api/sessions", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          sessions: serializeSessions(sessionState.sessions),
+          activeSessionId: sessionState.activeSessionId
+        })
+      })
+        .then(() => clearLegacyLocalSessions())
+        .catch((error) => {
+          if ((error as { name?: unknown }).name !== "AbortError") {
+            console.warn("Could not save StreamUI sessions.", error);
+          }
+        });
     }, 350);
 
-    return () => window.clearTimeout(timeout);
-  }, [sessionState]);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [sessionState, sessionsLoaded]);
 
   const updateActiveSessionMessages = useCallback(
     (updater: (messages: ClientMessage[]) => ClientMessage[]) => {
