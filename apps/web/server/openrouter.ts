@@ -151,7 +151,7 @@ function buildCanvasContextPrompt(canvas: CanvasContext): string {
 - Prefer real external images, media, documents, demos, datasets, official pages, and primary references over invented placeholders when they improve the response.
 - For visual or research-like requests, synthesize the provided complementary sources or resource types into one coherent HTML artifact.
 - When embedding external media, use direct HTTPS URLs, meaningful alt text, lazy loading when possible, captions, and nearby source links.
-- For gallery, photo, picture, image, wallpaper, or visual-reference requests, real imagery is required. Use retrieved direct HTTPS image URLs, do not invent image URLs, and include source links.
+- For gallery, photo, picture, image, wallpaper, or visual-reference requests, real imagery is required. Use "Verified image URLs" when provided, copy those URLs exactly into <img src>, do not modify Wikimedia thumb sizes or invent resized variants, and include source links.
 - If retrieval provides too few direct image URLs for the requested gallery, say so inside the artifact and show source links instead of rendering broken image tags.
 - The iframe may use HTTPS images, media, links, stylesheets, scripts, and CORS-friendly fetches when they directly help the user's request.
 - Prefer injected retrieval excerpts for reading web pages. Runtime fetch cannot read most ordinary pages because of browser CORS.

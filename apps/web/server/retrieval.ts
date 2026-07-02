@@ -17,6 +17,8 @@ const DEFAULT_MAX_LINKS_PER_PAGE = 24;
 const DEFAULT_MAX_IMAGES_PER_PAGE = 18;
 const USER_AGENT =
   "StreamUI-Retrieval/0.1 (+https://localhost; local development retrieval service)";
+const IMAGE_USER_AGENT =
+  "Mozilla/5.0 (compatible; StreamUI-Retrieval/0.1; +https://stream.aiz.ink)";
 
 type SearchProvider = "auto" | "brave" | "tavily" | "serper" | "duckduckgo" | "none";
 type BrowserEngine = "fetch" | "playwright";
@@ -66,7 +68,15 @@ export type RetrievalContext = {
   queries: string[];
   urls: string[];
   sources: RetrievalSource[];
+  verifiedImages: VerifiedImage[];
   notes: string[];
+};
+
+type VerifiedImage = RetrievedImage & {
+  sourceId: number;
+  sourceTitle?: string;
+  sourceUrl: string;
+  contentType?: string;
 };
 
 type SearchResult = {
@@ -1210,6 +1220,7 @@ export async function collectRetrievalContext(
     queries: [],
     urls: directUrls,
     sources: [],
+    verifiedImages: [],
     notes
   };
 
@@ -1262,7 +1273,18 @@ export async function collectRetrievalContext(
   const searchOnlySources = searchResults
     .filter((result) => !fetchedKeys.has(sourceKey(result.url)))
     .map(toSearchSource);
-  const sources = assignSourceIds([...pageSources, ...searchOnlySources]);
+  let sources = assignSourceIds([...pageSources, ...searchOnlySources]);
+  let verifiedImages: VerifiedImage[] = [];
+  if (asksForVisualResources(text)) {
+    verifiedImages = await verifyImageCandidates(
+      sources,
+      queries,
+      config,
+      notes,
+      options.onStatus
+    );
+    sources = sourcesWithVerifiedImages(sources, verifiedImages);
+  }
 
   return {
     enabled: true,
@@ -1276,6 +1298,7 @@ export async function collectRetrievalContext(
     queries,
     urls: urlsToFetch,
     sources,
+    verifiedImages,
     notes
   };
 }
@@ -1346,7 +1369,7 @@ function isDecorativeImage(image: RetrievedImage): boolean {
   const haystack = decodeSearchText(`${image.url} ${image.alt ?? ""}`);
   return (
     /\.(?:svg|ico)(?:[?#]|$)/i.test(image.url) ||
-    /\b(?:avatar|badge|blank|button|copyright|favicon|icon|logo|placeholder|sprite|wordmark)\b/i.test(
+    /\b(?:avatar|badge|blank|button|copyright|creative commons|favicon|icon|licen[cs]e|logo|placeholder|rights reserved|some rights reserved|sprite|wordmark)\b/i.test(
       haystack
     ) ||
     (typeof image.width === "number" &&
@@ -1410,13 +1433,20 @@ function imageRelevanceScore(
   return imageMatches * 10 + sourceMatches;
 }
 
-function formatImageCandidates(
+type ImageCandidate = {
+  image: RetrievedImage;
+  source: RetrievalSource;
+  order: number;
+  score: number;
+};
+
+function collectImageCandidates(
   sources: RetrievalSource[],
   queries: string[]
-): string[] {
+): ImageCandidate[] {
   const seen = new Set<string>();
   const terms = imageQueryTerms(queries);
-  const candidates: Array<{ line: string; order: number; score: number }> = [];
+  const candidates: ImageCandidate[] = [];
 
   for (const source of sources) {
     for (const image of source.images) {
@@ -1431,9 +1461,12 @@ function formatImageCandidates(
       }
 
       seen.add(key);
-      const alt = image.alt ? ` (${image.alt})` : "";
       candidates.push({
-        line: `  - ${imageUrl}${alt} [source ${source.id}]`,
+        image: {
+          ...image,
+          url: imageUrl
+        },
+        source,
         order: candidates.length,
         score: imageRelevanceScore(image, source, terms)
       });
@@ -1442,7 +1475,197 @@ function formatImageCandidates(
 
   candidates.sort((a, b) => b.score - a.score || a.order - b.order);
 
-  return candidates.slice(0, 24).map((candidate) => candidate.line);
+  return candidates;
+}
+
+function formatVerifiedImages(images: VerifiedImage[]): string[] {
+  return images.slice(0, 24).map((image) => {
+    const alt = image.alt ? ` (${image.alt})` : "";
+    const sourceTitle = image.sourceTitle ? `, ${image.sourceTitle}` : "";
+    const contentType = image.contentType ? `, ${image.contentType}` : "";
+    return `  - ${image.url}${alt} [source ${image.sourceId}${sourceTitle}${contentType}]`;
+  });
+}
+
+function wikimediaOriginalImageUrl(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    if (
+      !matchesDomain(parsed.hostname.toLowerCase(), "upload.wikimedia.org") ||
+      !parsed.pathname.includes("/thumb/")
+    ) {
+      return undefined;
+    }
+
+    const withoutThumb = parsed.pathname.replace("/thumb/", "/");
+    const lastSlash = withoutThumb.lastIndexOf("/");
+    if (lastSlash <= 0) {
+      return undefined;
+    }
+
+    parsed.pathname = withoutThumb.slice(0, lastSlash);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function imageUrlVariants(url: string): string[] {
+  return uniqueStrings([wikimediaOriginalImageUrl(url) ?? "", url]);
+}
+
+function responseLooksLikeImage(response: globalThis.Response): {
+  ok: boolean;
+  contentType?: string;
+} {
+  const contentType = response.headers.get("content-type") ?? undefined;
+  return {
+    ok: response.ok && Boolean(contentType?.toLowerCase().startsWith("image/")),
+    contentType
+  };
+}
+
+async function validateImageUrl(
+  url: string,
+  config: RetrievalConfig
+): Promise<{ url: string; contentType?: string } | null> {
+  await assertPublicUrl(url, config);
+
+  const headers = {
+    Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    "User-Agent": IMAGE_USER_AGENT
+  };
+  const timeoutMs = Math.min(config.timeoutMs, 8_000);
+
+  try {
+    const head = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers
+    });
+    const result = responseLooksLikeImage(head);
+    if (result.ok) {
+      return { url: head.url || url, contentType: result.contentType };
+    }
+  } catch {
+    // Some image hosts do not support HEAD. Fall back to a tiny ranged GET.
+  }
+
+  const response = await fetch(url, {
+    method: "GET",
+    redirect: "follow",
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      ...headers,
+      Range: "bytes=0-0"
+    }
+  });
+  const result = responseLooksLikeImage(response);
+  if (response.body) {
+    await response.body.cancel().catch(() => undefined);
+  }
+
+  return result.ok
+    ? { url: response.url || url, contentType: result.contentType }
+    : null;
+}
+
+async function mapLimited<T, R>(
+  values: T[],
+  limit: number,
+  mapper: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, () => worker())
+  );
+
+  return results;
+}
+
+async function verifyImageCandidates(
+  sources: RetrievalSource[],
+  queries: string[],
+  config: RetrievalConfig,
+  notes: string[],
+  onStatus?: (message: string) => void
+): Promise<VerifiedImage[]> {
+  const candidates = collectImageCandidates(sources, queries).slice(0, 32);
+  if (!candidates.length) {
+    return [];
+  }
+
+  onStatus?.(`Verifying ${candidates.length} image candidates...`);
+  let rejected = 0;
+  const verified = await mapLimited<ImageCandidate, VerifiedImage | null>(
+    candidates,
+    4,
+    async (candidate) => {
+      for (const variant of imageUrlVariants(candidate.image.url)) {
+        try {
+          const result = await validateImageUrl(variant, config);
+          if (result) {
+            return {
+              ...candidate.image,
+              url: result.url,
+              sourceId: candidate.source.id,
+              sourceTitle: candidate.source.title,
+              sourceUrl: candidate.source.finalUrl || candidate.source.url,
+              contentType: result.contentType
+            };
+          }
+        } catch {
+          // Try the next variant, then count the candidate as rejected below.
+        }
+      }
+
+      rejected += 1;
+      return null;
+    }
+  );
+
+  if (rejected) {
+    notes.push(`Image verification rejected ${rejected} non-loadable candidate URLs.`);
+  }
+
+  return verified
+    .filter((image): image is VerifiedImage => image !== null)
+    .slice(0, 12);
+}
+
+function sourcesWithVerifiedImages(
+  sources: RetrievalSource[],
+  verifiedImages: VerifiedImage[]
+): RetrievalSource[] {
+  const bySource = new Map<number, RetrievedImage[]>();
+  for (const image of verifiedImages) {
+    const images = bySource.get(image.sourceId) ?? [];
+    images.push({
+      url: image.url,
+      alt: image.alt,
+      width: image.width,
+      height: image.height
+    });
+    bySource.set(image.sourceId, images);
+  }
+
+  return sources.map((source) => ({
+    ...source,
+    images: bySource.get(source.id) ?? []
+  }));
 }
 
 export function buildRetrievalContextPrompt(context: RetrievalContext): string {
@@ -1475,13 +1698,18 @@ export function buildRetrievalContextPrompt(context: RetrievalContext): string {
     }
   }
 
-  const imageCandidates = formatImageCandidates(context.sources, context.queries);
-  if (imageCandidates.length) {
+  const verifiedImageLines = formatVerifiedImages(context.verifiedImages);
+  if (verifiedImageLines.length) {
     lines.push("");
     lines.push(
-      "Retrieved image candidates for visual/gallery use. Prefer these direct HTTPS URLs over guessed image URLs:"
+      "Verified image URLs for visual/gallery use. The server checked these URLs and received image/* responses. Copy these URLs exactly into <img src>. Do not resize, rewrite, shorten, add px prefixes, remove query strings, or invent variants:"
     );
-    lines.push(...imageCandidates);
+    lines.push(...verifiedImageLines);
+  } else if (context.queries.some((query) => asksForVisualResources(query))) {
+    lines.push("");
+    lines.push(
+      "No verified direct image URLs were available. Do not render broken <img> tags; use source links or explain that verified images were not available."
+    );
   }
 
   lines.push(

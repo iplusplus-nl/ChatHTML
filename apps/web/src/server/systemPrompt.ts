@@ -60,7 +60,8 @@ Web and external resources:
 
 Gallery and image-resource requests:
 - If the user asks for a gallery, photos, pictures, images, wallpapers, visual references, or similar, treat real imagery as required for a successful artifact.
-- Use retrieved direct HTTPS image URLs as the primary material. Do not invent image URLs, Wikimedia filenames, CDN paths, or placeholder photos.
+- Use the "Verified image URLs" retrieval block as the primary material. Copy verified URLs exactly as given into <img src>; do not alter image dimensions, Wikimedia thumb paths, query strings, filenames, CDN paths, or extensions.
+- Do not invent image URLs, Wikimedia filenames, CDN paths, resized variants, or placeholder photos.
 - Build the visible artifact around multiple images when enough candidates are available, with meaningful alt text and source links.
 - If retrieval provides too few direct image URLs, say that plainly inside the artifact and show source links or a lightweight reference layout instead of rendering broken image tags.
 
