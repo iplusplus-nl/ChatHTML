@@ -1,9 +1,10 @@
 :root {
-  color-scheme: light;
+  color-scheme: dark;
+  --page-bg: #050505;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
-  background: #ffffff;
-  color: #18181b;
+  background: var(--page-bg);
+  color: #f4f4f5;
   font-synthesis: none;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
@@ -25,7 +26,7 @@ body,
 
 body {
   overflow: hidden;
-  background: #ffffff;
+  background: var(--page-bg);
 }
 
 button,
@@ -48,6 +49,11 @@ button {
   border-radius: 0;
   background: #ffffff;
   box-shadow: none;
+}
+
+:root[data-theme="day"] {
+  color-scheme: light;
+  --page-bg: #ffffff;
 }
 
 .history-sidebar {
@@ -74,7 +80,7 @@ button {
   border: 1px solid #e4e4e7;
   border-radius: 8px;
   color: #18181b;
-  background: #ffffff;
+  background: var(--page-bg);
   font-size: 14px;
   font-weight: 680;
   text-align: left;
@@ -198,6 +204,67 @@ button {
   white-space: nowrap;
 }
 
+.theme-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  width: 78px;
+  min-height: 34px;
+  margin-top: auto;
+  padding: 3px;
+  overflow: hidden;
+  border: 1px solid #e4e4e7;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.theme-toggle-indicator {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  border-radius: 999px;
+  background: #18181b;
+  box-shadow: 0 6px 18px rgba(24, 24, 27, 0.16);
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.theme-toggle[data-mode="night"] .theme-toggle-indicator {
+  transform: translateX(100%);
+}
+
+.theme-toggle-button {
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px;
+  border: 0;
+  border-radius: 999px;
+  color: #71717a;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 720;
+  transition:
+    color 180ms ease,
+    transform 160ms ease;
+}
+
+.theme-toggle-button:hover {
+  transform: translateY(-1px);
+}
+
+.theme-toggle-button[aria-pressed="true"] {
+  color: #ffffff;
+}
+
 .chat-workspace {
   display: flex;
   flex: 1;
@@ -283,6 +350,141 @@ button {
   border-radius: 999px;
   background: #12b76a;
   box-shadow: 0 0 0 3px rgba(18, 183, 106, 0.14);
+}
+
+.app-shell[data-theme="night"] {
+  color: #f4f4f5;
+  background: #050505;
+}
+
+.app-shell[data-theme="night"] .history-sidebar {
+  border-right-color: rgba(255, 255, 255, 0.1);
+  background: rgba(10, 10, 11, 0.94);
+}
+
+.app-shell[data-theme="night"] .new-session-button,
+.app-shell[data-theme="night"] .session-list-item.is-active {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f4f4f5;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-shell[data-theme="night"] .new-session-button:hover:not(:disabled),
+.app-shell[data-theme="night"] .session-list-item:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.app-shell[data-theme="night"] .session-list-item {
+  color: #d4d4d8;
+}
+
+.app-shell[data-theme="night"] .session-meta,
+.app-shell[data-theme="night"] .header-note,
+.app-shell[data-theme="night"] .thread-welcome p,
+.app-shell[data-theme="night"] .reasoning-panel,
+.app-shell[data-theme="night"] .reasoning-trigger,
+.app-shell[data-theme="night"] .reasoning-text,
+.app-shell[data-theme="night"] .raw-stream-panel,
+.app-shell[data-theme="night"] .raw-stream-trigger,
+.app-shell[data-theme="night"] .raw-stream-meta,
+.app-shell[data-theme="night"] .raw-stream-text,
+.app-shell[data-theme="night"] .muted {
+  color: #a1a1aa;
+}
+
+.app-shell[data-theme="night"] .session-delete-button:hover:not(:disabled) {
+  color: #fda29b;
+  background: rgba(180, 35, 24, 0.22);
+}
+
+.app-shell[data-theme="night"] .theme-toggle {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.app-shell[data-theme="night"] .theme-toggle-indicator {
+  background: #f4f4f5;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+}
+
+.app-shell[data-theme="night"] .theme-toggle-button {
+  color: #a1a1aa;
+}
+
+.app-shell[data-theme="night"] .theme-toggle-button[aria-pressed="true"] {
+  color: #18181b;
+}
+
+.app-shell[data-theme="night"] .chat-workspace,
+.app-shell[data-theme="night"] .thread-root {
+  background: #050505;
+}
+
+.app-shell[data-theme="night"] .thread-welcome h2,
+.app-shell[data-theme="night"] .message-bubble,
+.app-shell[data-theme="night"] .message-bubble.user,
+.app-shell[data-theme="night"] .preview-header h2,
+.app-shell[data-theme="night"] .app-header h1 {
+  color: #f4f4f5;
+}
+
+.app-shell[data-theme="night"] .message-bubble.user {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.app-shell[data-theme="night"] .reasoning-text,
+.app-shell[data-theme="night"] .raw-stream-text {
+  border-left-color: rgba(255, 255, 255, 0.12);
+}
+
+.app-shell[data-theme="night"] .chat-input-dropzone {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(24, 24, 27, 0.64);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.24),
+    0 18px 50px rgba(0, 0, 0, 0.38);
+}
+
+.app-shell[data-theme="night"] .chat-input-dropzone:focus-within {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(39, 39, 42, 0.72);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.26),
+    0 22px 60px rgba(0, 0, 0, 0.42);
+}
+
+.app-shell[data-theme="night"] .chat-input-dropzone[data-dragging="true"] {
+  border-color: rgba(212, 212, 216, 0.42);
+  background: rgba(39, 39, 42, 0.78);
+}
+
+.app-shell[data-theme="night"] .chat-input-textarea {
+  color: #f4f4f5;
+}
+
+.app-shell[data-theme="night"] .chat-input-textarea::placeholder {
+  color: #a1a1aa;
+}
+
+.app-shell[data-theme="night"] .attach-button {
+  color: #d4d4d8;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-shell[data-theme="night"] .attach-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.app-shell[data-theme="night"] .send-button {
+  color: #18181b;
+  background: #f4f4f5;
+}
+
+.app-shell[data-theme="night"] .send-button:hover:not(:disabled) {
+  background: #ffffff;
 }
 
 .thread-root {
@@ -687,7 +889,8 @@ button {
   z-index: 2;
   width: min(760px, 100%);
   margin: 0 auto;
-  background: #ffffff;
+  background: transparent;
+  pointer-events: none;
 }
 
 .composer-footer.is-new {
@@ -699,7 +902,7 @@ button {
   position: sticky;
   bottom: 0;
   margin-top: auto;
-  padding: 18px 0 22px;
+  padding: 10px 0 14px;
 }
 
 .chat-input-bar {
@@ -707,35 +910,41 @@ button {
   width: 100%;
   border: 0;
   background: transparent;
+  pointer-events: auto;
 }
 
 .chat-input-dropzone {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow: hidden;
   padding: 8px;
-  border: 1px solid #e4e4e7;
+  border: 1px solid rgba(228, 228, 231, 0.72);
   border-radius: 24px;
-  background: #f7f7f8;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
   box-shadow:
     0 1px 2px rgba(24, 24, 27, 0.04),
-    0 6px 24px rgba(24, 24, 27, 0.08);
+    0 12px 36px rgba(24, 24, 27, 0.12);
   transition:
+    background 160ms ease,
     border-color 160ms ease,
     box-shadow 160ms ease;
 }
 
 .chat-input-dropzone:focus-within {
-  border-color: #d4d4d8;
+  border-color: rgba(212, 212, 216, 0.88);
+  background: rgba(255, 255, 255, 0.82);
   box-shadow:
     0 1px 2px rgba(24, 24, 27, 0.04),
-    0 10px 32px rgba(24, 24, 27, 0.1);
+    0 16px 44px rgba(24, 24, 27, 0.14);
 }
 
 .chat-input-dropzone[data-dragging="true"] {
   border-style: dashed;
-  border-color: #a1a1aa;
-  background: #f4f4f5;
+  border-color: rgba(161, 161, 170, 0.92);
+  background: rgba(244, 244, 245, 0.78);
 }
 
 .chat-input-textarea {
@@ -967,6 +1176,10 @@ button {
     padding: 10px 12px;
     border-right: 0;
     border-bottom: 1px solid #eceef2;
+  }
+
+  .app-shell[data-theme="night"] .history-sidebar {
+    border-bottom-color: rgba(255, 255, 255, 0.1);
   }
 
   .new-session-button {

@@ -151,10 +151,13 @@ function buildCanvasContextPrompt(canvas: CanvasContext): string {
 - Prefer real external images, media, documents, demos, datasets, official pages, and primary references over invented placeholders when they improve the response.
 - For visual or research-like requests, synthesize the provided complementary sources or resource types into one coherent HTML artifact.
 - When embedding external media, use direct HTTPS URLs, meaningful alt text, lazy loading when possible, captions, and nearby source links.
+- For gallery, photo, picture, image, wallpaper, or visual-reference requests, real imagery is required. Use retrieved direct HTTPS image URLs, do not invent image URLs, and include source links.
+- If retrieval provides too few direct image URLs for the requested gallery, say so inside the artifact and show source links instead of rendering broken image tags.
 - The iframe may use HTTPS images, media, links, stylesheets, scripts, and CORS-friendly fetches when they directly help the user's request.
 - Prefer injected retrieval excerpts for reading web pages. Runtime fetch cannot read most ordinary pages because of browser CORS.
 - For custom visuals, make progress visible while streaming by alternating small style islands and matching visible HTML.
 - After <streamui>, emit visible HTML quickly. If custom CSS is needed, use one tiny <style> block, then immediately emit the matching HTML.
+- Output exactly one <streamui> block, keep it open until the entire artifact is finished, and never continue HTML outside it.
 - Keep each custom style island around 600 characters or less. Do not output one huge global CSS block before the visible canvas.
 - Do not use vh, dvh, svh, or lvh units for artifact section heights; the iframe auto-expands, so viewport-height layouts can create resize feedback loops. Prefer intrinsic flow, aspect-ratio, clamp(), min-height in px/rem, or content-driven sizing.
 - The first visible artifact should establish a strong visual direction quickly: a focal element, styled title area, scene scaffold, diagram frame, or spatial composition.

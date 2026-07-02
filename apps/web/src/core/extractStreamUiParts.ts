@@ -31,6 +31,35 @@ function extractBetween(
   };
 }
 
+function extractStreamUi(raw: string): {
+  content: string;
+  hasOpen: boolean;
+  hasClose: boolean;
+} {
+  const lower = raw.toLowerCase();
+  const openTag = "<streamui>";
+  const closeTag = "</streamui>";
+  const openIndex = lower.indexOf(openTag);
+
+  if (openIndex === -1) {
+    return { content: "", hasOpen: false, hasClose: false };
+  }
+
+  const contentStart = openIndex + openTag.length;
+  const contentTail = raw.slice(contentStart);
+  const lowerTail = lower.slice(contentStart);
+
+  return {
+    content: contentTail
+      .replace(/<\/?streamui>/gi, "")
+      .replace(/<sessiontitle>[\s\S]*?<\/sessiontitle>/gi, "")
+      .replace(/<sessiontitle>[\s\S]*$/gi, "")
+      .replace(/<\/?chat>/gi, ""),
+    hasOpen: true,
+    hasClose: lowerTail.includes(closeTag)
+  };
+}
+
 function removeProtocolTags(raw: string): string {
   return raw
     .replace(/<sessiontitle>[\s\S]*?<\/sessiontitle>/gi, "")
@@ -44,7 +73,7 @@ function removeProtocolTags(raw: string): string {
 export function extractStreamUiParts(raw: string): ExtractedStreamUiParts {
   const sessionTitle = extractBetween(raw, "sessiontitle");
   const chat = extractBetween(raw, "chat");
-  const streamui = extractBetween(raw, "streamui");
+  const streamui = extractStreamUi(raw);
   const fallbackText = chat.hasOpen
     ? chat.content.trim()
     : removeProtocolTags(raw);

@@ -1,4 +1,6 @@
-import { SquarePen, Trash2 } from "lucide-react";
+import { Moon, SquarePen, Sun, Trash2 } from "lucide-react";
+
+export type ThemeMode = "day" | "night";
 
 export type SessionListItem = {
   id: string;
@@ -10,9 +12,11 @@ type SessionSidebarProps = {
   sessions: SessionListItem[];
   activeSessionId: string;
   isSending: boolean;
+  themeMode: ThemeMode;
   onNewSession(): void;
   onSelectSession(id: string): void;
   onDeleteSession(id: string): void;
+  onThemeModeChange(mode: ThemeMode): void;
 };
 
 function formatSessionMeta(session: SessionListItem): string {
@@ -27,9 +31,11 @@ export function SessionSidebar({
   sessions,
   activeSessionId,
   isSending,
+  themeMode,
   onNewSession,
   onSelectSession,
-  onDeleteSession
+  onDeleteSession,
+  onThemeModeChange
 }: SessionSidebarProps) {
   return (
     <aside className="history-sidebar" aria-label="Session history">
@@ -73,6 +79,33 @@ export function SessionSidebar({
           </div>
         ))}
       </nav>
+
+      <div
+        className="theme-toggle"
+        data-mode={themeMode}
+        role="group"
+        aria-label="Theme"
+      >
+        <span className="theme-toggle-indicator" aria-hidden="true" />
+        <button
+          className="theme-toggle-button"
+          type="button"
+          aria-label="Use day theme"
+          aria-pressed={themeMode === "day"}
+          onClick={() => onThemeModeChange("day")}
+        >
+          <Sun size={15} strokeWidth={2.1} aria-hidden="true" />
+        </button>
+        <button
+          className="theme-toggle-button"
+          type="button"
+          aria-label="Use night theme"
+          aria-pressed={themeMode === "night"}
+          onClick={() => onThemeModeChange("night")}
+        >
+          <Moon size={15} strokeWidth={2.1} aria-hidden="true" />
+        </button>
+      </div>
     </aside>
   );
 }

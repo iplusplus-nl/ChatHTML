@@ -14,7 +14,8 @@ import { ChatMessage } from "./components/ChatMessage";
 import { ChatShell } from "./components/ChatShell";
 import {
   SessionSidebar,
-  type SessionListItem
+  type SessionListItem,
+  type ThemeMode
 } from "./components/SessionSidebar";
 import {
   StreamImageAttachmentAdapter,
@@ -62,10 +63,21 @@ type ChatStreamEvent = {
 const initialMessages: ClientMessage[] = [];
 const SESSION_STORAGE_KEY = "streamui.sessions.v1";
 const ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
+const THEME_STORAGE_KEY = "streamui.theme.v1";
 const UNTITLED_SESSION = "New Session";
 
 function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function loadThemeMode(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "night";
+  }
+
+  return window.localStorage.getItem(THEME_STORAGE_KEY) === "day"
+    ? "day"
+    : "night";
 }
 
 function createEmptySession(): ChatSession {
@@ -536,6 +548,7 @@ function StreamThread({ messages, onRuntimeError }: StreamThreadProps) {
 
 export default function App() {
   const [sessionState, setSessionState] = useState<SessionState>(loadSessionState);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode);
   const [isSending, setIsSending] = useState(false);
   const activeSession =
     sessionState.sessions.find(
@@ -556,6 +569,15 @@ export default function App() {
   useEffect(() => {
     isSendingRef.current = isSending;
   }, [isSending]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -791,10 +813,19 @@ export default function App() {
         const parts = extractStreamUiParts(raw);
 
         if (parts.hasStreamUi) {
-          const streamUiDelta = parts.streamui.slice(lastStreamUiLength);
-          if (streamUiDelta) {
-            renderer.feed(streamUiDelta);
+          const renderedStreamUi = renderer.getSnapshot().raw;
+          if (!parts.streamui.startsWith(renderedStreamUi)) {
+            renderer.reset();
+            if (parts.streamui) {
+              renderer.feed(parts.streamui);
+            }
             lastStreamUiLength = parts.streamui.length;
+          } else {
+            const streamUiDelta = parts.streamui.slice(lastStreamUiLength);
+            if (streamUiDelta) {
+              renderer.feed(streamUiDelta);
+              lastStreamUiLength = parts.streamui.length;
+            }
           }
         }
 
@@ -944,14 +975,17 @@ export default function App() {
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ChatShell
+        themeMode={themeMode}
         sidebar={
           <SessionSidebar
             sessions={sessionItems}
             activeSessionId={sessionState.activeSessionId}
             isSending={isSending}
+            themeMode={themeMode}
             onNewSession={handleNewSession}
             onSelectSession={handleSelectSession}
             onDeleteSession={handleDeleteSession}
+            onThemeModeChange={setThemeMode}
           />
         }
       >

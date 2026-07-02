@@ -326,6 +326,12 @@ function removeUrls(text: string): string {
   return text.replace(/\bhttps?:\/\/[^\s<>"'`)\]}]+|\bwww\.[^\s<>"'`)\]}]+/gi, " ");
 }
 
+function asksForVisualResources(text: string): boolean {
+  return /\b(gallery|galleries|gallary|image|images|photo|photos|picture|pictures|pic|pics|screenshot|screenshots|wallpaper|wallpapers|visual reference|visual references|media assets?)\b|图片|照片|图集|图库|相册|壁纸|素材|视觉参考/i.test(
+    text
+  );
+}
+
 function shouldSearch(
   text: string,
   options: RetrievalOptions,
@@ -344,13 +350,78 @@ function shouldSearch(
   }
 
   const cues =
-    /\b(current|recent|latest|today|tonight|tomorrow|yesterday|news|search|web|online|source|sources|reference|references|link|links|page|url|site|website|browse|fetch|read|lookup|look up|find|research|official|image|images|photo|photos|screenshot|map|maps|weather|price|prices|schedule|release|version)\b|最新|今天|现在|新闻|搜索|查一下|查询|网页|网站|链接|来源|资料|参考|官网|浏览|读取|找|图片|地图|价格|日程|版本|发布|当前/i;
+    /\b(current|recent|latest|today|tonight|tomorrow|yesterday|news|search|web|online|source|sources|reference|references|link|links|page|url|site|website|browse|fetch|read|lookup|look up|find|research|official|image|images|photo|photos|picture|pictures|pic|pics|gallery|galleries|gallary|screenshot|screenshots|wallpaper|wallpapers|media assets?|map|maps|weather|price|prices|schedule|release|version)\b|最新|今天|现在|新闻|搜索|查一下|查询|网页|网站|链接|来源|资料|参考|官网|浏览|读取|找|图片|照片|图集|图库|相册|壁纸|素材|地图|价格|日程|版本|发布|当前/i;
 
   return cues.test(text);
 }
 
 function buildSearchQuery(text: string): string {
-  return clip(removeUrls(text), 260) || clip(text, 260) || "";
+  const original = clip(removeUrls(text), 260) || clip(text, 260) || "";
+  if (!original) {
+    return "";
+  }
+
+  if (!asksForVisualResources(text)) {
+    return original;
+  }
+
+  const cleaned = original
+    .replace(
+      /^\s*(?:please\s+)?(?:generate|create|make|build|design|write|show(?:\s+me)?)\s+(?:an?\s+|the\s+)?/i,
+      ""
+    )
+    .replace(
+      /^\s*(?:gallery|galleries|gallary|photo\s+gallery|image\s+gallery|picture\s+gallery)\s+(?:of|for)?\s*/i,
+      ""
+    )
+    .replace(/^\s*(?:of|for)\s+/i, "")
+    .trim();
+  const query = cleaned || original;
+
+  if (
+    /\b(image|images|photo|photos|picture|pictures|gallery|galleries|wallpaper|wallpapers)\b/i.test(
+      query
+    )
+  ) {
+    return clip(query, 260) || query;
+  }
+
+  return clip(`${query} photos images`, 260) || query;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+
+  for (const value of values) {
+    const normalized = value.trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(normalized);
+  }
+
+  return unique;
+}
+
+function buildSearchQueries(text: string): string[] {
+  const query = buildSearchQuery(text);
+  if (!query) {
+    return [];
+  }
+
+  if (!asksForVisualResources(text)) {
+    return [query];
+  }
+
+  return uniqueStrings([
+    `${query} site:commons.wikimedia.org`,
+    `${query} Wikimedia Commons`,
+    query
+  ]).slice(0, 3);
 }
 
 function privateIpv4(ip: string): boolean {
@@ -1028,6 +1099,51 @@ function sourceKey(url: string): string {
   return url.replace(/\/$/, "");
 }
 
+function visualResultScore(result: SearchResult): number {
+  const hostname = getHostname(result.url) ?? "";
+  const haystack = decodeSearchText(
+    `${result.url} ${result.title ?? ""} ${result.snippet ?? ""}`
+  );
+  let score = 0;
+
+  if (matchesDomain(hostname, "commons.wikimedia.org")) {
+    score += 80;
+  } else if (matchesDomain(hostname, "wikimedia.org")) {
+    score += 60;
+  } else if (matchesDomain(hostname, "wikipedia.org")) {
+    score += 35;
+  } else if (matchesDomain(hostname, "flickr.com")) {
+    score += 20;
+  }
+
+  if (result.imageUrl) {
+    score += 10;
+  }
+
+  if (/\b(?:photo|photos|image|images|gallery|commons|media|wallpaper)\b/i.test(haystack)) {
+    score += 6;
+  }
+
+  if (/\b(?:getty|shutterstock|alamy|istock|adobe stock|stock photos?)\b/i.test(haystack)) {
+    score -= 30;
+  }
+
+  return score;
+}
+
+function prioritizeSearchResults(
+  results: SearchResult[],
+  text: string
+): SearchResult[] {
+  if (!asksForVisualResources(text)) {
+    return results;
+  }
+
+  return [...results].sort(
+    (a, b) => visualResultScore(b) - visualResultScore(a) || a.rank - b.rank
+  );
+}
+
 async function fetchSources(
   urls: string[],
   searchResults: SearchResult[],
@@ -1081,7 +1197,7 @@ export async function collectRetrievalContext(
   const directUrls = extractUrls(text).filter((url) =>
     isDomainPermitted(url, config)
   );
-  const query = buildSearchQuery(text);
+  const plannedQueries = buildSearchQueries(text);
   const searchNeeded = shouldSearch(text, options, directUrls.length > 0);
   const fetchNeeded = options.forceFetch || directUrls.length > 0;
   const notes: string[] = [];
@@ -1118,10 +1234,20 @@ export async function collectRetrievalContext(
   const queries: string[] = [];
   let searchResults: SearchResult[] = [];
 
-  if (searchNeeded && query) {
-    queries.push(query);
-    options.onStatus?.(`Searching the web for "${query}"...`);
-    searchResults = await searchWeb(query, config, notes);
+  if (searchNeeded && plannedQueries.length) {
+    for (const query of plannedQueries) {
+      queries.push(query);
+      options.onStatus?.(`Searching the web for "${query}"...`);
+      searchResults = uniqueByUrl([
+        ...searchResults,
+        ...(await searchWeb(query, config, notes))
+      ]).slice(0, Math.max(config.searchMaxResults, config.fetchMaxPages) * 3);
+    }
+
+    searchResults = prioritizeSearchResults(searchResults, text).slice(
+      0,
+      Math.max(config.searchMaxResults, config.fetchMaxPages) * 2
+    );
   }
 
   const searchUrls = searchResults.map((result) => result.url);
@@ -1168,6 +1294,177 @@ function formatLinks(links: RetrievedLink[]): string[] {
   });
 }
 
+function decodeSearchText(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  try {
+    return decodeURIComponent(value).toLowerCase();
+  } catch {
+    return value.toLowerCase();
+  }
+}
+
+const IMAGE_QUERY_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "for",
+  "from",
+  "gallery",
+  "gallary",
+  "galleries",
+  "image",
+  "images",
+  "of",
+  "photo",
+  "photos",
+  "pic",
+  "pics",
+  "picture",
+  "pictures",
+  "the",
+  "wallpaper",
+  "wallpapers"
+]);
+
+function imageQueryTerms(queries: string[]): string[] {
+  const terms = new Set<string>();
+  for (const query of queries) {
+    for (const term of decodeSearchText(query).match(/[a-z0-9]+/g) ?? []) {
+      if (term.length > 2 && !IMAGE_QUERY_STOP_WORDS.has(term)) {
+        terms.add(term);
+      }
+    }
+  }
+
+  return [...terms];
+}
+
+function isDecorativeImage(image: RetrievedImage): boolean {
+  const haystack = decodeSearchText(`${image.url} ${image.alt ?? ""}`);
+  return (
+    /\.(?:svg|ico)(?:[?#]|$)/i.test(image.url) ||
+    /\b(?:avatar|badge|blank|button|copyright|favicon|icon|logo|placeholder|sprite|wordmark)\b/i.test(
+      haystack
+    ) ||
+    (typeof image.width === "number" &&
+      typeof image.height === "number" &&
+      image.width < 80 &&
+      image.height < 80)
+  );
+}
+
+function upgradeWikimediaThumbnailUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (
+      !matchesDomain(parsed.hostname.toLowerCase(), "upload.wikimedia.org") ||
+      !parsed.pathname.includes("/thumb/")
+    ) {
+      return url;
+    }
+
+    parsed.pathname = parsed.pathname.replace(
+      /\/\d+px-([^/]+)$/i,
+      "/1024px-$1"
+    );
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function imageDedupeKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const pathname = decodeURIComponent(parsed.pathname);
+
+    if (matchesDomain(hostname, "upload.wikimedia.org")) {
+      const basename = pathname
+        .split("/")
+        .filter(Boolean)
+        .pop()
+        ?.replace(/^\d+px-/i, "")
+        .replace(/^\d+!/, "")
+        .toLowerCase();
+
+      if (basename) {
+        return `${hostname}:${basename}`;
+      }
+    }
+
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/$/, "").toLowerCase();
+  } catch {
+    return url.replace(/[?#].*$/, "").replace(/\/$/, "").toLowerCase();
+  }
+}
+
+function imageRelevanceScore(
+  image: RetrievedImage,
+  source: RetrievalSource,
+  terms: string[]
+): number {
+  if (!terms.length) {
+    return 0;
+  }
+
+  const imageHaystack = [image.url, image.alt].map(decodeSearchText).join(" ");
+  const sourceHaystack = [source.title, source.snippet, source.siteName]
+    .map(decodeSearchText)
+    .join(" ");
+
+  const imageMatches = terms.reduce(
+    (score, term) => score + (imageHaystack.includes(term) ? 1 : 0),
+    0
+  );
+  const sourceMatches = terms.reduce(
+    (score, term) => score + (sourceHaystack.includes(term) ? 1 : 0),
+    0
+  );
+
+  return imageMatches * 10 + sourceMatches;
+}
+
+function formatImageCandidates(
+  sources: RetrievalSource[],
+  queries: string[]
+): string[] {
+  const seen = new Set<string>();
+  const terms = imageQueryTerms(queries);
+  const candidates: Array<{ line: string; order: number; score: number }> = [];
+
+  for (const source of sources) {
+    for (const image of source.images) {
+      if (isDecorativeImage(image)) {
+        continue;
+      }
+
+      const imageUrl = upgradeWikimediaThumbnailUrl(image.url);
+      const key = imageDedupeKey(imageUrl);
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      const alt = image.alt ? ` (${image.alt})` : "";
+      candidates.push({
+        line: `  - ${imageUrl}${alt} [source ${source.id}]`,
+        order: candidates.length,
+        score: imageRelevanceScore(image, source, terms)
+      });
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score || a.order - b.order);
+
+  return candidates.slice(0, 24).map((candidate) => candidate.line);
+}
+
 export function buildRetrievalContextPrompt(context: RetrievalContext): string {
   const maxChars = getRetrievalConfig().contextMaxChars;
   const lines: string[] = [
@@ -1196,6 +1493,15 @@ export function buildRetrievalContextPrompt(context: RetrievalContext): string {
     for (const note of context.notes.slice(0, 6)) {
       lines.push(`  - ${note}`);
     }
+  }
+
+  const imageCandidates = formatImageCandidates(context.sources, context.queries);
+  if (imageCandidates.length) {
+    lines.push("");
+    lines.push(
+      "Retrieved image candidates for visual/gallery use. Prefer these direct HTTPS URLs over guessed image URLs:"
+    );
+    lines.push(...imageCandidates);
   }
 
   lines.push(
