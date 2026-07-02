@@ -3,7 +3,7 @@ import { SYSTEM_PROMPT } from "./systemPrompt.js";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL =
   "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "google/gemini-3.5-flash";
+const DEFAULT_MODEL = "google/gemini-3.1-pro-preview";
 const DEFAULT_REASONING_EFFORT = "low";
 const DEFAULT_WEB_TOOLS_ENABLED = true;
 const DEFAULT_DATETIME_TOOL_ENABLED = true;
@@ -14,12 +14,39 @@ const DEFAULT_WEB_SEARCH_CONTEXT_SIZE = "medium";
 const DEFAULT_WEB_FETCH_ENGINE = "auto";
 const DEFAULT_WEB_FETCH_MAX_USES = 6;
 const DEFAULT_WEB_FETCH_MAX_CONTENT_TOKENS = 50_000;
+const MAX_IMAGES_PER_MESSAGE = 4;
+const MAX_IMAGE_DATA_URL_LENGTH = 3_000_000;
 
 type ChatRole = "user" | "assistant" | "system";
+
+type ClientImageAttachment = {
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  dataUrl: string;
+};
 
 type ClientChatMessage = {
   role: ChatRole;
   content: string;
+  images?: ClientImageAttachment[];
+};
+
+type OpenRouterContentPart =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "image_url";
+      image_url: {
+        url: string;
+      };
+    };
+
+type OpenRouterChatMessage = {
+  role: ChatRole;
+  content: string | OpenRouterContentPart[];
 };
 
 type CanvasContext = {
@@ -136,6 +163,35 @@ function normalizeDomainList(value: unknown): string[] | undefined {
     .filter(Boolean);
 
   return domains.length ? domains : undefined;
+}
+
+function normalizeUploadedImages(input: unknown): ClientImageAttachment[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .slice(0, MAX_IMAGES_PER_MESSAGE)
+    .filter((image): image is Partial<ClientImageAttachment> => {
+      return typeof image === "object" && image !== null;
+    })
+    .map((image) => ({
+      name: typeof image.name === "string" ? image.name.slice(0, 160) : undefined,
+      mimeType:
+        typeof image.mimeType === "string" ? image.mimeType.slice(0, 80) : undefined,
+      size: typeof image.size === "number" && Number.isFinite(image.size)
+        ? image.size
+        : undefined,
+      dataUrl: typeof image.dataUrl === "string" ? image.dataUrl : ""
+    }))
+    .filter((image) => {
+      return (
+        image.dataUrl.length <= MAX_IMAGE_DATA_URL_LENGTH &&
+        /^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(
+          image.dataUrl
+        )
+      );
+    });
 }
 
 function buildOpenRouterTools(): OpenRouterServerTool[] | undefined {
@@ -255,8 +311,13 @@ function buildCanvasContextPrompt(canvas: CanvasContext): string {
   <section class="streamui-response"><div class="streamui-chat"><p>...</p></div></section>
 - Put all conversational language inside the HTML artifact. Keep <chat></chat> empty.
 - Be natural and direct. Do not adopt a special persona.
+- The user may attach images. Inspect uploaded images directly and treat them as first-class context for analysis, OCR, comparison, critique, or visual redesign requests.
+- When useful, combine observations from uploaded images with external web sources in one coherent HTML artifact.
 - You can use server-side web_search, web_fetch, and datetime tools when the user asks for a page, URL, external resource, or current information.
 - If you use web information, render source links inside the HTML. Prefer concrete links and citations over vague "from the web" language.
+- Prefer real external images, media, documents, demos, datasets, official pages, and primary references over invented placeholders when they improve the response.
+- For visual or research-like requests, collect several complementary sources or resource types and synthesize them into one coherent HTML artifact.
+- When embedding external media, use direct HTTPS URLs, meaningful alt text, lazy loading when possible, captions, and nearby source links.
 - The iframe may use HTTPS images, media, links, stylesheets, scripts, and CORS-friendly fetches when they directly help the user's request.
 - Prefer server-side web_fetch for reading web pages. Runtime fetch cannot read most ordinary pages because of browser CORS.
 - For custom visuals, make progress visible while streaming by alternating small style islands and matching visible HTML.
@@ -281,8 +342,38 @@ function normalizeMessages(input: unknown): ClientChatMessage[] {
     })
     .map((message) => ({
       role: message.role === "assistant" ? "assistant" : "user",
-      content: String(message.content).slice(0, 20_000)
+      content: String(message.content).slice(0, 20_000),
+      images:
+        message.role === "assistant"
+          ? []
+          : normalizeUploadedImages((message as { images?: unknown }).images)
     }));
+}
+
+function toOpenRouterMessage(message: ClientChatMessage): OpenRouterChatMessage {
+  const images = message.images ?? [];
+  if (!images.length || message.role !== "user") {
+    return {
+      role: message.role,
+      content: message.content
+    };
+  }
+
+  return {
+    role: message.role,
+    content: [
+      {
+        type: "text",
+        text: message.content || "Please respond to the attached image."
+      },
+      ...images.map((image) => ({
+        type: "image_url" as const,
+        image_url: {
+          url: image.dataUrl
+        }
+      }))
+    ]
+  };
 }
 
 function writeStreamEvent(res: Response, event: StreamEvent): void {
@@ -505,7 +596,7 @@ export async function handleOpenRouterChat(
             role: "system",
             content: buildCanvasContextPrompt(canvasContext)
           },
-          ...messages
+          ...messages.map(toOpenRouterMessage)
         ]
       })
     });

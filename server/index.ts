@@ -12,7 +12,7 @@ const projectRoot = path.resolve(__dirname, "..");
 const clientDist = path.join(projectRoot, "dist");
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "24mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });

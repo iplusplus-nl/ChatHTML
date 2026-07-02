@@ -5,12 +5,14 @@ import { ChatMessage } from "./components/ChatMessage";
 import { ChatShell } from "./components/ChatShell";
 import { createStreamingRenderer } from "./core/createStreamingRenderer";
 import { extractStreamUiParts } from "./core/extractStreamUiParts";
+import type { ImageAttachment } from "./core/imageAttachments";
 import type { RenderError, RenderSnapshot, StreamingRenderer } from "./core/types";
 
 type ClientMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  attachments?: ImageAttachment[];
   reasoning?: string;
   rawStream?: string;
   hasStreamUi?: boolean;
@@ -41,10 +43,21 @@ function createId(prefix: string): string {
 function toApiMessages(messages: ClientMessage[]) {
   return messages
     .filter((message) => message.id !== "welcome")
-    .filter((message) => message.role === "user" || message.content.trim())
+    .filter(
+      (message) =>
+        message.role === "user" ||
+        message.content.trim() ||
+        (message.attachments?.length ?? 0) > 0
+    )
     .map((message) => ({
       role: message.role,
-      content: message.content
+      content: message.content,
+      images: message.attachments?.map((attachment) => ({
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        dataUrl: attachment.dataUrl
+      }))
     }));
 }
 
@@ -123,9 +136,9 @@ export default function App() {
   );
 
   const handleSend = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: ImageAttachment[] = []) => {
       const trimmed = text.trim();
-      if (!trimmed || isSending) {
+      if ((!trimmed && attachments.length === 0) || isSending) {
         return;
       }
 
@@ -133,6 +146,7 @@ export default function App() {
         id: createId("user"),
         role: "user",
         content: trimmed,
+        attachments,
         status: "complete"
       };
       const assistantId = createId("assistant");
@@ -293,7 +307,11 @@ export default function App() {
               onRuntimeError={handleRuntimeError}
             />
           ) : (
-            <ChatMessage key={message.id} role={message.role}>
+            <ChatMessage
+              key={message.id}
+              role={message.role}
+              attachments={message.attachments}
+            >
               {message.content}
             </ChatMessage>
           )

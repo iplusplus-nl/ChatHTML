@@ -21,13 +21,13 @@ Add your OpenRouter key to `.env`:
 
 ```bash
 OPENROUTER_API_KEY=your_openrouter_key_here
-OPENROUTER_MODEL=google/gemini-3.5-flash
+OPENROUTER_MODEL=google/gemini-3.1-pro-preview
 OPENROUTER_REASONING_EFFORT=low
 OPENROUTER_WEB_TOOLS=true
 OPENROUTER_DATETIME_TOOL=true
 ```
 
-The default model is `google/gemini-3.5-flash` when `OPENROUTER_MODEL` is not set. Reasoning effort defaults to `low` to keep the thinking panel responsive. OpenRouter server-side web search, web fetch, and datetime tools are enabled by default.
+The default model is `google/gemini-3.1-pro-preview` when `OPENROUTER_MODEL` is not set. Reasoning effort defaults to `low` to keep the thinking panel responsive. OpenRouter server-side web search, web fetch, and datetime tools are enabled by default.
 
 ## Run
 
@@ -46,6 +46,8 @@ Each chat request includes OpenRouter server tools by default:
 - `openrouter:datetime` for current date/time grounding.
 
 The model decides when to call these tools. OpenRouter executes them server-side, so StreamUI keeps the existing streaming HTML protocol instead of implementing a separate client-side agent loop.
+
+The chat input also supports local image attachments. Images are converted to data URLs in the browser, lightly resized when needed, and sent to OpenRouter as multimodal `image_url` message parts. Use a vision-capable model for image analysis, OCR, comparison, or image-informed visual responses.
 
 Useful `.env` controls:
 
@@ -98,6 +100,7 @@ The frontend parses the stream as it arrives:
 - Script blocks are ignored while streaming and only allowed once the artifact is complete.
 - The artifact renders inside `sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"` without `allow-same-origin`.
 - The iframe CSP allows HTTPS external resources and runtime requests, while keeping objects, forms, base URLs, and same-origin access disabled.
+- Completed artifacts can be downloaded as a full-height PNG from the artifact toolbar.
 - A collapsible Raw stream panel keeps the original model output available for debugging.
 
 If no valid `<streamui>` block appears, the assistant response stays as a normal chat bubble.

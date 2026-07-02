@@ -172,6 +172,26 @@ button {
   margin: 0;
 }
 
+.message-attachments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.message-attachments:first-child {
+  margin-top: 0;
+}
+
+.message-attachments img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+}
+
 .muted {
   color: #667085;
 }
@@ -237,6 +257,37 @@ button {
   overflow: hidden;
   border-radius: 8px;
   background: transparent;
+}
+
+.canvas-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.canvas-action-button {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid #cdd8e7;
+  border-radius: 8px;
+  color: #27415f;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 720;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.canvas-action-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #9fb0c4;
+}
+
+.canvas-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .preview-frame {
@@ -318,11 +369,18 @@ button {
 
 .chat-input-bar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
   gap: 10px;
+  align-items: end;
   padding: 16px;
   border-top: 1px solid #e2e7ef;
   background: rgba(250, 251, 253, 0.96);
+}
+
+.chat-input-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
 .chat-input-bar textarea {
@@ -343,6 +401,64 @@ button {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
 }
 
+.attachment-tray {
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.attachment-thumb {
+  position: relative;
+  flex: 0 0 92px;
+  width: 92px;
+  margin: 0;
+}
+
+.attachment-thumb img {
+  display: block;
+  width: 92px;
+  height: 68px;
+  object-fit: cover;
+  border: 1px solid #cdd8e7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.attachment-thumb figcaption {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-thumb button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 999px;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.attachment-error {
+  margin: 0;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.attach-button,
 .send-button {
   display: grid;
   width: 44px;
@@ -360,11 +476,26 @@ button {
     opacity 160ms ease;
 }
 
+.attach-button {
+  border: 1px solid #cbd5e1;
+  color: #27415f;
+  background: #ffffff;
+  font-size: 24px;
+  font-weight: 650;
+}
+
+.attach-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #9fb0c4;
+  background: #f8fafc;
+}
+
 .send-button:hover:not(:disabled) {
   transform: translateY(-1px);
   background: #0f172a;
 }
 
+.attach-button:disabled,
 .send-button:disabled {
   cursor: not-allowed;
   opacity: 0.42;
