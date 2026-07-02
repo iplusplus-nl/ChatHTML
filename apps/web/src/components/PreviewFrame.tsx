@@ -25,6 +25,114 @@ function applyPerformanceGuard(document: Document) {
   document.body.append(style);
 }
 
+function isElement(node: Node): node is Element {
+  return node.nodeType === Node.ELEMENT_NODE;
+}
+
+function mediaSrc(element: Element): string {
+  return element.getAttribute("src") || element.getAttribute("href") || "";
+}
+
+function shouldPreserveBySrc(current: Element, target: Element): boolean {
+  const tagName = current.tagName.toLowerCase();
+  if (!["img", "source", "video", "audio", "iframe"].includes(tagName)) {
+    return true;
+  }
+
+  const currentSrc = mediaSrc(current);
+  const targetSrc = mediaSrc(target);
+  return !currentSrc || !targetSrc || currentSrc === targetSrc;
+}
+
+function canPatchNode(current: Node, target: Node): boolean {
+  if (current.nodeType !== target.nodeType) {
+    return false;
+  }
+
+  if (!isElement(current) || !isElement(target)) {
+    return true;
+  }
+
+  return (
+    current.tagName.toLowerCase() === target.tagName.toLowerCase() &&
+    shouldPreserveBySrc(current, target)
+  );
+}
+
+function syncAttributes(current: Element, target: Element) {
+  Array.from(current.attributes).forEach((attribute) => {
+    if (!target.hasAttribute(attribute.name)) {
+      current.removeAttribute(attribute.name);
+    }
+  });
+
+  Array.from(target.attributes).forEach((attribute) => {
+    if (current.getAttribute(attribute.name) !== attribute.value) {
+      current.setAttribute(attribute.name, attribute.value);
+    }
+  });
+}
+
+function prepareMediaDefaults(root: ParentNode) {
+  root.querySelectorAll("img").forEach((image) => {
+    if (!image.hasAttribute("loading")) {
+      image.setAttribute("loading", "lazy");
+    }
+    if (!image.hasAttribute("decoding")) {
+      image.setAttribute("decoding", "async");
+    }
+  });
+}
+
+function patchNode(current: Node, target: Node) {
+  if (!canPatchNode(current, target)) {
+    current.parentNode?.replaceChild(target.cloneNode(true), current);
+    return;
+  }
+
+  if (!isElement(current) || !isElement(target)) {
+    if (current.textContent !== target.textContent) {
+      current.textContent = target.textContent;
+    }
+    return;
+  }
+
+  syncAttributes(current, target);
+  patchChildren(current, target);
+}
+
+function patchChildren(current: Node & ParentNode, target: ParentNode) {
+  const currentChildren = Array.from(current.childNodes);
+  const targetChildren = Array.from(target.childNodes);
+  const maxLength = Math.max(currentChildren.length, targetChildren.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const currentChild = currentChildren[index];
+    const targetChild = targetChildren[index];
+
+    if (!targetChild) {
+      if (currentChild?.parentNode === current) {
+        current.removeChild(currentChild);
+      }
+      continue;
+    }
+
+    if (!currentChild) {
+      current.appendChild(targetChild.cloneNode(true));
+      continue;
+    }
+
+    patchNode(currentChild, targetChild);
+  }
+}
+
+function patchBodyHtml(document: Document, html: string) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  prepareMediaDefaults(template.content);
+  patchChildren(document.body, template.content);
+}
+
 function runBodyScripts(document: Document) {
   document.body.querySelectorAll("script").forEach((script) => {
     const executableScript = document.createElement("script");
@@ -69,7 +177,7 @@ export function PreviewFrame({ snapshot, onRuntimeError }: PreviewFrameProps) {
         return;
       }
 
-      document.body.innerHTML = nextSnapshot.completedHtml;
+      patchBodyHtml(document, nextSnapshot.completedHtml);
       applyPerformanceGuard(document);
       runBodyScripts(document);
       renderedHtmlRef.current = nextSnapshot.completedHtml;
@@ -79,7 +187,7 @@ export function PreviewFrame({ snapshot, onRuntimeError }: PreviewFrameProps) {
     }
 
     completedHtmlRef.current = "";
-    document.body.innerHTML = nextSnapshot.completedHtml;
+    patchBodyHtml(document, nextSnapshot.completedHtml);
     applyPerformanceGuard(document);
     renderedHtmlRef.current = nextSnapshot.completedHtml;
     lastCommitTimeRef.current = performance.now();

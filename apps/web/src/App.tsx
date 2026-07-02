@@ -523,22 +523,93 @@ function getAppendMessageImages(message: AppendMessage): ImageAttachment[] {
 }
 
 type StreamThreadProps = {
+  activeSessionId: string;
   messages: ClientMessage[];
   onRuntimeError(id: string, error: RenderError): void;
 };
 
-function StreamThread({ messages, onRuntimeError }: StreamThreadProps) {
+const SESSION_OUTPUT_SCROLL_SETTLE_MS = 900;
+const SESSION_OUTPUT_SCROLL_RETRY_MS = [0, 80, 240, 520];
+
+function scrollToLastOutputStart(viewport: HTMLElement): boolean {
+  const outputs = viewport.querySelectorAll<HTMLElement>(".assistant-canvas");
+  const target = outputs.item(outputs.length - 1);
+
+  if (!target) {
+    return false;
+  }
+
+  const viewportRect = viewport.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const paddingTop = Number.parseFloat(getComputedStyle(viewport).paddingTop) || 0;
+  const top =
+    viewport.scrollTop + targetRect.top - viewportRect.top - paddingTop;
+
+  viewport.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+  return true;
+}
+
+function StreamThread({
+  activeSessionId,
+  messages,
+  onRuntimeError
+}: StreamThreadProps) {
   const isNewChat = useAuiState((state) => state.thread.messages.length === 0);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const messageById = useMemo(
     () => new Map(messages.map((message) => [message.id, message])),
     [messages]
   );
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+
+    if (!viewport) {
+      return undefined;
+    }
+
+    const timeoutIds: number[] = [];
+    const animationFrameId = window.requestAnimationFrame(() => {
+      scrollToLastOutputStart(viewport);
+    });
+
+    SESSION_OUTPUT_SCROLL_RETRY_MS.forEach((delay) => {
+      timeoutIds.push(
+        window.setTimeout(() => scrollToLastOutputStart(viewport), delay)
+      );
+    });
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => scrollToLastOutputStart(viewport));
+
+    if (resizeObserver) {
+      viewport
+        .querySelectorAll<HTMLElement>(
+          ".chat-row, .assistant-canvas, .preview-frame"
+        )
+        .forEach((element) => resizeObserver.observe(element));
+    }
+
+    const settleTimeoutId = window.setTimeout(() => {
+      resizeObserver?.disconnect();
+    }, SESSION_OUTPUT_SCROLL_SETTLE_MS);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      window.clearTimeout(settleTimeoutId);
+      resizeObserver?.disconnect();
+    };
+  }, [activeSessionId]);
 
   return (
     <ThreadPrimitive.Root
       className={`thread-root ${isNewChat ? "is-new" : "has-messages"}`}
     >
       <ThreadPrimitive.Viewport
+        ref={viewportRef}
         className={`message-list ${isNewChat ? "is-new" : "has-messages"}`}
         scrollToBottomOnRunStart
         scrollToBottomOnInitialize
@@ -1095,6 +1166,7 @@ export default function App() {
         }
       >
         <StreamThread
+          activeSessionId={sessionState.activeSessionId}
           messages={messages}
           onRuntimeError={handleRuntimeError}
         />
