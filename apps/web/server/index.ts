@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+import "./env.js";
 import express from "express";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -10,11 +10,7 @@ import { handleGetSessions, handleSaveSessions } from "./sessions.js";
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
-const workspaceRoot = path.resolve(projectRoot, "../..");
 const clientDist = path.join(projectRoot, "dist");
-
-dotenv.config({ path: path.join(workspaceRoot, ".env") });
-dotenv.config({ path: path.join(projectRoot, ".env"), override: true });
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 8787);

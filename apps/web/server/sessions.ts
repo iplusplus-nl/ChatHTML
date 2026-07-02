@@ -1,9 +1,10 @@
 import type { Request, Response } from "express";
+import "./env.js";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
-import { DatabaseSync } from "node:sqlite";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DatabaseSync } from "node:sqlite";
 
 type StoredMessage = {
   id: string;
@@ -48,6 +49,7 @@ const SESSION_STATE_KEY = "global";
 
 let saveQueue = Promise.resolve();
 let database: DatabaseSync | null = null;
+let sqliteUnavailable = false;
 
 function now(): number {
   return Date.now();
@@ -193,9 +195,39 @@ async function readLegacyJsonState(): Promise<StoredSessionState | null> {
   }
 }
 
-function getDatabase(): DatabaseSync {
+async function writeLegacyJsonState(state: StoredSessionState): Promise<void> {
+  await mkdir(path.dirname(stateFile), { recursive: true, mode: 0o700 });
+  await writeFile(stateFile, `${JSON.stringify(normalizeState(state))}\n`, {
+    encoding: "utf8",
+    mode: 0o600
+  });
+}
+
+async function loadDatabaseSync(): Promise<typeof DatabaseSync | null> {
+  try {
+    const sqlite = await import("node:sqlite");
+    return sqlite.DatabaseSync;
+  } catch (error) {
+    if (!sqliteUnavailable) {
+      sqliteUnavailable = true;
+      console.warn(
+        "SQLite session storage requires Node.js 22.5+; falling back to legacy JSON state.",
+        error
+      );
+    }
+
+    return null;
+  }
+}
+
+async function getDatabase(): Promise<DatabaseSync | null> {
   if (database) {
     return database;
+  }
+
+  const DatabaseSync = await loadDatabaseSync();
+  if (!DatabaseSync) {
+    return null;
   }
 
   database = new DatabaseSync(sqliteFile);
@@ -244,7 +276,11 @@ function writeSqliteState(db: DatabaseSync, state: StoredSessionState): void {
 
 async function readSessionState(): Promise<StoredSessionState> {
   await ensureSessionsDir();
-  const db = getDatabase();
+  const db = await getDatabase();
+
+  if (!db) {
+    return (await readLegacyJsonState()) ?? createEmptyState();
+  }
 
   try {
     const sqliteState = readSqliteState(db);
@@ -263,7 +299,13 @@ async function readSessionState(): Promise<StoredSessionState> {
 
 async function writeSessionState(state: StoredSessionState): Promise<void> {
   await ensureSessionsDir();
-  writeSqliteState(getDatabase(), state);
+  const db = await getDatabase();
+  if (!db) {
+    await writeLegacyJsonState(state);
+    return;
+  }
+
+  writeSqliteState(db, state);
 }
 
 export async function handleGetSessions(
