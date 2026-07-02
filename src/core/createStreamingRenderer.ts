@@ -4,6 +4,14 @@ import type { RenderError, RenderSnapshot, RenderStatus, StreamingRenderer } fro
 
 const SECURITY_RULES: Array<{ pattern: RegExp; message: string }> = [
   {
+    pattern: /<script\b[^>]*\bsrc\s*=/i,
+    message: "External script tags are blocked in StreamUI artifacts."
+  },
+  {
+    pattern: /<link\b[^>]*\brel\s*=\s*["']?stylesheet/i,
+    message: "External stylesheets are blocked in StreamUI artifacts."
+  },
+  {
     pattern: /\bfetch\s*\(/i,
     message: "Network fetch calls are blocked by the iframe CSP."
   },

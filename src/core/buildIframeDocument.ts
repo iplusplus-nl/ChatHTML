@@ -1,9 +1,9 @@
 const CSP = [
   "default-src 'none'",
   "img-src data: blob:",
-  "style-src 'unsafe-inline' https:",
-  "script-src 'unsafe-inline' https:",
-  "font-src data: https:",
+  "style-src 'unsafe-inline'",
+  "script-src 'unsafe-inline'",
+  "font-src data:",
   "connect-src 'none'",
   "media-src data: blob:",
   "frame-src 'none'",
