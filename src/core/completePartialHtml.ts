@@ -57,6 +57,21 @@ function stripUnsafeInlineAttributes(input: string): string {
     );
 }
 
+function stabilizeViewportHeightUnits(input: string): string {
+  return input.replace(
+    /\b(\d+(?:\.\d+)?)(dvh|svh|lvh|vh)\b/gi,
+    (_match, rawValue: string, unit: string) => {
+      const value = Number.parseFloat(rawValue);
+      if (!Number.isFinite(value)) {
+        return `${rawValue}${unit}`;
+      }
+
+      const px = Number((value * 7.2).toFixed(2));
+      return `min(${rawValue}${unit}, ${px}px)`;
+    }
+  );
+}
+
 function closeIncompleteStyleBlock(input: string): string {
   const lower = input.toLowerCase();
   const lastOpen = lower.lastIndexOf("<style");
@@ -128,7 +143,10 @@ export function completePartialHtml(
   const withoutBrokenTail = removeBrokenTrailingTag(input);
   const withoutScripts = stripScriptBlocks(withoutBrokenTail, allowScripts);
   const withoutUnsafeAttributes = stripUnsafeInlineAttributes(withoutScripts);
-  const withClosedStyle = closeIncompleteStyleBlock(withoutUnsafeAttributes);
+  const withStableViewportUnits = stabilizeViewportHeightUnits(
+    withoutUnsafeAttributes
+  );
+  const withClosedStyle = closeIncompleteStyleBlock(withStableViewportUnits);
 
   return appendMissingClosers(withClosedStyle);
 }

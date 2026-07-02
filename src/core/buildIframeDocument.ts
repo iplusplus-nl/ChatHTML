@@ -124,6 +124,35 @@ export function buildIframeDocument(completedHtml: string): string {
           }, "*");
         } catch {}
       };
+      const isExtensionNoise = (message = "", filename = "") => {
+        const text = String(message || "").toLowerCase();
+        const file = String(filename || "").toLowerCase();
+        const extensionSource =
+          file.includes("zotero") ||
+          file.includes("safari-web-extension:") ||
+          file.includes("moz-extension:") ||
+          file.includes("chrome-extension:") ||
+          file.includes("extension://");
+        const basename = file.split(/[\\\\/]/).pop() || file;
+        const injectedScript =
+          basename === "inject.js" || basename === "inject_safari.js";
+
+        if (text.includes("zotero") || text.includes("reportactiveurl")) {
+          return true;
+        }
+        if (extensionSource) {
+          return true;
+        }
+        if (
+          injectedScript &&
+          (text.includes("sandbox access violation") ||
+            text.includes("zotero.connector"))
+        ) {
+          return true;
+        }
+
+        return false;
+      };
       let lastHeight = 0;
       const measure = () => {
         const body = document.body;
@@ -153,15 +182,24 @@ export function buildIframeDocument(completedHtml: string): string {
         measure();
       });
       window.addEventListener("error", (event) => {
-        post("runtime", event.message);
+        if (isExtensionNoise(event.message, event.filename)) {
+          return;
+        }
+        post("runtime", event.message, { filename: event.filename || "" });
       });
       window.addEventListener("unhandledrejection", (event) => {
         const reason = event.reason && event.reason.message ? event.reason.message : event.reason;
+        if (isExtensionNoise(reason || "")) {
+          return;
+        }
         post("runtime", reason || "Unhandled promise rejection");
       });
       const originalError = console.error;
       console.error = (...args) => {
-        post("console", args.map(String).join(" "));
+        const message = args.map(String).join(" ");
+        if (!isExtensionNoise(message)) {
+          post("console", message);
+        }
         originalError.apply(console, args);
       };
       window.addEventListener("load", scheduleMeasure);

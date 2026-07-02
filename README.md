@@ -65,7 +65,7 @@ OPENROUTER_WEB_ALLOWED_DOMAINS=
 OPENROUTER_WEB_BLOCKED_DOMAINS=
 ```
 
-The sandboxed artifact can use HTTPS images, media, iframes, stylesheets, scripts, and CORS-friendly runtime requests. It still runs without `allow-same-origin`, and the renderer continues to block browser storage, cookies, parent/top/opener access, permissions APIs, and `document.write`.
+The sandboxed artifact can use HTTPS images, media, iframes, stylesheets, scripts, and CORS-friendly runtime requests. The preview iframe includes `allow-same-origin` so browser extensions that expect a page origin can run without noisy `null`-origin sandbox errors. The renderer still flags browser storage, cookies, parent/top/opener access, permissions APIs, and `document.write`.
 
 ## Runtime Protocol
 
@@ -95,11 +95,11 @@ The frontend parses the stream as it arrives:
 - Partial HTML is speculatively completed for live preview updates.
 - The iframe preloads default chat-response classes: `streamui-response`, `streamui-chat`, `streamui-muted`, `streamui-actions`, and `streamui-button`.
 - Models are prompted to use the default chat bubble classes for ordinary replies, and only add small custom style islands when a visual or interaction needs them.
-- Models are prompted to avoid generic software cards, dashboards, pricing panels, and SaaS layouts unless the user explicitly asks for them.
+- Models are prompted to avoid generic rounded-card grids, dashboards, pricing panels, and SaaS layouts unless the user explicitly asks for them, and to pursue more art-directed visual compositions for visual prompts.
 - User-facing language should be placed inside the HTML artifact as typography, labels, captions, or annotations.
 - Script blocks are ignored while streaming and only allowed once the artifact is complete.
-- The artifact renders inside `sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"` without `allow-same-origin`.
-- The iframe CSP allows HTTPS external resources and runtime requests, while keeping objects, forms, base URLs, and same-origin access disabled.
+- The artifact renders inside `sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"`.
+- The iframe CSP allows HTTPS external resources and runtime requests, while keeping objects, forms, and base URLs disabled.
 - Completed artifacts can be downloaded as a full-height PNG from the artifact toolbar.
 - A collapsible Raw stream panel keeps the original model output available for debugging.
 

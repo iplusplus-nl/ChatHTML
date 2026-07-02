@@ -1,3 +1,4 @@
+import { isIgnoredRuntimeError } from "../core/ignoredRuntimeErrors";
 import type { RenderError } from "../core/types";
 
 type ErrorPanelProps = {
@@ -5,7 +6,9 @@ type ErrorPanelProps = {
 };
 
 export function ErrorPanel({ errors }: ErrorPanelProps) {
-  if (errors.length === 0) {
+  const visibleErrors = errors.filter((error) => !isIgnoredRuntimeError(error));
+
+  if (visibleErrors.length === 0) {
     return null;
   }
 
@@ -13,7 +16,7 @@ export function ErrorPanel({ errors }: ErrorPanelProps) {
     <div className="error-panel">
       <strong>Runtime notes</strong>
       <ul>
-        {errors.map((error) => (
+        {visibleErrors.map((error) => (
           <li key={`${error.kind}-${error.timestamp}-${error.message}`}>
             <span>{error.kind}</span>
             {error.message}

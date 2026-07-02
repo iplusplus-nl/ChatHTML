@@ -64,6 +64,10 @@ type StreamEvent = {
 
 type ToolStreamState = {
   seenToolLabels: Set<string>;
+  contentChars: number;
+  contentEvents: number;
+  reasoningChars: number;
+  reasoningEvents: number;
 };
 
 type OpenRouterServerTool =
@@ -311,6 +315,12 @@ function buildCanvasContextPrompt(canvas: CanvasContext): string {
   <section class="streamui-response"><div class="streamui-chat"><p>...</p></div></section>
 - Put all conversational language inside the HTML artifact. Keep <chat></chat> empty.
 - Be natural and direct. Do not adopt a special persona.
+- For visual, interactive, educational, spatial, or exploratory requests, make a distinctive crafted artifact rather than a conventional rounded-card layout.
+- Avoid generic colorful cards, dashboards, KPI tiles, pricing panels, feature grids, and SaaS-like composition unless explicitly requested.
+- Prefer art-directed compositions: annotated scenes, editorial spreads, maps, instruments, timelines, specimen sheets, exploded diagrams, posters, stage sets, spatial canvases, layered cutaways, kinetic miniatures, or object-focused interfaces.
+- Use cards only when structurally necessary, and make surfaces feel integrated through precise spacing, restrained radius, tactile borders, shadow, texture, unusual geometry, or material contrast.
+- Keep the design polished: coherent palette, strong typographic hierarchy, balanced negative space, clear focal point, and details that reward inspection without becoming clutter.
+- Keep the artifact focused: choose a strong visual idea and avoid repetitive filler, giant SVG paths, large embedded data, or exhaustive code unless the user explicitly asks for it.
 - The user may attach images. Inspect uploaded images directly and treat them as first-class context for analysis, OCR, comparison, critique, or visual redesign requests.
 - When useful, combine observations from uploaded images with external web sources in one coherent HTML artifact.
 - You can use server-side web_search, web_fetch, and datetime tools when the user asks for a page, URL, external resource, or current information.
@@ -323,7 +333,8 @@ function buildCanvasContextPrompt(canvas: CanvasContext): string {
 - For custom visuals, make progress visible while streaming by alternating small style islands and matching visible HTML.
 - After <streamui>, emit visible HTML quickly. If custom CSS is needed, use one tiny <style> block, then immediately emit the matching HTML.
 - Keep each custom style island around 600 characters or less. Do not output one huge global CSS block before the visible canvas.
-- Unless the user asks for product UI, avoid software cards, dashboards, pricing panels, feature grids, and generic SaaS composition.
+- Do not use vh, dvh, svh, or lvh units for artifact section heights; the iframe auto-expands, so viewport-height layouts can create resize feedback loops. Prefer intrinsic flow, aspect-ratio, clamp(), min-height in px/rem, or content-driven sizing.
+- The first visible artifact should establish a strong visual direction quickly: a focal element, styled title area, scene scaffold, diagram frame, or spatial composition.
 - Keep <script> last. The script only runs after the stream is complete.`;
 }
 
@@ -376,9 +387,23 @@ function toOpenRouterMessage(message: ClientChatMessage): OpenRouterChatMessage 
   };
 }
 
-function writeStreamEvent(res: Response, event: StreamEvent): void {
+function writeStreamEvent(
+  res: Response,
+  event: StreamEvent,
+  state?: ToolStreamState
+): void {
   if (!event.text) {
     return;
+  }
+
+  if (state) {
+    if (event.type === "content") {
+      state.contentChars += event.text.length;
+      state.contentEvents += 1;
+    } else {
+      state.reasoningChars += event.text.length;
+      state.reasoningEvents += 1;
+    }
   }
 
   res.write(`${JSON.stringify(event)}\n`);
@@ -435,7 +460,7 @@ function writeToolCallHints(
     }
 
     state.seenToolLabels.add(label);
-    writeStreamEvent(res, { type: "reasoning", text: label });
+    writeStreamEvent(res, { type: "reasoning", text: label }, state);
   }
 }
 
@@ -525,13 +550,13 @@ function writeOpenRouterEvent(
       "";
 
     if (reasoning) {
-      writeStreamEvent(res, { type: "reasoning", text: reasoning });
+      writeStreamEvent(res, { type: "reasoning", text: reasoning }, state);
     }
     if (content) {
-      writeStreamEvent(res, { type: "content", text: content });
+      writeStreamEvent(res, { type: "content", text: content }, state);
     }
   } catch {
-    writeStreamEvent(res, { type: "content", text: data });
+    writeStreamEvent(res, { type: "content", text: data }, state);
   }
 }
 
@@ -567,8 +592,13 @@ export async function handleOpenRouterChat(
     body.reasoningEffort ?? process.env.OPENROUTER_REASONING_EFFORT
   );
   const tools = buildOpenRouterTools();
+  const requestId = Math.random().toString(36).slice(2, 9);
+  const startedAt = Date.now();
 
   try {
+    console.info(
+      `[chat:${requestId}] start model=${model} messages=${messages.length} reasoning=${reasoningEffort}`
+    );
     const openRouterResponse = await fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
       method: "POST",
       headers: {
@@ -623,7 +653,11 @@ export async function handleOpenRouterChat(
     const reader = openRouterResponse.body.getReader();
     const decoder = new TextDecoder();
     const toolStreamState: ToolStreamState = {
-      seenToolLabels: new Set()
+      seenToolLabels: new Set(),
+      contentChars: 0,
+      contentEvents: 0,
+      reasoningChars: 0,
+      reasoningEvents: 0
     };
     let buffer = "";
 
@@ -651,9 +685,13 @@ export async function handleOpenRouterChat(
     }
 
     res.end();
+    console.info(
+      `[chat:${requestId}] complete duration_ms=${Date.now() - startedAt} content_chars=${toolStreamState.contentChars} content_events=${toolStreamState.contentEvents} reasoning_chars=${toolStreamState.reasoningChars} reasoning_events=${toolStreamState.reasoningEvents}`
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown OpenRouter proxy error.";
+    console.error(`[chat:${requestId}] error ${message}`);
 
     if (!res.headersSent) {
       res.status(500).type("text/plain").send(message);
