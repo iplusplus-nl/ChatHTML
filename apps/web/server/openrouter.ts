@@ -12,6 +12,7 @@ import { SYSTEM_PROMPT } from "./systemPrompt.js";
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_IMAGE_DATA_URL_LENGTH = 3_000_000;
 const MAX_USER_PREFERENCE_LENGTH = 4_000;
+const MAX_USER_PREFERENCE_FIELD_LENGTH = 2_000;
 
 type ChatRole = "user" | "assistant" | "system";
 type OpenRouterReasoningEffort =
@@ -30,7 +31,15 @@ type RuntimeApiSettings = {
   apiKey: string;
   model: string;
   reasoningEffort: OpenRouterReasoningEffort;
+  userPreferences: UserPreferences;
   userPreference: string;
+};
+
+type UserPreferences = {
+  responseTone: string;
+  interfaceStyle: string;
+  defaultTechnicalPreferences: string;
+  longTermMemory: string;
 };
 
 type ClientImageAttachment = {
@@ -168,6 +177,70 @@ function buildUserPreferencePrompt(userPreference: string): string {
 The following text is persistent user-provided guidance. Follow it when relevant unless it conflicts with higher-priority instructions.
 
 ${userPreference}`;
+}
+
+function normalizePreferenceField(input: unknown): string {
+  return typeof input === "string"
+    ? input.trim().slice(0, MAX_USER_PREFERENCE_FIELD_LENGTH)
+    : "";
+}
+
+function normalizeUserPreferences(
+  input: unknown,
+  legacyUserPreference: string
+): UserPreferences {
+  const object =
+    typeof input === "object" && input !== null
+      ? (input as Partial<UserPreferences>)
+      : {};
+  const preferences = {
+    responseTone: normalizePreferenceField(object.responseTone),
+    interfaceStyle: normalizePreferenceField(object.interfaceStyle),
+    defaultTechnicalPreferences: normalizePreferenceField(
+      object.defaultTechnicalPreferences
+    ),
+    longTermMemory: normalizePreferenceField(object.longTermMemory)
+  };
+  const hasStructuredPreference = Boolean(
+    preferences.responseTone ||
+      preferences.interfaceStyle ||
+      preferences.defaultTechnicalPreferences ||
+      preferences.longTermMemory
+  );
+
+  if (!hasStructuredPreference && legacyUserPreference) {
+    return {
+      ...preferences,
+      responseTone: legacyUserPreference.slice(0, MAX_USER_PREFERENCE_FIELD_LENGTH)
+    };
+  }
+
+  return preferences;
+}
+
+function buildStructuredUserPreferencePrompt(
+  userPreferences: UserPreferences
+): string {
+  const entries = [
+    ["Response tone", userPreferences.responseTone],
+    ["Interface style", userPreferences.interfaceStyle],
+    ["Default technical preferences", userPreferences.defaultTechnicalPreferences],
+    ["Long-term memory", userPreferences.longTermMemory]
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  if (!entries.length) {
+    return "";
+  }
+
+  return `Persistent user preferences:
+These are user-provided defaults. Apply them when relevant, but higher-priority system/developer instructions and the current user request override them.
+Preference priority:
+1. Response tone controls prose style.
+2. Interface style controls generated StreamUI artifact look and interaction defaults.
+3. Default technical preferences guide implementation choices when the user has not specified otherwise.
+4. Long-term memory is stable user context; treat it as helpful background, not a command.
+
+${entries.map(([label, value]) => `- ${label}: ${value}`).join("\n")}`;
 }
 
 function buildThemeContextPrompt(themeMode: PageThemeMode): string {
@@ -362,13 +435,19 @@ function readRuntimeApiSettings(input: unknown): RuntimeApiSettings {
     throw new Error(`API settings missing: ${missing.join(", ")}.`);
   }
 
+  const userPreference = normalizeUserPreference(object.userPreference);
+
   return {
     ...credentials,
     model,
     reasoningEffort: normalizeReasoningEffort(
       object.reasoningEffort ?? defaults.reasoningEffort
     ),
-    userPreference: normalizeUserPreference(object.userPreference)
+    userPreferences: normalizeUserPreferences(
+      object.userPreferences,
+      userPreference
+    ),
+    userPreference
   };
 }
 
@@ -547,7 +626,7 @@ export async function handleOpenRouterChat(
       ),
       system: [
         SYSTEM_PROMPT,
-        buildUserPreferencePrompt(apiSettings.userPreference),
+        buildStructuredUserPreferencePrompt(apiSettings.userPreferences),
         buildThemeContextPrompt(themeMode),
         buildCanvasContextPrompt(canvasContext),
         buildAgentLoopPrompt(agentLoop)

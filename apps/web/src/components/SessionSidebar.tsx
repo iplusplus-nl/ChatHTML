@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   Check,
+  Download,
+  Eraser,
   KeyRound,
   Menu,
   MoreHorizontal,
@@ -12,13 +14,15 @@ import {
   SquarePen,
   Sun,
   Trash2,
+  Upload,
   UserRound,
   X
 } from "lucide-react";
 import {
   API_KEY_SOURCE_OPTIONS,
   API_PROVIDER_PRESETS,
-  MAX_USER_PREFERENCE_LENGTH,
+  DEFAULT_USER_PREFERENCES,
+  MAX_USER_PREFERENCE_FIELD_LENGTH,
   REASONING_EFFORT_OPTIONS,
   getDefaultModelsEndpoint,
   getProviderPreset,
@@ -26,10 +30,12 @@ import {
   getSelectableModelOptions,
   hasCompleteApiSettings,
   normalizeApiSettings,
+  normalizeUserPreferences,
   type ApiKeySource,
   type ApiProviderId,
   type ApiSettings,
-  type ReasoningEffort
+  type ReasoningEffort,
+  type UserPreferences
 } from "../core/apiSettings";
 import {
   SEARCH_BROWSER_ENGINE_OPTIONS,
@@ -57,8 +63,40 @@ export type SessionListItem = {
 };
 
 type SettingsSection = "api" | "preferences" | "search";
+type UserPreferenceKey = keyof UserPreferences;
 
 const COMPACT_SIDEBAR_QUERY = "(max-width: 720px), (orientation: portrait)";
+const USER_PREFERENCE_FIELDS: Array<{
+  key: UserPreferenceKey;
+  label: string;
+  rows: number;
+  placeholder: string;
+}> = [
+  {
+    key: "responseTone",
+    label: "Response Tone",
+    rows: 3,
+    placeholder: "Warm, concise, Chinese by default..."
+  },
+  {
+    key: "interfaceStyle",
+    label: "Interface Style",
+    rows: 3,
+    placeholder: "Dense controls, restrained cards, compact dashboards..."
+  },
+  {
+    key: "defaultTechnicalPreferences",
+    label: "Technical Defaults",
+    rows: 3,
+    placeholder: "TypeScript, minimal dependencies, test risky changes..."
+  },
+  {
+    key: "longTermMemory",
+    label: "Long-Term Memory",
+    rows: 4,
+    placeholder: "Stable facts and working preferences to remember..."
+  }
+];
 
 function getInitialSidebarCollapsed(): boolean {
   if (typeof window === "undefined") {
@@ -153,6 +191,10 @@ export function SessionSidebar({
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [selectedFetchedModels, setSelectedFetchedModels] = useState<string[]>([]);
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
+  const [preferenceImportError, setPreferenceImportError] = useState<string | null>(
+    null
+  );
+  const preferenceFileInputRef = useRef<HTMLInputElement | null>(null);
   const activeApiKeyStatus = getEnvironmentKeyStatus(
     runtimeSettings?.api.environmentKeys,
     getApiKeyEnvironmentName(apiSettings)
@@ -199,6 +241,7 @@ export function SessionSidebar({
     if (isSettingsOpen) {
       setDraftApiSettings(apiSettings);
       setDraftSearchSettings(searchSettings);
+      setPreferenceImportError(null);
     }
   }, [apiSettings, isSettingsOpen, searchSettings]);
 
@@ -217,6 +260,21 @@ export function SessionSidebar({
   const updateSearchDraft = (patch: Partial<SearchSettings>) => {
     setDraftSearchSettings((current) =>
       normalizeSearchSettings({ ...current, ...patch })
+    );
+  };
+
+  const updateUserPreferenceDraft = (
+    key: UserPreferenceKey,
+    value: string
+  ) => {
+    setDraftApiSettings((current) =>
+      normalizeApiSettings({
+        ...current,
+        userPreferences: {
+          ...current.userPreferences,
+          [key]: value
+        }
+      })
     );
   };
 
@@ -315,6 +373,67 @@ export function SessionSidebar({
         modelOptions
       });
     });
+  };
+
+  const handleExportPreferences = () => {
+    const blob = new Blob(
+      [JSON.stringify(draftApiSettings.userPreferences, null, 2)],
+      { type: "application/json;charset=utf-8" }
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "streamui-preferences.json";
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  };
+
+  const handleImportPreferences = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const object =
+        typeof parsed === "object" && parsed !== null
+          ? (parsed as Record<string, unknown>)
+          : {};
+      const source =
+        typeof object.userPreferences === "object" && object.userPreferences !== null
+          ? object.userPreferences
+          : parsed;
+      const legacyPreference =
+        typeof object.userPreference === "string" ? object.userPreference : "";
+      const userPreferences = normalizeUserPreferences(source, legacyPreference);
+      setDraftApiSettings((current) =>
+        normalizeApiSettings({
+          ...current,
+          userPreferences
+        })
+      );
+      setPreferenceImportError(null);
+    } catch {
+      setPreferenceImportError("Could not import preferences.");
+    }
+  };
+
+  const handleClearPreferences = () => {
+    setDraftApiSettings((current) =>
+      normalizeApiSettings({
+        ...current,
+        userPreferences: DEFAULT_USER_PREFERENCES,
+        userPreference: ""
+      })
+    );
+    setPreferenceImportError(null);
   };
 
   const handleSaveSettings = () => {
@@ -769,19 +888,78 @@ export function SessionSidebar({
                     </label>
                   </>
                 ) : settingsSection === "preferences" ? (
-                  <label className="settings-row settings-row-textarea">
-                    <span>User Preferences</span>
-                    <textarea
-                      value={draftApiSettings.userPreference}
-                      maxLength={MAX_USER_PREFERENCE_LENGTH}
-                      rows={4}
-                      placeholder="Preferred tone or response style"
-                      spellCheck={false}
-                      onChange={(event) =>
-                        updateApiDraft({ userPreference: event.target.value })
-                      }
-                    />
-                  </label>
+                  <>
+                    {USER_PREFERENCE_FIELDS.map((field) => (
+                      <label
+                        className="settings-row settings-row-textarea"
+                        key={field.key}
+                      >
+                        <span>{field.label}</span>
+                        <textarea
+                          value={draftApiSettings.userPreferences[field.key]}
+                          maxLength={MAX_USER_PREFERENCE_FIELD_LENGTH}
+                          rows={field.rows}
+                          placeholder={field.placeholder}
+                          spellCheck={false}
+                          onChange={(event) =>
+                            updateUserPreferenceDraft(
+                              field.key,
+                              event.target.value
+                            )
+                          }
+                        />
+                      </label>
+                    ))}
+                    <div className="settings-row">
+                      <span>Preferences File</span>
+                      <div className="settings-control-stack">
+                        <div className="settings-preference-actions">
+                          <button
+                            className="settings-small-button"
+                            type="button"
+                            onClick={() =>
+                              preferenceFileInputRef.current?.click()
+                            }
+                          >
+                            <Upload size={14} strokeWidth={2.1} aria-hidden="true" />
+                            <span>Import</span>
+                          </button>
+                          <button
+                            className="settings-small-button"
+                            type="button"
+                            onClick={handleExportPreferences}
+                          >
+                            <Download
+                              size={14}
+                              strokeWidth={2.1}
+                              aria-hidden="true"
+                            />
+                            <span>Export</span>
+                          </button>
+                          <button
+                            className="settings-small-button"
+                            type="button"
+                            onClick={handleClearPreferences}
+                          >
+                            <Eraser size={14} strokeWidth={2.1} aria-hidden="true" />
+                            <span>Clear</span>
+                          </button>
+                        </div>
+                        <input
+                          ref={preferenceFileInputRef}
+                          type="file"
+                          accept="application/json,.json"
+                          hidden
+                          onChange={handleImportPreferences}
+                        />
+                        {preferenceImportError ? (
+                          <span className="settings-hint">
+                            {preferenceImportError}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <label className="settings-row">

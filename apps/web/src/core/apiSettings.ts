@@ -20,7 +20,15 @@ export type ApiSettings = {
   modelOptions: string[];
   modelsEndpoint: string;
   reasoningEffort: ReasoningEffort;
+  userPreferences: UserPreferences;
   userPreference: string;
+};
+
+export type UserPreferences = {
+  responseTone: string;
+  interfaceStyle: string;
+  defaultTechnicalPreferences: string;
+  longTermMemory: string;
 };
 
 export type ApiProviderPreset = {
@@ -35,6 +43,14 @@ export const API_SETTINGS_STORAGE_KEY = "streamui.apiSettings.v1";
 export const MAX_MODEL_OPTIONS = 120;
 export const MAX_MODEL_ID_LENGTH = 180;
 export const MAX_USER_PREFERENCE_LENGTH = 4_000;
+export const MAX_USER_PREFERENCE_FIELD_LENGTH = 2_000;
+
+export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  responseTone: "",
+  interfaceStyle: "",
+  defaultTechnicalPreferences: "",
+  longTermMemory: ""
+};
 
 export const API_PROVIDER_PRESETS: ApiProviderPreset[] = [
   {
@@ -99,6 +115,7 @@ export const DEFAULT_API_SETTINGS: ApiSettings = {
   modelOptions: [DEFAULT_PRESET.model],
   modelsEndpoint: getDefaultModelsEndpoint(DEFAULT_PRESET.baseUrl),
   reasoningEffort: DEFAULT_PRESET.reasoningEffort,
+  userPreferences: DEFAULT_USER_PREFERENCES,
   userPreference: ""
 };
 
@@ -169,11 +186,99 @@ export function getProviderPreset(id: ApiProviderId): ApiProviderPreset {
   );
 }
 
+function normalizePreferenceField(value: unknown): string {
+  return typeof value === "string"
+    ? value.slice(0, MAX_USER_PREFERENCE_FIELD_LENGTH)
+    : "";
+}
+
+function hasUserPreferenceContent(preferences: UserPreferences): boolean {
+  return Boolean(
+    preferences.responseTone.trim() ||
+      preferences.interfaceStyle.trim() ||
+      preferences.defaultTechnicalPreferences.trim() ||
+      preferences.longTermMemory.trim()
+  );
+}
+
+export function normalizeUserPreferences(
+  input: unknown,
+  legacyUserPreference = ""
+): UserPreferences {
+  const object =
+    typeof input === "object" && input !== null
+      ? (input as Partial<UserPreferences>)
+      : {};
+  const preferences = {
+    responseTone: normalizePreferenceField(object.responseTone),
+    interfaceStyle: normalizePreferenceField(object.interfaceStyle),
+    defaultTechnicalPreferences: normalizePreferenceField(
+      object.defaultTechnicalPreferences
+    ),
+    longTermMemory: normalizePreferenceField(object.longTermMemory)
+  };
+
+  if (!hasUserPreferenceContent(preferences) && legacyUserPreference) {
+    return {
+      ...preferences,
+      responseTone: legacyUserPreference.slice(0, MAX_USER_PREFERENCE_FIELD_LENGTH)
+    };
+  }
+
+  return preferences;
+}
+
+export function serializeUserPreferences(
+  preferences: UserPreferences
+): UserPreferences {
+  const normalized = normalizeUserPreferences(preferences);
+
+  return {
+    responseTone: normalized.responseTone.trim(),
+    interfaceStyle: normalized.interfaceStyle.trim(),
+    defaultTechnicalPreferences:
+      normalized.defaultTechnicalPreferences.trim(),
+    longTermMemory: normalized.longTermMemory.trim()
+  };
+}
+
+export function formatUserPreferenceFallback(
+  preferences: UserPreferences
+): string {
+  const serialized = serializeUserPreferences(preferences);
+  const entries = [
+    ["Response tone", serialized.responseTone],
+    ["Interface style", serialized.interfaceStyle],
+    ["Default technical preferences", serialized.defaultTechnicalPreferences],
+    ["Long-term memory", serialized.longTermMemory]
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  if (!entries.length) {
+    return "";
+  }
+
+  if (entries.length === 1 && entries[0][0] === "Response tone") {
+    return entries[0][1];
+  }
+
+  return entries.map(([label, value]) => `${label}: ${value}`).join("\n");
+}
+
 export function normalizeApiSettings(input: unknown): ApiSettings {
   const object =
     typeof input === "object" && input !== null
       ? (input as Partial<ApiSettings>)
       : {};
+  const legacyUserPreference =
+    typeof object.userPreference === "string"
+      ? object.userPreference.slice(0, MAX_USER_PREFERENCE_LENGTH)
+      : "";
+  const userPreferences = normalizeUserPreferences(
+    object.userPreferences,
+    legacyUserPreference
+  );
+  const hasStructuredPreferences =
+    typeof object.userPreferences === "object" && object.userPreferences !== null;
   const providerId = isProviderId(object.providerId)
     ? object.providerId
     : DEFAULT_API_SETTINGS.providerId;
@@ -206,10 +311,13 @@ export function normalizeApiSettings(input: unknown): ApiSettings {
     reasoningEffort: isReasoningEffort(object.reasoningEffort)
       ? object.reasoningEffort
       : preset.reasoningEffort,
-    userPreference:
-      typeof object.userPreference === "string"
-        ? object.userPreference.slice(0, MAX_USER_PREFERENCE_LENGTH)
-        : ""
+    userPreferences,
+    userPreference: hasStructuredPreferences
+      ? formatUserPreferenceFallback(userPreferences).slice(
+          0,
+          MAX_USER_PREFERENCE_LENGTH
+        )
+      : legacyUserPreference
   };
 }
 
@@ -248,10 +356,16 @@ export function saveApiSettings(settings: ApiSettings): void {
 
 export function serializeApiSettings(settings: ApiSettings): ApiSettings {
   const normalized = normalizeApiSettings(settings);
+  const userPreferences = serializeUserPreferences(normalized.userPreferences);
+
   return {
     ...normalized,
     apiKey: normalized.apiKeySource === "manual" ? normalized.apiKey : "",
-    userPreference: normalized.userPreference.trim()
+    userPreferences,
+    userPreference: formatUserPreferenceFallback(userPreferences).slice(
+      0,
+      MAX_USER_PREFERENCE_LENGTH
+    )
   };
 }
 

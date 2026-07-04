@@ -18,6 +18,13 @@ export type RuntimeApiCredentials = {
   apiKey: string;
 };
 
+export type RuntimeUserPreferences = {
+  responseTone: "";
+  interfaceStyle: "";
+  defaultTechnicalPreferences: "";
+  longTermMemory: "";
+};
+
 export type RuntimeApiDefaults = {
   providerId: "openrouter";
   providerName: "OpenRouter";
@@ -28,6 +35,7 @@ export type RuntimeApiDefaults = {
   modelOptions: string[];
   modelsEndpoint: string;
   reasoningEffort: RuntimeReasoningEffort;
+  userPreferences: RuntimeUserPreferences;
   userPreference: "";
 };
 
@@ -130,6 +138,12 @@ export function getRuntimeApiDefaults(): RuntimeApiDefaults {
     reasoningEffort: normalizeRuntimeReasoningEffort(
       envString("OPENROUTER_REASONING_EFFORT")
     ),
+    userPreferences: {
+      responseTone: "",
+      interfaceStyle: "",
+      defaultTechnicalPreferences: "",
+      longTermMemory: ""
+    },
     userPreference: ""
   };
 }
