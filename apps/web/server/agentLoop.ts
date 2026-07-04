@@ -435,7 +435,7 @@ export async function runStreamUiAgentLoop({
     "Generate the final StreamUI HTML response from the available context.";
   let summary = "Planning final response.";
 
-  onStatus?.("Planning tool use...");
+  onStatus?.("Thinking...");
 
   try {
     for (let index = 1; index <= maxSteps; index += 1) {

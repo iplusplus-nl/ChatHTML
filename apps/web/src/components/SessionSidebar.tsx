@@ -41,6 +41,11 @@ import {
   type SearchProvider,
   type SearchSettings
 } from "../core/searchSettings";
+import {
+  getEnvironmentKeyStatus,
+  type EnvironmentKeyStatus,
+  type RuntimeSettingsSummary
+} from "../core/runtimeSettings";
 import { fetchModelCatalog } from "../features/settings/modelCatalog";
 import { ModelImportDialog } from "./ModelImportDialog";
 
@@ -70,6 +75,7 @@ type SessionSidebarProps = {
   themeMode: ThemeMode;
   apiSettings: ApiSettings;
   searchSettings: SearchSettings;
+  runtimeSettings: RuntimeSettingsSummary | null;
   onNewSession(): void;
   onSelectSession(id: string): void;
   onDeleteSession(id: string): void;
@@ -78,6 +84,42 @@ type SessionSidebarProps = {
   onSearchSettingsChange(settings: SearchSettings): void;
 };
 
+function getSearchEnvironmentKeyNames(provider: SearchProvider): string[] {
+  if (provider === "auto") {
+    return ["BRAVE_SEARCH_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY"];
+  }
+  if (provider === "brave") {
+    return ["BRAVE_SEARCH_API_KEY"];
+  }
+  if (provider === "tavily") {
+    return ["TAVILY_API_KEY"];
+  }
+  if (provider === "serper") {
+    return ["SERPER_API_KEY"];
+  }
+
+  return [];
+}
+
+function formatEnvironmentStatus(
+  name: string,
+  status: EnvironmentKeyStatus | null
+): string {
+  if (!status) {
+    return `${name}: checking`;
+  }
+
+  return `${name}: ${status.configured ? "set" : "missing"}`;
+}
+
+function getEnvironmentStatusClass(status: EnvironmentKeyStatus | null): string {
+  if (!status) {
+    return "is-pending";
+  }
+
+  return status.configured ? "is-configured" : "is-missing";
+}
+
 export function SessionSidebar({
   sessions,
   activeSessionId,
@@ -85,6 +127,7 @@ export function SessionSidebar({
   themeMode,
   apiSettings,
   searchSettings,
+  runtimeSettings,
   onNewSession,
   onSelectSession,
   onDeleteSession,
@@ -110,12 +153,29 @@ export function SessionSidebar({
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [selectedFetchedModels, setSelectedFetchedModels] = useState<string[]>([]);
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
-  const apiSettingsComplete = hasCompleteApiSettings(apiSettings);
+  const activeApiKeyStatus = getEnvironmentKeyStatus(
+    runtimeSettings?.api.environmentKeys,
+    getApiKeyEnvironmentName(apiSettings)
+  );
+  const draftApiKeyStatus = getEnvironmentKeyStatus(
+    runtimeSettings?.api.environmentKeys,
+    getApiKeyEnvironmentName(draftApiSettings)
+  );
+  const apiSettingsComplete =
+    hasCompleteApiSettings(apiSettings) &&
+    (apiSettings.apiKeySource !== "environment" ||
+      activeApiKeyStatus?.configured !== false);
   const searchAllowsManualKey = searchProviderNeedsApiKey(
     draftSearchSettings.provider
   );
   const searchUsesEnvironmentKeys =
     draftSearchSettings.provider === "auto" || searchAllowsManualKey;
+  const searchKeyStatuses = getSearchEnvironmentKeyNames(
+    draftSearchSettings.provider
+  ).map((name) => ({
+    name,
+    status: getEnvironmentKeyStatus(runtimeSettings?.search.environmentKeys, name)
+  }));
   const draftSelectableModels = getSelectableModelOptions(draftApiSettings);
 
   useEffect(() => {
@@ -592,8 +652,15 @@ export function SessionSidebar({
                           }
                         />
                         {draftApiSettings.apiKeySource === "environment" ? (
-                          <span className="settings-hint">
-                            {getApiKeyEnvironmentName(draftApiSettings)}
+                          <span
+                            className={`settings-hint settings-env-status ${getEnvironmentStatusClass(
+                              draftApiKeyStatus
+                            )}`}
+                          >
+                            {formatEnvironmentStatus(
+                              getApiKeyEnvironmentName(draftApiSettings),
+                              draftApiKeyStatus
+                            )}
                           </span>
                         ) : null}
                       </div>
@@ -800,10 +867,12 @@ export function SessionSidebar({
                         getSearchProviderApiKeyEnvironmentName(
                           draftSearchSettings
                         ) ? (
-                          <span className="settings-hint">
-                            {getSearchProviderApiKeyEnvironmentName(
-                              draftSearchSettings
-                            )}
+                          <span className="settings-hint settings-env-list">
+                            {searchKeyStatuses
+                              .map(({ name, status }) =>
+                                formatEnvironmentStatus(name, status)
+                              )
+                              .join(" · ")}
                           </span>
                         ) : null}
                       </div>

@@ -3,6 +3,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { streamText, type ModelMessage, type TextStreamPart } from "ai";
 import { buildAgentLoopPrompt, runStreamUiAgentLoop } from "./agentLoop.js";
 import {
+  getRuntimeApiDefaults,
   readRuntimeApiCredentials,
   type ApiKeySource
 } from "./runtimeApiSettings.js";
@@ -331,12 +332,16 @@ function normalizeReasoningEffort(value: unknown): OpenRouterReasoningEffort {
 }
 
 function readRuntimeApiSettings(input: unknown): RuntimeApiSettings {
+  const defaults = getRuntimeApiDefaults();
   const object =
     typeof input === "object" && input !== null
       ? (input as Record<string, unknown>)
       : {};
   const credentials = readRuntimeApiCredentials(input);
-  const model = typeof object.model === "string" ? object.model.trim() : "";
+  const modelValue = typeof object.model === "string" ? object.model.trim() : "";
+  const model =
+    modelValue ||
+    (Object.prototype.hasOwnProperty.call(object, "model") ? "" : defaults.model);
   const missing: string[] = [];
 
   if (!credentials.baseUrl) {
@@ -360,7 +365,9 @@ function readRuntimeApiSettings(input: unknown): RuntimeApiSettings {
   return {
     ...credentials,
     model,
-    reasoningEffort: normalizeReasoningEffort(object.reasoningEffort),
+    reasoningEffort: normalizeReasoningEffort(
+      object.reasoningEffort ?? defaults.reasoningEffort
+    ),
     userPreference: normalizeUserPreference(object.userPreference)
   };
 }

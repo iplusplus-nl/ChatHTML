@@ -227,6 +227,14 @@ export function loadApiSettings(): ApiSettings {
   }
 }
 
+export function hasSavedApiSettings(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.localStorage.getItem(API_SETTINGS_STORAGE_KEY) !== null;
+}
+
 export function saveApiSettings(settings: ApiSettings): void {
   if (typeof window === "undefined") {
     return;

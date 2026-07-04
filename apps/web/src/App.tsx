@@ -23,6 +23,7 @@ import {
   imageAttachmentToCompleteAttachment
 } from "./core/assistantAttachments";
 import {
+  hasSavedApiSettings,
   loadApiSettings,
   getSelectableModelOptions,
   normalizeApiSettings,
@@ -38,6 +39,10 @@ import {
   serializeSearchSettings,
   type SearchSettings
 } from "./core/searchSettings";
+import {
+  loadRuntimeSettings,
+  type RuntimeSettingsSummary
+} from "./core/runtimeSettings";
 import {
   createEmptySession,
   createId,
@@ -390,6 +395,8 @@ export default function App() {
   const [apiSettings, setApiSettings] = useState<ApiSettings>(loadApiSettings);
   const [searchSettings, setSearchSettings] =
     useState<SearchSettings>(loadSearchSettings);
+  const [runtimeSettings, setRuntimeSettings] =
+    useState<RuntimeSettingsSummary | null>(null);
   const [isSending, setIsSending] = useState(false);
   const activeSession =
     sessionState.sessions.find(
@@ -424,6 +431,36 @@ export default function App() {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const hadSavedApiSettings = hasSavedApiSettings();
+
+    loadRuntimeSettings()
+      .then((settings) => {
+        if (cancelled) {
+          return;
+        }
+
+        setRuntimeSettings(settings);
+        if (!hadSavedApiSettings) {
+          setApiSettings(normalizeApiSettings(settings.api.defaults));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("Could not load StreamUI runtime settings.", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     saveApiSettings(apiSettings);
@@ -921,6 +958,7 @@ export default function App() {
             themeMode={themeMode}
             apiSettings={apiSettings}
             searchSettings={searchSettings}
+            runtimeSettings={runtimeSettings}
             onNewSession={handleNewSession}
             onSelectSession={handleSelectSession}
             onDeleteSession={handleDeleteSession}

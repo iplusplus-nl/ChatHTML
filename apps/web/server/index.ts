@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { handleModelsRequest } from "./models.js";
 import { handleOpenRouterChat } from "./openrouter.js";
 import { handleRetrievalRequest } from "./retrieval.js";
+import { handleGetRuntimeSettings } from "./runtimeApiSettings.js";
 import { handleGetSessions, handleSaveSessions } from "./sessions.js";
 
 const app = express();
@@ -32,6 +33,7 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/chat", handleOpenRouterChat);
 app.post("/api/models", handleModelsRequest);
 app.post("/api/retrieve", handleRetrievalRequest);
+app.get("/api/settings", handleGetRuntimeSettings);
 app.get("/api/sessions", handleGetSessions);
 app.put("/api/sessions", handleSaveSessions);
 
