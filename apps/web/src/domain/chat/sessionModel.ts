@@ -1,7 +1,7 @@
 import type { ImageAttachment } from "../../core/imageAttachments";
 import { extractStreamUiParts } from "../../runtime/streamui/protocol";
 import { createStreamingRenderer } from "../../runtime/streamui/streamingRenderer";
-import type { RenderSnapshot } from "../../runtime/streamui/types";
+import type { RenderError, RenderSnapshot } from "../../runtime/streamui/types";
 
 export type ClientMessage = {
   id: string;
@@ -14,6 +14,9 @@ export type ClientMessage = {
   hasStreamUi?: boolean;
   streamUiComplete?: boolean;
   snapshot?: RenderSnapshot;
+  runtimeErrors?: RenderError[];
+  repairOfMessageId?: string;
+  repairAttempt?: number;
   status?: "streaming" | "complete" | "error";
   error?: string;
 };
@@ -133,6 +136,88 @@ export function countUserPrompts(messages: ClientMessage[]): number {
   return messages.filter((message) => message.role === "user").length;
 }
 
+function renderErrorKey(error: Pick<RenderError, "kind" | "message">): string {
+  return `${error.kind}:${error.message}`;
+}
+
+function normalizeRenderError(input: unknown): RenderError | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const error = input as Partial<RenderError>;
+  const kind =
+    error.kind === "html" ||
+    error.kind === "runtime" ||
+    error.kind === "security" ||
+    error.kind === "console"
+      ? error.kind
+      : null;
+  if (!kind || typeof error.message !== "string" || !error.message.trim()) {
+    return null;
+  }
+
+  return {
+    kind,
+    message: error.message,
+    timestamp:
+      typeof error.timestamp === "number" && Number.isFinite(error.timestamp)
+        ? error.timestamp
+        : Date.now()
+  };
+}
+
+function normalizeRenderErrors(input: unknown): RenderError[] | undefined {
+  if (!Array.isArray(input)) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  const errors: RenderError[] = [];
+
+  for (const item of input) {
+    const error = normalizeRenderError(item);
+    if (!error) {
+      continue;
+    }
+
+    const key = renderErrorKey(error);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    errors.push(error);
+  }
+
+  return errors.length ? errors : undefined;
+}
+
+function mergeSnapshotRuntimeErrors(
+  snapshot: RenderSnapshot,
+  runtimeErrors: RenderError[] | undefined
+): RenderSnapshot {
+  if (!runtimeErrors?.length) {
+    return snapshot;
+  }
+
+  const seen = new Set(snapshot.errors.map(renderErrorKey));
+  const mergedErrors = [...snapshot.errors];
+
+  for (const error of runtimeErrors) {
+    const key = renderErrorKey(error);
+    if (!seen.has(key)) {
+      seen.add(key);
+      mergedErrors.push(error);
+    }
+  }
+
+  return {
+    ...snapshot,
+    errors: mergedErrors
+  };
+}
+
 export function rebuildAssistantSnapshot(message: ClientMessage): ClientMessage {
   if (message.role !== "assistant" || !message.rawStream) {
     return message;
@@ -150,9 +235,14 @@ export function rebuildAssistantSnapshot(message: ClientMessage): ClientMessage 
   renderer.replace(parts.streamui);
   renderer.complete();
 
+  const snapshot = mergeSnapshotRuntimeErrors(
+    renderer.getSnapshot(),
+    message.runtimeErrors
+  );
+
   return {
     ...message,
-    snapshot: renderer.getSnapshot(),
+    snapshot,
     hasStreamUi: true,
     streamUiComplete: parts.streamUiComplete,
     status: message.status === "streaming" ? "complete" : message.status
@@ -183,6 +273,15 @@ export function normalizeStoredMessage(message: unknown): ClientMessage | null {
     rawStream: typeof input.rawStream === "string" ? input.rawStream : undefined,
     hasStreamUi: Boolean(input.hasStreamUi),
     streamUiComplete: Boolean(input.streamUiComplete),
+    runtimeErrors: normalizeRenderErrors(input.runtimeErrors),
+    repairOfMessageId:
+      typeof input.repairOfMessageId === "string"
+        ? input.repairOfMessageId
+        : undefined,
+    repairAttempt:
+      typeof input.repairAttempt === "number" && Number.isFinite(input.repairAttempt)
+        ? Math.max(1, Math.round(input.repairAttempt))
+        : undefined,
     status:
       input.status === "streaming"
         ? "complete"

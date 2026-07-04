@@ -19,6 +19,7 @@ type AssistantMessageProps = {
   rawStream?: string;
   hasStreamUi?: boolean;
   snapshot?: RenderSnapshot;
+  runtimeErrors?: RenderError[];
   themeMode: PageThemeMode;
   status?: "streaming" | "complete" | "error";
   error?: string;
@@ -32,14 +33,41 @@ export function AssistantMessage({
   rawStream,
   hasStreamUi,
   snapshot,
+  runtimeErrors,
   themeMode,
   status,
   error,
   onRuntimeError
 }: AssistantMessageProps) {
   const resolvedSnapshot = useMemo(() => {
+    const withRuntimeErrors = (
+      candidate: RenderSnapshot | undefined
+    ): RenderSnapshot | undefined => {
+      if (!candidate || !runtimeErrors?.length) {
+        return candidate;
+      }
+
+      const existing = new Set(
+        candidate.errors.map((item) => `${item.kind}:${item.message}`)
+      );
+      const mergedErrors = [...candidate.errors];
+
+      for (const error of runtimeErrors) {
+        const key = `${error.kind}:${error.message}`;
+        if (!existing.has(key)) {
+          existing.add(key);
+          mergedErrors.push(error);
+        }
+      }
+
+      return {
+        ...candidate,
+        errors: mergedErrors
+      };
+    };
+
     if (!hasStreamUi || !rawStream) {
-      return snapshot;
+      return withRuntimeErrors(snapshot);
     }
 
     const parts = extractStreamUiParts(rawStream);
@@ -52,8 +80,8 @@ export function AssistantMessage({
     if (status === "complete" || parts.streamUiComplete) {
       renderer.complete();
     }
-    return renderer.getSnapshot();
-  }, [hasStreamUi, rawStream, snapshot, status, themeMode]);
+    return withRuntimeErrors(renderer.getSnapshot());
+  }, [hasStreamUi, rawStream, runtimeErrors, snapshot, status, themeMode]);
 
   return (
     <MessagePrimitive.Root className="chat-row assistant">

@@ -67,6 +67,29 @@ describe("sessionModel", () => {
     assert.match(message?.snapshot?.iframeDocument ?? "", /<p>Saved<\/p>/);
   });
 
+  it("preserves persisted runtime errors while rebuilding snapshots", () => {
+    const message = normalizeStoredMessage({
+      id: "a1",
+      role: "assistant",
+      content: "",
+      rawStream: "<chat></chat><streamui><script>throw new Error('boom')</script></streamui>",
+      runtimeErrors: [
+        {
+          kind: "runtime",
+          message: "boom",
+          timestamp: 123
+        }
+      ],
+      repairOfMessageId: "a0",
+      repairAttempt: 1
+    });
+
+    assert.equal(message?.runtimeErrors?.[0]?.message, "boom");
+    assert.equal(message?.snapshot?.errors[0]?.message, "boom");
+    assert.equal(message?.repairOfMessageId, "a0");
+    assert.equal(message?.repairAttempt, 1);
+  });
+
   it("sorts stored sessions and repairs active session ids", () => {
     const state = normalizeStoredSessionState(
       {

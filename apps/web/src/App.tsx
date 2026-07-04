@@ -73,9 +73,104 @@ type ChatStreamEvent = {
   text?: string;
 };
 
+type SendStreamUiRequestOptions = {
+  appendUserMessage?: boolean;
+  assistantPatch?: Partial<ClientMessage>;
+  initialReasoning?: string;
+  requestHistory?: ClientMessage[];
+};
+
 const LEGACY_SESSION_STORAGE_KEY = "streamui.sessions.v1";
 const LEGACY_ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
 const THEME_STORAGE_KEY = "streamui.theme.v1";
+const MAX_RUNTIME_REPAIR_ATTEMPTS = 2;
+const MAX_RUNTIME_REPAIR_SOURCE_CHARS = 32_000;
+const MAX_RUNTIME_REPAIR_ERROR_CHARS = 4_000;
+
+function renderErrorKey(error: Pick<RenderError, "kind" | "message">): string {
+  return `${error.kind}:${error.message}`;
+}
+
+function hasRenderError(
+  errors: RenderError[] | undefined,
+  error: RenderError
+): boolean {
+  const key = renderErrorKey(error);
+  return Boolean(errors?.some((item) => renderErrorKey(item) === key));
+}
+
+function isRepairableRuntimeError(error: RenderError): boolean {
+  return error.kind === "runtime" || error.kind === "console";
+}
+
+function getRepairRootId(message: ClientMessage): string {
+  return message.repairOfMessageId || message.id;
+}
+
+function getRuntimeRepairAttempt(
+  messages: ClientMessage[],
+  rootMessageId: string
+): number {
+  return messages
+    .filter(
+      (message) =>
+        message.role === "assistant" &&
+        (message.id === rootMessageId ||
+          message.repairOfMessageId === rootMessageId)
+    )
+    .reduce((maxAttempt, message) => {
+      return Math.max(maxAttempt, message.repairAttempt ?? 0);
+    }, 0);
+}
+
+function clipMiddle(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  const half = Math.floor((maxChars - 120) / 2);
+  return `${value.slice(0, half)}\n\n<!-- ... clipped for repair prompt ... -->\n\n${value.slice(
+    -half
+  )}`;
+}
+
+function formatRuntimeErrors(errors: RenderError[]): string {
+  return errors
+    .map((error, index) => {
+      return `${index + 1}. ${error.kind}: ${error.message}`;
+    })
+    .join("\n")
+    .slice(0, MAX_RUNTIME_REPAIR_ERROR_CHARS);
+}
+
+function buildRuntimeRepairPrompt(
+  message: ClientMessage,
+  errors: RenderError[],
+  attempt: number
+): string {
+  const rawArtifact = message.rawStream || message.snapshot?.raw || "";
+  const completedHtml = message.snapshot?.completedHtml || "";
+  const source = rawArtifact || completedHtml;
+
+  return `A previous StreamUI artifact rendered with runtime errors. Repair it now.
+
+Requirements:
+- Return a complete StreamUI response using the normal protocol: <sessiontitle>, empty <chat></chat>, and exactly one <streamui> block.
+- Preserve the user's original intent, visible content, layout, and style as much as possible.
+- Fix the runtime/console errors listed below.
+- Avoid repeating the same failing script pattern.
+- Do not explain the repair process in user-facing text.
+
+Repair attempt: ${attempt}/${MAX_RUNTIME_REPAIR_ATTEMPTS}
+
+Runtime errors:
+${formatRuntimeErrors(errors)}
+
+Previous artifact source:
+\`\`\`html
+${clipMiddle(source, MAX_RUNTIME_REPAIR_SOURCE_CHARS)}
+\`\`\``;
+}
 
 function loadThemeMode(): ThemeMode {
   if (typeof window === "undefined") {
@@ -353,6 +448,7 @@ function StreamThread({
                   rawStream={clientMessage.rawStream}
                   hasStreamUi={clientMessage.hasStreamUi}
                   snapshot={clientMessage.snapshot}
+                  runtimeErrors={clientMessage.runtimeErrors}
                   themeMode={themeMode}
                   status={clientMessage.status}
                   error={clientMessage.error}
@@ -412,6 +508,10 @@ export default function App() {
   const isSendingRef = useRef(isSending);
   const saveAbortRef = useRef<AbortController | null>(null);
   const renderersRef = useRef<Map<string, StreamingRenderer>>(new Map());
+  const runtimeRepairQueueRef = useRef<
+    ((id: string, error: RenderError) => void) | null
+  >(null);
+  const runtimeRepairInFlightRef = useRef<Set<string>>(new Set());
   const attachmentAdapter = useMemo(() => new StreamImageAttachmentAdapter(), []);
 
   useEffect(() => {
@@ -617,6 +717,13 @@ export default function App() {
 
   const handleRuntimeError = useCallback(
     (id: string, error: RenderError) => {
+      const currentMessage = messagesRef.current.find(
+        (message) => message.id === id
+      );
+      const isKnownError =
+        hasRenderError(currentMessage?.runtimeErrors, error) ||
+        hasRenderError(currentMessage?.snapshot?.errors, error);
+
       setSessionState((current) => {
         let didUpdate = false;
         const sessions = current.sessions.map((session) => {
@@ -626,10 +733,9 @@ export default function App() {
               return message;
             }
 
-            const exists = message.snapshot.errors.some(
-              (existing) =>
-                existing.kind === error.kind && existing.message === error.message
-            );
+            const exists =
+              hasRenderError(message.runtimeErrors, error) ||
+              hasRenderError(message.snapshot.errors, error);
 
             if (exists) {
               return message;
@@ -637,8 +743,10 @@ export default function App() {
 
             didUpdate = true;
             sessionChanged = true;
+            const runtimeErrors = [...(message.runtimeErrors ?? []), error];
             return {
               ...message,
+              runtimeErrors,
               snapshot: {
                 ...message.snapshot,
                 errors: [...message.snapshot.errors, error]
@@ -651,6 +759,12 @@ export default function App() {
 
         return didUpdate ? { ...current, sessions } : current;
       });
+
+      if (!isKnownError) {
+        window.setTimeout(() => {
+          runtimeRepairQueueRef.current?.(id, error);
+        }, 0);
+      }
     },
     []
   );
@@ -743,12 +857,17 @@ export default function App() {
   );
 
   const sendStreamUiRequest = useCallback(
-    async (text: string, attachments: ImageAttachment[] = []) => {
+    async (
+      text: string,
+      attachments: ImageAttachment[] = [],
+      options: SendStreamUiRequestOptions = {}
+    ) => {
       const trimmed = text.trim();
       if ((!trimmed && attachments.length === 0) || isSendingRef.current) {
         return;
       }
 
+      const appendUserMessage = options.appendUserMessage ?? true;
       const userMessage: ClientMessage = {
         id: createId("user"),
         role: "user",
@@ -762,7 +881,11 @@ export default function App() {
         role: "assistant",
         content: "",
         rawStream: "",
-        status: "streaming"
+        status: "streaming",
+        ...(options.initialReasoning
+          ? { reasoning: options.initialReasoning }
+          : {}),
+        ...options.assistantPatch
       };
       const renderer = createStreamingRenderer(themeMode);
       renderersRef.current.set(assistantId, renderer);
@@ -771,16 +894,19 @@ export default function App() {
         updateAssistant(assistantId, { snapshot });
       });
 
-      const requestHistory = [...messagesRef.current, userMessage];
-      updateActiveSessionMessages((current) => [
-        ...current,
-        userMessage,
-        assistantMessage
-      ]);
+      const requestHistory = options.requestHistory ?? [
+        ...messagesRef.current,
+        userMessage
+      ];
+      updateActiveSessionMessages((current) =>
+        appendUserMessage
+          ? [...current, userMessage, assistantMessage]
+          : [...current, assistantMessage]
+      );
       setIsSending(true);
 
       let raw = "";
-      let reasoning = "";
+      let reasoning = options.initialReasoning ?? "";
       const handleContentChunk = (chunk: string) => {
         raw += chunk;
         const parts = extractStreamUiParts(raw);
@@ -915,6 +1041,87 @@ export default function App() {
       updateAssistant
     ]
   );
+
+  const requestRuntimeRepair = useCallback(
+    async (id: string, error: RenderError) => {
+      if (!isRepairableRuntimeError(error)) {
+        return;
+      }
+
+      if (isSendingRef.current) {
+        window.setTimeout(() => {
+          void requestRuntimeRepair(id, error);
+        }, 500);
+        return;
+      }
+
+      const messages = messagesRef.current;
+      const target = messages.find((message) => message.id === id);
+      if (
+        !target ||
+        target.role !== "assistant" ||
+        target.status === "streaming" ||
+        !target.hasStreamUi ||
+        (!target.rawStream && !target.snapshot?.raw)
+      ) {
+        return;
+      }
+
+      const rootMessageId = getRepairRootId(target);
+      const attempt = getRuntimeRepairAttempt(messages, rootMessageId) + 1;
+      if (attempt > MAX_RUNTIME_REPAIR_ATTEMPTS) {
+        return;
+      }
+
+      const repairErrors = [
+        ...(target.runtimeErrors ?? target.snapshot?.errors ?? []),
+        error
+      ];
+      const repairKey = `${rootMessageId}:${attempt}:${renderErrorKey(error)}`;
+      if (runtimeRepairInFlightRef.current.has(repairKey)) {
+        return;
+      }
+
+      runtimeRepairInFlightRef.current.add(repairKey);
+      try {
+        const repairPrompt = buildRuntimeRepairPrompt(
+          target,
+          repairErrors,
+          attempt
+        );
+        const repairUserMessage: ClientMessage = {
+          id: createId("runtime-repair"),
+          role: "user",
+          content: repairPrompt,
+          status: "complete"
+        };
+        const initialReasoning = `Auto repair ${attempt}/${MAX_RUNTIME_REPAIR_ATTEMPTS}: ${error.kind} error detected. Retrying artifact generation...\n`;
+
+        await sendStreamUiRequest(repairPrompt, [], {
+          appendUserMessage: false,
+          requestHistory: [...messages, repairUserMessage],
+          initialReasoning,
+          assistantPatch: {
+            repairOfMessageId: rootMessageId,
+            repairAttempt: attempt
+          }
+        });
+      } finally {
+        runtimeRepairInFlightRef.current.delete(repairKey);
+      }
+    },
+    [sendStreamUiRequest]
+  );
+
+  useEffect(() => {
+    runtimeRepairQueueRef.current = (id, error) => {
+      void requestRuntimeRepair(id, error);
+    };
+
+    return () => {
+      runtimeRepairQueueRef.current = null;
+    };
+  }, [requestRuntimeRepair]);
 
   const handleNewMessage = useCallback(
     async (message: AppendMessage) => {

@@ -16,6 +16,9 @@ type StoredMessage = {
   rawStream?: string;
   hasStreamUi?: boolean;
   streamUiComplete?: boolean;
+  runtimeErrors?: unknown[];
+  repairOfMessageId?: string;
+  repairAttempt?: number;
   status?: "complete" | "error";
   error?: string;
 };
@@ -107,6 +110,15 @@ function normalizeMessage(input: unknown): StoredMessage | null {
     rawStream: stringValue(message.rawStream) || undefined,
     hasStreamUi: Boolean(message.hasStreamUi),
     streamUiComplete: Boolean(message.streamUiComplete),
+    runtimeErrors: Array.isArray(message.runtimeErrors)
+      ? message.runtimeErrors
+      : undefined,
+    repairOfMessageId: stringValue(message.repairOfMessageId) || undefined,
+    repairAttempt:
+      typeof message.repairAttempt === "number" &&
+      Number.isFinite(message.repairAttempt)
+        ? Math.max(1, Math.round(message.repairAttempt))
+        : undefined,
     status:
       message.status === "error"
         ? "error"
