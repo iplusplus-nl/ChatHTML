@@ -118,27 +118,26 @@ function toCandidateApiMessages(messages: ClientMessage[]) {
           ? "recent"
           : "summary";
       const content = clipEnd(
-        getApiMessageContent(message, { detail }),
+        [
+          getApiMessageContent(message, { detail }),
+          message.fileIds?.length
+            ? `Session file ids attached to this message: ${message.fileIds.join(", ")}`
+            : ""
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
         getMessageLimit(detail)
       );
-      const images = message.attachments?.map((attachment) => ({
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
-        dataUrl: attachment.dataUrl
-      }));
 
       return {
         role: message.role,
-        content,
-        images
+        content
       };
     })
     .filter(
       (message) =>
         message.role === "user" ||
-        message.content.trim() ||
-        (message.images?.length ?? 0) > 0
+        message.content.trim()
     );
 }
 

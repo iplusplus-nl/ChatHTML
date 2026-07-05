@@ -70,6 +70,31 @@ describe("sessionModel", () => {
     assert.match(message?.artifactContext?.id ?? "", /^artifact-[a-z0-9]+$/);
   });
 
+  it("migrates stored assistant artifacts into session files", () => {
+    const state = normalizeStoredSessionState({
+      activeSessionId: "s1",
+      sessions: [
+        {
+          id: "s1",
+          title: "Saved",
+          createdAt: 1,
+          updatedAt: 1,
+          messages: [
+            {
+              id: "a1",
+              role: "assistant",
+              content: "",
+              rawStream: "<chat></chat><streamui><p>Saved</p></streamui>"
+            }
+          ]
+        }
+      ]
+    });
+
+    assert.equal(state.sessions[0].files[0].id, "file-artifact-a1");
+    assert.match(state.sessions[0].files[0].text ?? "", /<p>Saved<\/p>/);
+  });
+
   it("preserves persisted runtime errors while rebuilding snapshots", () => {
     const message = normalizeStoredMessage({
       id: "a1",
@@ -116,7 +141,9 @@ describe("sessionModel", () => {
     assert.equal(
       hasPersistedMessages({
         activeSessionId: "s1",
-        sessions: [{ id: "s1", title: "", createdAt: 1, updatedAt: 1, messages: [] }]
+        sessions: [
+          { id: "s1", title: "", createdAt: 1, updatedAt: 1, messages: [], files: [] }
+        ]
       }),
       false
     );
@@ -130,7 +157,8 @@ describe("sessionModel", () => {
             title: "",
             createdAt: 1,
             updatedAt: 1,
-            messages: [{ id: "u1", role: "user", content: "hello" }]
+            messages: [{ id: "u1", role: "user", content: "hello" }],
+            files: []
           }
         ]
       }),
@@ -145,6 +173,7 @@ describe("sessionModel", () => {
         title: "Session",
         createdAt: 1,
         updatedAt: 2,
+        files: [],
         messages: [
           {
             id: "a1",
@@ -177,6 +206,7 @@ describe("sessionModel", () => {
         title: "Session",
         createdAt: 1,
         updatedAt: 2,
+        files: [],
         messages: [
           {
             id: "a1",

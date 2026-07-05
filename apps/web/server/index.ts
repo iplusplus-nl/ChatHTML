@@ -7,7 +7,14 @@ import { handleModelsRequest } from "./models.js";
 import { handleOpenRouterChat } from "./openrouter.js";
 import { handleRetrievalRequest } from "./retrieval.js";
 import { handleGetRuntimeSettings } from "./runtimeApiSettings.js";
-import { handleGetSessions, handleSaveSessions } from "./sessions.js";
+import {
+  handleCreateSessionFile,
+  handleDeleteSessionFile,
+  handleGetFileContent,
+  handleGetSessionFiles,
+  handleGetSessions,
+  handleSaveSessions
+} from "./sessions.js";
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +44,10 @@ app.get("/api/settings", handleGetRuntimeSettings);
 app.get("/api/sessions", handleGetSessions);
 app.post("/api/sessions", handleSaveSessions);
 app.put("/api/sessions", handleSaveSessions);
+app.get("/api/sessions/:sessionId/files", handleGetSessionFiles);
+app.post("/api/sessions/:sessionId/files", handleCreateSessionFile);
+app.delete("/api/sessions/:sessionId/files/:fileId", handleDeleteSessionFile);
+app.get("/api/files/:fileId/content", handleGetFileContent);
 
 if (existsSync(clientDist)) {
   app.use(express.static(clientDist));

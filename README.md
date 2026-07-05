@@ -10,8 +10,7 @@ The repo is now organized as an npm workspace. The first app lives in `apps/web`
 - Vite + React + TypeScript in `apps/web`
 - assistant-ui runtime and primitives for the chat thread/composer shell
 - Node/Express backend proxy
-- Vercel AI SDK `streamText`
-- `@openrouter/ai-sdk-provider` for OpenRouter models
+- OpenRouter Responses API streaming with native function tools
 
 ## Setup
 
@@ -27,11 +26,10 @@ OPENROUTER_API_KEY=your_openrouter_key_here
 OPENROUTER_MODEL=google/gemini-3.1-pro-preview
 OPENROUTER_REASONING_EFFORT=low
 STREAMUI_RETRIEVAL=true
-STREAMUI_TOOL_MAX_STEPS=4
 STREAMUI_SEARCH_PROVIDER=auto
 ```
 
-The default model is `google/gemini-3.1-pro-preview` when `OPENROUTER_MODEL` is not set. Reasoning effort defaults to `low` to keep the reasoning disclosure responsive. StreamUI gives the final generation model a native `retrieve` tool through Vercel AI SDK; the model can call it for URLs, online resources, images, or current information before continuing the same response. The backend loads `.env` from the repo root and can also read an overriding `apps/web/.env`.
+The default model is `google/gemini-3.1-pro-preview` when `OPENROUTER_MODEL` is not set. Reasoning effort defaults to `low` to keep the reasoning disclosure responsive. StreamUI calls OpenRouter's Responses API directly and gives the model native tools for retrieval, session files, and memory updates before continuing the same response. The backend loads `.env` from the repo root and can also read an overriding `apps/web/.env`.
 
 ## Run
 
@@ -41,7 +39,7 @@ npm run dev
 
 The root script delegates to `@streamui/web`. The Vite app runs at `http://127.0.0.1:5173`, and the Express proxy runs at `http://127.0.0.1:8787`.
 
-The browser calls the local backend at `POST /api/chat`; the backend reads `OPENROUTER_API_KEY` from `.env` and forwards the request through Vercel AI SDK. The API key is never sent to the browser. The backend streams newline-delimited JSON events with separate `reasoning` and `content` chunks.
+The browser calls the local backend at `POST /api/chat`; the backend reads `OPENROUTER_API_KEY` from `.env` and forwards the request to OpenRouter's `/responses` endpoint. The API key is never sent to the browser. The backend streams newline-delimited JSON events with separate `reasoning`, `content`, and memory-update chunks.
 
 ## Session Storage
 
@@ -64,7 +62,7 @@ npm --workspace @streamui/web run build
 
 ## Retrieval and External Resources
 
-StreamUI exposes a native `retrieve` tool to the model in the main `streamText` call. The AI SDK step loop handles tool calls and tool results, so there is no separate planner pass or custom orchestration loop. The retrieval tool can:
+StreamUI exposes a native `retrieve` tool to the model in the main Responses API call. The Responses function-call loop handles tool calls and tool results, so there is no separate planner pass or keyword router. The retrieval tool can:
 
 - Search the web through Brave, Tavily, Serper, or a DuckDuckGo HTML fallback.
 - Search dedicated visual sources for image/gallery prompts, including Openverse, Wikimedia-oriented web results, NASA, Library of Congress, The Met, Art Institute of Chicago, and optional Pexels, Unsplash, and Rijksmuseum integrations.
@@ -72,15 +70,25 @@ StreamUI exposes a native `retrieve` tool to the model in the main `streamText` 
 - Parse HTML into structured page excerpts, links, source metadata, and image candidates.
 - Return those sources to the same model generation while keeping the current streaming HTML protocol. The HTML artifact is still assistant content, not a tool result.
 
-The model decides whether to call `retrieve`; `STREAMUI_TOOL_MAX_STEPS` controls the maximum AI SDK step count for tool use and final generation. Tool progress streams into the reasoning panel, and user-facing HTML still streams as normal assistant content. You can also call `POST /api/retrieve` directly for debugging.
+The model decides whether to call `retrieve`; by default native tool calling continues until the model stops requesting tools and produces a final answer. `STREAMUI_TOOL_MAX_STEPS` is optional and only acts as a safety cap when explicitly set to a positive integer. Tool progress streams into the reasoning panel, and user-facing HTML still streams as normal assistant content. You can also call `POST /api/retrieve` directly for debugging.
 
-The chat input also supports local image attachments. Images are converted to data URLs in the browser, lightly resized when needed, and sent to Vercel AI SDK as multimodal `image` message parts. Use a vision-capable model for image analysis, OCR, comparison, or image-informed visual responses.
+The chat input also supports local image attachments. Images are converted to data URLs in the browser, lightly resized when needed, uploaded to `POST /api/sessions/:sessionId/files` as draft files while they sit in the composer, and committed to the active session file list only when the user sends the message. Local development writes file bytes under `sessions/files`; production can replace that layer with S3, R2, MinIO, or another object store.
+
+Session files have stable ids and capability URLs. Draft files can be previewed through their capability URL but are hidden from `GET /api/sessions`, `GET /api/sessions/:sessionId/files`, and model file tools until sent. The model can use `listFiles` and `readFile` to inspect committed session files; image reads return JSON metadata as the tool result and then attach the image bytes as a follow-up multimodal input message for models that support vision. If the model wants to render a user-uploaded image inside the generated artifact, it should copy the file's `embedUrl` exactly into HTML, such as `<img src="...">`. Assistant StreamUI artifacts are also saved into the session file list as raw source files so later turns can read exact prior artifact code.
+
+File API endpoints:
+
+```txt
+GET    /api/sessions/:sessionId/files
+POST   /api/sessions/:sessionId/files
+GET    /api/files/:fileId/content?token=...
+DELETE /api/sessions/:sessionId/files/:fileId
+```
 
 Useful `.env` controls:
 
 ```bash
 STREAMUI_RETRIEVAL=true
-STREAMUI_TOOL_MAX_STEPS=4
 STREAMUI_SEARCH_PROVIDER=auto
 STREAMUI_SEARCH_MAX_RESULTS=5
 STREAMUI_SEARCH_ALLOW_DUCKDUCKGO=true
@@ -143,8 +151,10 @@ If no valid `<streamui>` block appears, the assistant response stays as a normal
 
 ## Important Files
 
-- `apps/web/server/openrouter.ts` uses Vercel AI SDK `streamText` with native tools and streams OpenRouter responses back to the frontend as NDJSON `reasoning` and `content` chunks.
-- `apps/web/server/retrievalTool.ts` wraps the retrieval service as an AI SDK `retrieve` tool and records tool telemetry for logs.
+- `apps/web/server/openrouter.ts` uses OpenRouter Responses API streaming with native tools and streams responses back to the frontend as NDJSON `reasoning`, `content`, and memory events.
+- `apps/web/server/fileStore.ts` stores file bytes behind stable session file metadata and content URLs.
+- `apps/web/server/sessionFileTools.ts` defines session file listing/reading tools, including image metadata and follow-up multimodal image input.
+- `apps/web/server/retrievalTool.ts` wraps the retrieval service as a reusable `retrieve` tool executor and records tool telemetry for logs.
 - `apps/web/server/retrieval.ts` owns search providers, URL fetching, optional Playwright browsing, HTML parsing, image/link extraction, and structured retrieval context.
 - `apps/web/server/index.ts` runs the local Express proxy and loads repo-root `.env`.
 - `apps/web/src/server/systemPrompt.ts` defines the model behavior and output protocol.

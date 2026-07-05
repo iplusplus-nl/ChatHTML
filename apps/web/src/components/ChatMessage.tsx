@@ -1,16 +1,16 @@
 import { MessagePrimitive } from "@assistant-ui/react";
 import type { ReactNode } from "react";
-import type { ImageAttachment } from "../core/imageAttachments";
+import type { SessionFile } from "../domain/chat/sessionModel";
 
 type ChatMessageProps = {
   role: "user" | "assistant";
-  attachments?: ImageAttachment[];
+  files?: SessionFile[];
   children: ReactNode;
 };
 
 export function ChatMessage({
   role,
-  attachments = [],
+  files = [],
   children
 }: ChatMessageProps) {
   return (
@@ -20,15 +20,21 @@ export function ChatMessage({
       </div>
       <div className={`message-bubble ${role}`}>
         {children ? <p>{children}</p> : null}
-        {attachments.length > 0 ? (
-          <div className="message-attachments" aria-label="Attached images">
-            {attachments.map((attachment) => (
-              <img
-                key={attachment.id}
-                src={attachment.dataUrl}
-                alt={attachment.name}
-                loading="lazy"
-              />
+        {files.length > 0 ? (
+          <div className="message-attachments" aria-label="Attached files">
+            {files.map((file) => (
+              file.kind === "image" && (file.embedUrl || file.dataUrl) ? (
+                <img
+                  key={file.id}
+                  src={file.embedUrl || file.dataUrl}
+                  alt={file.name}
+                  loading="lazy"
+                />
+              ) : (
+                <span className="message-file-chip" key={file.id}>
+                  {file.name}
+                </span>
+              )
             ))}
           </div>
         ) : null}

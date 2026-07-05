@@ -2,12 +2,12 @@ import type { PageThemeMode } from "./types";
 
 const CSP = [
   "default-src 'none'",
-  "img-src https: data: blob:",
+  "img-src 'self' https: http://127.0.0.1:* http://localhost:* data: blob:",
   "style-src 'unsafe-inline' https:",
   "script-src 'unsafe-inline' https:",
   "font-src https: data:",
-  "connect-src https:",
-  "media-src https: data: blob:",
+  "connect-src 'self' https: http://127.0.0.1:* http://localhost:*",
+  "media-src 'self' https: http://127.0.0.1:* http://localhost:* data: blob:",
   "frame-src https:",
   "object-src 'none'",
   "base-uri 'none'",

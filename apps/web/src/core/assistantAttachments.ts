@@ -6,12 +6,14 @@ import type {
 import {
   MAX_IMAGE_ATTACHMENTS,
   SUPPORTED_IMAGE_MIME_TYPES,
-  type ImageAttachment
+  type ImageAttachment,
+  type UploadedSessionFile
 } from "./imageAttachments";
 
 const MAX_SOURCE_IMAGE_BYTES = 8 * 1024 * 1024;
 const TARGET_IMAGE_BYTES = 1.8 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION = 1600;
+const QUALITY_COMPRESSIBLE_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/webp"]);
 
 function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -48,6 +50,55 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
     image.src = dataUrl;
   });
 }
+
+function replaceFileExtension(name: string, mimeType: string): string {
+  const extension =
+    mimeType === "image/jpeg"
+      ? ".jpg"
+      : mimeType === "image/webp"
+        ? ".webp"
+        : mimeType === "image/png"
+          ? ".png"
+          : "";
+
+  if (!extension) {
+    return name;
+  }
+
+  return /\.[^.]+$/.test(name)
+    ? name.replace(/\.[^.]+$/, extension)
+    : `${name}${extension}`;
+}
+
+function canvasToImageDataUrl(
+  canvas: HTMLCanvasElement,
+  mimeType: string,
+  quality?: number
+): string {
+  const dataUrl = canvas.toDataURL(mimeType, quality);
+  return dataUrl.startsWith(`data:${mimeType};`) ? dataUrl : "";
+}
+
+type StreamAttachmentMetadata = {
+  streamuiImage?: ImageAttachment;
+  streamuiFile?: UploadedSessionFile;
+};
+
+type StreamPendingAttachment = PendingAttachment & StreamAttachmentMetadata;
+type StreamCompleteAttachment = CompleteAttachment & StreamAttachmentMetadata;
+
+type StreamImageAttachmentAdapterOptions = {
+  getSessionId(): string;
+  uploadImage(
+    sessionId: string,
+    attachment: ImageAttachment
+  ): Promise<UploadedSessionFile>;
+  deleteFile?(sessionId: string, fileId: string): Promise<void>;
+  onUploadStart?(attachmentId: string): void;
+  onUploadComplete?(attachmentId: string): void;
+  onUploadError?(attachmentId: string): void;
+  onRemove?(attachmentId: string): void;
+};
 
 async function prepareImageAttachment(file: File): Promise<ImageAttachment> {
   if (
@@ -94,6 +145,18 @@ async function prepareImageAttachment(file: File): Promise<ImageAttachment> {
     };
   }
 
+  if (file.type === "image/png" && scale === 1) {
+    return {
+      id: createId("image"),
+      name: file.name,
+      mimeType: file.type,
+      size: estimateDataUrlBytes(originalDataUrl),
+      dataUrl: originalDataUrl,
+      width: sourceWidth,
+      height: sourceHeight
+    };
+  }
+
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(sourceWidth * scale));
   canvas.height = Math.max(1, Math.round(sourceHeight * scale));
@@ -103,21 +166,48 @@ async function prepareImageAttachment(file: File): Promise<ImageAttachment> {
     throw new Error(`Could not prepare ${file.name}.`);
   }
 
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  if (file.type === "image/jpeg") {
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  } else {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+  }
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-  let quality = 0.9;
-  let dataUrl = canvas.toDataURL("image/jpeg", quality);
-  while (estimateDataUrlBytes(dataUrl) > TARGET_IMAGE_BYTES && quality > 0.62) {
-    quality -= 0.08;
-    dataUrl = canvas.toDataURL("image/jpeg", quality);
+  const outputMimeType = file.type;
+  let dataUrl = "";
+
+  if (QUALITY_COMPRESSIBLE_IMAGE_MIME_TYPES.has(outputMimeType)) {
+    let quality = 0.9;
+    dataUrl = canvasToImageDataUrl(canvas, outputMimeType, quality);
+    while (
+      dataUrl &&
+      estimateDataUrlBytes(dataUrl) > TARGET_IMAGE_BYTES &&
+      quality > 0.62
+    ) {
+      quality -= 0.08;
+      dataUrl = canvasToImageDataUrl(canvas, outputMimeType, quality);
+    }
+  } else {
+    dataUrl = canvasToImageDataUrl(canvas, outputMimeType);
+  }
+
+  if (!dataUrl) {
+    return {
+      id: createId("image"),
+      name: file.name,
+      mimeType: file.type,
+      size: estimateDataUrlBytes(originalDataUrl),
+      dataUrl: originalDataUrl,
+      width: sourceWidth,
+      height: sourceHeight
+    };
   }
 
   return {
     id: createId("image"),
-    name: file.name.replace(/\.[^.]+$/, ".jpg"),
-    mimeType: "image/jpeg",
+    name: replaceFileExtension(file.name, outputMimeType),
+    mimeType: outputMimeType,
     size: estimateDataUrlBytes(dataUrl),
     dataUrl,
     width: canvas.width,
@@ -128,6 +218,11 @@ async function prepareImageAttachment(file: File): Promise<ImageAttachment> {
 export function completeAttachmentToImage(
   attachment: CompleteAttachment
 ): ImageAttachment | null {
+  const streamAttachment = attachment as StreamCompleteAttachment;
+  if (streamAttachment.streamuiImage) {
+    return streamAttachment.streamuiImage;
+  }
+
   const imagePart = attachment.content.find((part) => part.type === "image");
   if (!imagePart || imagePart.type !== "image") {
     return null;
@@ -138,7 +233,8 @@ export function completeAttachmentToImage(
     name: attachment.name,
     mimeType: attachment.contentType ?? "image/png",
     size: estimateDataUrlBytes(imagePart.image),
-    dataUrl: imagePart.image
+    dataUrl: imagePart.image,
+    sessionFile: streamAttachment.streamuiFile
   };
 }
 
@@ -157,14 +253,22 @@ export function imageAttachmentToCompleteAttachment(
         image: attachment.dataUrl,
         filename: attachment.name
       }
-    ]
-  };
+    ],
+    streamuiImage: attachment,
+    streamuiFile: attachment.sessionFile
+  } as StreamCompleteAttachment;
 }
 
 export class StreamImageAttachmentAdapter implements AttachmentAdapter {
   accept = SUPPORTED_IMAGE_MIME_TYPES.join(",");
 
-  async add({ file }: { file: File }): Promise<PendingAttachment> {
+  constructor(private readonly options?: StreamImageAttachmentAdapterOptions) {}
+
+  async *add({
+    file
+  }: {
+    file: File;
+  }): AsyncGenerator<PendingAttachment, void> {
     if (
       !SUPPORTED_IMAGE_MIME_TYPES.includes(
         file.type as (typeof SUPPORTED_IMAGE_MIME_TYPES)[number]
@@ -177,37 +281,99 @@ export class StreamImageAttachmentAdapter implements AttachmentAdapter {
       throw new Error(`${file.name} is larger than 8 MB.`);
     }
 
-    return {
-      id: createId("pending-image"),
+    const id = createId("pending-image");
+    this.options?.onUploadStart?.(id);
+    yield {
+      id,
       type: "image",
       name: file.name,
       contentType: file.type,
       file,
-      status: { type: "requires-action", reason: "composer-send" }
+      status: { type: "running", reason: "uploading", progress: 0 }
     };
+
+    try {
+      const prepared = await prepareImageAttachment(file);
+      const uploaded = this.options
+        ? await this.options.uploadImage(this.options.getSessionId(), prepared)
+        : undefined;
+      const image = uploaded
+        ? {
+            ...prepared,
+            id: uploaded.id,
+            name: uploaded.name,
+            mimeType: uploaded.mimeType,
+            size: uploaded.size,
+            width: uploaded.width ?? prepared.width,
+            height: uploaded.height ?? prepared.height,
+            sessionFile: uploaded
+          }
+        : prepared;
+
+      this.options?.onUploadComplete?.(id);
+      yield {
+        id,
+        type: "image",
+        name: image.name,
+        contentType: image.mimeType,
+        file,
+        status: { type: "requires-action", reason: "composer-send" },
+        content: [
+          {
+            type: "image",
+            image: image.dataUrl,
+            filename: image.name
+          }
+        ],
+        streamuiImage: image,
+        streamuiFile: image.sessionFile
+      } as StreamPendingAttachment;
+    } catch (error) {
+      this.options?.onUploadError?.(id);
+      throw error;
+    }
   }
 
   async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
-    const prepared = await prepareImageAttachment(attachment.file);
+    const streamAttachment = attachment as StreamPendingAttachment;
+    if (streamAttachment.streamuiImage) {
+      return imageAttachmentToCompleteAttachment(streamAttachment.streamuiImage);
+    }
 
-    return {
-      id: attachment.id,
-      type: "image",
-      name: prepared.name,
-      contentType: prepared.mimeType,
-      status: { type: "complete" },
-      content: [
-        {
-          type: "image",
-          image: prepared.dataUrl,
-          filename: prepared.name
+    const prepared = await prepareImageAttachment(attachment.file);
+    const uploaded = this.options
+      ? await this.options.uploadImage(this.options.getSessionId(), prepared)
+      : undefined;
+    const image = uploaded
+      ? {
+          ...prepared,
+          id: uploaded.id,
+          name: uploaded.name,
+          mimeType: uploaded.mimeType,
+          size: uploaded.size,
+          width: uploaded.width ?? prepared.width,
+          height: uploaded.height ?? prepared.height,
+          sessionFile: uploaded
         }
-      ]
-    };
+      : prepared;
+
+    return imageAttachmentToCompleteAttachment(image);
   }
 
-  async remove(): Promise<void> {
-    return;
+  async remove(attachment: PendingAttachment | CompleteAttachment): Promise<void> {
+    const streamAttachment = attachment as StreamAttachmentMetadata;
+    const fileId = streamAttachment.streamuiFile?.id;
+    this.options?.onRemove?.(attachment.id);
+
+    if (!fileId || !this.options?.deleteFile) {
+      return;
+    }
+
+    try {
+      await this.options.deleteFile(this.options.getSessionId(), fileId);
+    } catch (error) {
+      console.warn("Could not delete draft image upload.", error);
+    }
   }
 }
 

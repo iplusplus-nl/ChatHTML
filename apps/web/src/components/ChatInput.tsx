@@ -23,6 +23,8 @@ function useAttachmentPreviewUrl(attachment: Attachment): string | undefined {
 
 function ComposerAttachmentPreview({ attachment }: { attachment: Attachment }) {
   const previewUrl = useAttachmentPreviewUrl(attachment);
+  const isUploading = attachment.status.type === "running";
+  const isError = attachment.status.type === "incomplete";
 
   useEffect(() => {
     return () => {
@@ -33,18 +35,31 @@ function ComposerAttachmentPreview({ attachment }: { attachment: Attachment }) {
   }, [previewUrl]);
 
   return (
-    <AttachmentPrimitive.Root className="attachment-thumb">
+    <AttachmentPrimitive.Root
+      className={[
+        "attachment-thumb",
+        isUploading ? "is-uploading" : "",
+        isError ? "is-error" : ""
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       {previewUrl ? (
         <img src={previewUrl} alt={attachment.name} />
       ) : (
         <AttachmentPrimitive.unstable_Thumb className="attachment-extension" />
       )}
+      {isUploading ? (
+        <span className="attachment-upload-spinner" aria-label="Uploading image" />
+      ) : null}
+      {isError ? <span className="attachment-upload-error">Upload failed</span> : null}
       <figcaption>
         <AttachmentPrimitive.Name />
       </figcaption>
       <AttachmentPrimitive.Remove
         className="attachment-remove"
         type="button"
+        disabled={isUploading}
         aria-label={`Remove ${attachment.name}`}
       >
         <span className="x-icon" aria-hidden="true" />
@@ -68,8 +83,16 @@ export function ChatInput({
   onModelChange,
   onReasoningEffortChange
 }: ChatInputProps) {
-  const attachmentCount = useAuiState((state) => state.composer.attachments.length);
+  const attachments = useAuiState((state) => state.composer.attachments);
   const isRunning = useAuiState((state) => state.thread.isRunning);
+  const canSend = useAuiState((state) => state.composer.canSend);
+  const attachmentCount = attachments.length;
+  const isUploadingAttachment = attachments.some(
+    (attachment) => attachment.status.type === "running"
+  );
+  const hasAttachmentError = attachments.some(
+    (attachment) => attachment.status.type === "incomplete"
+  );
   const reachedAttachmentLimit = attachmentCount >= MAX_IMAGE_ATTACHMENTS;
 
   return (
@@ -100,10 +123,12 @@ export function ChatInput({
               className="attach-button"
               type="button"
               multiple={false}
-              disabled={reachedAttachmentLimit}
+              disabled={reachedAttachmentLimit || isUploadingAttachment}
               aria-label="Attach image"
               title={
-                reachedAttachmentLimit
+                isUploadingAttachment
+                  ? "Image upload in progress"
+                  : reachedAttachmentLimit
                   ? `Up to ${MAX_IMAGE_ATTACHMENTS} images`
                   : "Attach image"
               }
@@ -124,7 +149,15 @@ export function ChatInput({
               <ComposerPrimitive.Send
                 className="send-button"
                 type="submit"
+                disabled={!canSend}
                 aria-label="Send message"
+                title={
+                  isUploadingAttachment
+                    ? "Image upload in progress"
+                    : hasAttachmentError
+                      ? "Remove failed uploads before sending"
+                      : "Send message"
+                }
               >
                 <span className="send-arrow-up" aria-hidden="true" />
               </ComposerPrimitive.Send>

@@ -1,3 +1,23 @@
+export type UploadedSessionFile = {
+  id: string;
+  kind: "image";
+  name: string;
+  mimeType: string;
+  size: number;
+  createdAt: number;
+  sourceMessageId?: string;
+  storageKey?: string;
+  contentHash?: string;
+  accessToken?: string;
+  embedUrl?: string;
+  downloadUrl?: string;
+  draft?: boolean;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
+  summary?: string;
+};
+
 export type ImageAttachment = {
   id: string;
   name: string;
@@ -6,6 +26,7 @@ export type ImageAttachment = {
   dataUrl: string;
   width?: number;
   height?: number;
+  sessionFile?: UploadedSessionFile;
 };
 
 export const SUPPORTED_IMAGE_MIME_TYPES = [

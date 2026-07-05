@@ -5,12 +5,21 @@ import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Database as SqliteDatabase } from "sqlite";
+import {
+  createFileAccessToken,
+  createStoredFileId,
+  deleteStoredFile,
+  putStoredFile,
+  readStoredFile,
+  type StoredFileKind
+} from "./fileStore.js";
 
 type StoredMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
   attachments?: unknown[];
+  fileIds?: unknown[];
   reasoning?: string;
   sessionTitle?: string;
   rawStream?: string;
@@ -24,12 +33,34 @@ type StoredMessage = {
   error?: string;
 };
 
+type StoredSessionFile = {
+  id: string;
+  kind: "image" | "artifact" | "text";
+  name: string;
+  mimeType: string;
+  size: number;
+  createdAt: number;
+  sourceMessageId?: string;
+  storageKey?: string;
+  contentHash?: string;
+  accessToken?: string;
+  embedUrl?: string;
+  downloadUrl?: string;
+  draft?: boolean;
+  dataUrl?: string;
+  text?: string;
+  width?: number;
+  height?: number;
+  summary?: string;
+};
+
 type StoredSession = {
   id: string;
   title: string;
   createdAt: number;
   updatedAt: number;
   messages: StoredMessage[];
+  files?: StoredSessionFile[];
 };
 
 type StoredSessionState = {
@@ -69,7 +100,8 @@ function createEmptyState(): StoredSessionState {
     title: "New Session",
     createdAt: timestamp,
     updatedAt: timestamp,
-    messages: []
+    messages: [],
+    files: []
   };
 
   return {
@@ -84,6 +116,104 @@ function finiteTimestamp(value: unknown, fallback: number): number {
 
 function stringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function normalizeStringArray(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const item of input) {
+    const value = stringValue(item).trim();
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    values.push(value);
+  }
+
+  return values.length ? values : undefined;
+}
+
+function normalizeSessionFile(input: unknown): StoredSessionFile | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const file = input as Partial<StoredSessionFile>;
+  const kind =
+    file.kind === "image" || file.kind === "artifact" || file.kind === "text"
+      ? file.kind
+      : null;
+  const id = stringValue(file.id).trim();
+  const name = stringValue(file.name).trim();
+  if (!kind || !id || !name) {
+    return null;
+  }
+
+  const dataUrl = stringValue(file.dataUrl);
+  const text = stringValue(file.text);
+  const storageKey = stringValue(file.storageKey);
+  const accessToken = stringValue(file.accessToken);
+  if (kind === "image" && !dataUrl && !storageKey) {
+    return null;
+  }
+  if ((kind === "artifact" || kind === "text") && !text && !storageKey) {
+    return null;
+  }
+
+  return {
+    id,
+    kind,
+    name: name.slice(0, 180),
+    mimeType: stringValue(file.mimeType, kind === "image" ? "image/png" : "text/plain")
+      .trim()
+      .slice(0, 120),
+    size:
+      typeof file.size === "number" && Number.isFinite(file.size)
+        ? Math.max(0, Math.round(file.size))
+        : text.length,
+    createdAt: finiteTimestamp(file.createdAt, now()),
+    sourceMessageId: stringValue(file.sourceMessageId) || undefined,
+    storageKey: storageKey || undefined,
+    contentHash: stringValue(file.contentHash) || undefined,
+    accessToken: accessToken || undefined,
+    embedUrl: stringValue(file.embedUrl) || undefined,
+    downloadUrl: stringValue(file.downloadUrl) || undefined,
+    draft: Boolean(file.draft),
+    dataUrl: dataUrl || undefined,
+    text: text || undefined,
+    width:
+      typeof file.width === "number" && Number.isFinite(file.width)
+        ? Math.max(1, Math.round(file.width))
+        : undefined,
+    height:
+      typeof file.height === "number" && Number.isFinite(file.height)
+        ? Math.max(1, Math.round(file.height))
+        : undefined,
+    summary: stringValue(file.summary).slice(0, 1_200) || undefined
+  };
+}
+
+function normalizeSessionFiles(input: unknown): StoredSessionFile[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const files: StoredSessionFile[] = [];
+  for (const item of input) {
+    const file = normalizeSessionFile(item);
+    if (!file || seen.has(file.id)) {
+      continue;
+    }
+    seen.add(file.id);
+    files.push(file);
+  }
+
+  return files;
 }
 
 function normalizeMessage(input: unknown): StoredMessage | null {
@@ -106,6 +236,7 @@ function normalizeMessage(input: unknown): StoredMessage | null {
     attachments: Array.isArray(message.attachments)
       ? message.attachments
       : undefined,
+    fileIds: normalizeStringArray(message.fileIds),
     reasoning: stringValue(message.reasoning) || undefined,
     sessionTitle: stringValue(message.sessionTitle) || undefined,
     rawStream: stringValue(message.rawStream) || undefined,
@@ -158,7 +289,8 @@ function normalizeSession(input: unknown): StoredSession | null {
     title: stringValue(session.title, "New Session").trim() || "New Session",
     createdAt,
     updatedAt,
-    messages
+    messages,
+    files: normalizeSessionFiles(session.files)
   };
 }
 
@@ -299,12 +431,140 @@ async function writeSessionState(state: StoredSessionState): Promise<void> {
   await writeSqliteState(db, state);
 }
 
+function getRequestOrigin(req: Request): string {
+  const forwardedProto = stringValue(req.headers["x-forwarded-proto"])
+    .split(",")[0]
+    .trim();
+  const forwardedHost = stringValue(req.headers["x-forwarded-host"])
+    .split(",")[0]
+    .trim();
+  const protocol = forwardedProto || req.protocol || "http";
+  const host = forwardedHost || req.get("host") || "127.0.0.1:8787";
+  return `${protocol}://${host}`;
+}
+
+function withFileUrls(req: Request, file: StoredSessionFile): StoredSessionFile {
+  if (!file.accessToken) {
+    return file;
+  }
+
+  const origin = getRequestOrigin(req);
+  const id = encodeURIComponent(file.id);
+  const token = encodeURIComponent(file.accessToken);
+  return {
+    ...file,
+    embedUrl: `${origin}/api/files/${id}/content?token=${token}`,
+    downloadUrl: `${origin}/api/files/${id}/content?token=${token}&download=1`
+  };
+}
+
+function presentState(req: Request, state: StoredSessionState): StoredSessionState {
+  return {
+    ...state,
+    sessions: state.sessions.map((session) => ({
+      ...session,
+      files: (session.files ?? [])
+        .filter((file) => !file.draft)
+        .map((file) => withFileUrls(req, file))
+    }))
+  };
+}
+
+function findSession(
+  state: StoredSessionState,
+  sessionId: string
+): StoredSession | undefined {
+  return state.sessions.find((session) => session.id === sessionId);
+}
+
+function ensureSession(
+  state: StoredSessionState,
+  sessionId: string
+): StoredSession {
+  const existing = findSession(state, sessionId);
+  if (existing) {
+    existing.files = existing.files ?? [];
+    return existing;
+  }
+
+  const timestamp = now();
+  const session: StoredSession = {
+    id: sessionId,
+    title: "New Session",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    messages: [],
+    files: []
+  };
+  state.sessions.unshift(session);
+  state.activeSessionId = sessionId;
+  return session;
+}
+
+function findFileById(
+  state: StoredSessionState,
+  fileId: string
+): { session: StoredSession; file: StoredSessionFile } | null {
+  for (const session of state.sessions) {
+    const file = (session.files ?? []).find((candidate) => candidate.id === fileId);
+    if (file) {
+      return { session, file };
+    }
+  }
+
+  return null;
+}
+
+function getUploadKind(value: unknown): StoredFileKind | null {
+  return value === "image" || value === "artifact" || value === "text"
+    ? value
+    : null;
+}
+
+function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } {
+  const match = /^data:([^;,]+);base64,([a-z0-9+/=\s]+)$/i.exec(dataUrl.trim());
+  if (!match) {
+    throw new Error("Invalid data URL.");
+  }
+
+  return {
+    mimeType: match[1].toLowerCase(),
+    buffer: Buffer.from(match[2].replace(/\s+/g, ""), "base64")
+  };
+}
+
+async function getFileBuffer(file: StoredSessionFile): Promise<{
+  buffer: Buffer;
+  mimeType: string;
+}> {
+  if (file.storageKey) {
+    return readStoredFile(file.storageKey, file.mimeType);
+  }
+
+  if (file.dataUrl) {
+    return decodeDataUrl(file.dataUrl);
+  }
+
+  if (file.text) {
+    return {
+      buffer: Buffer.from(file.text, "utf8"),
+      mimeType: file.mimeType || "text/plain"
+    };
+  }
+
+  throw new Error("File content is unavailable.");
+}
+
+function filenameHeader(name: string): string {
+  return `filename="${name.replace(/["\\]/g, "_")}"`;
+}
+
 export async function handleGetSessions(
-  _req: Request,
+  req: Request,
   res: Response
 ): Promise<void> {
   try {
-    res.json(await readSessionState());
+    res.json(presentState(req, await readSessionState()));
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error)
@@ -320,6 +580,175 @@ export async function handleSaveSessions(
     const state = normalizeState(req.body);
     saveQueue = saveQueue.then(() => writeSessionState(state));
     await saveQueue;
+    res.json({ ok: true });
+  } catch (error) {
+    saveQueue = Promise.resolve();
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+export async function handleGetSessionFiles(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const state = await readSessionState();
+    const session = findSession(state, req.params.sessionId);
+    if (!session) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    res.json({
+      files: (session.files ?? [])
+        .filter((file) => !file.draft)
+        .map((file) => withFileUrls(req, file))
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+export async function handleCreateSessionFile(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const sessionId = req.params.sessionId;
+  const body = req.body as Record<string, unknown>;
+  const kind = getUploadKind(body.kind);
+
+  if (!kind) {
+    res.status(400).json({ error: "File kind must be image, artifact, or text." });
+    return;
+  }
+
+  try {
+    const fileId = createStoredFileId(kind);
+    const name = stringValue(body.name, `${kind}-${fileId}`).slice(0, 180);
+    const input = {
+      kind,
+      sessionId,
+      name,
+      mimeType: stringValue(
+        body.mimeType,
+        kind === "image" ? "image/png" : kind === "artifact" ? "text/html" : "text/plain"
+      ),
+      dataUrl: stringValue(body.dataUrl) || undefined,
+      text: stringValue(body.text) || undefined
+    };
+    const stored = await putStoredFile(fileId, input);
+    const file: StoredSessionFile = {
+      id: fileId,
+      kind,
+      name,
+      mimeType: stored.mimeType,
+      size: stored.size,
+      createdAt: now(),
+      sourceMessageId: stringValue(body.sourceMessageId) || undefined,
+      storageKey: stored.storageKey,
+      contentHash: stored.contentHash,
+      accessToken: createFileAccessToken(),
+      draft: Boolean(body.draft),
+      width:
+        typeof body.width === "number" && Number.isFinite(body.width)
+          ? Math.max(1, Math.round(body.width))
+          : undefined,
+      height:
+        typeof body.height === "number" && Number.isFinite(body.height)
+          ? Math.max(1, Math.round(body.height))
+          : undefined,
+      summary: stringValue(body.summary).slice(0, 1_200) || undefined
+    };
+
+    let savedFile: StoredSessionFile | null = null;
+    saveQueue = saveQueue.then(async () => {
+      const state = await readSessionState();
+      const session = ensureSession(state, sessionId);
+      session.files = [
+        ...(session.files ?? []).filter((candidate) => candidate.id !== file.id),
+        file
+      ];
+      session.updatedAt = now();
+      await writeSessionState(state);
+      savedFile = file;
+    });
+    await saveQueue;
+
+    res.json({ file: withFileUrls(req, savedFile ?? file) });
+  } catch (error) {
+    saveQueue = Promise.resolve();
+    res.status(400).json({
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+export async function handleGetFileContent(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const state = await readSessionState();
+    const found = findFileById(state, req.params.fileId);
+    const token = stringValue(req.query.token);
+    if (!found || !found.file.accessToken || token !== found.file.accessToken) {
+      res.status(404).send("File not found.");
+      return;
+    }
+
+    const { buffer, mimeType } = await getFileBuffer(found.file);
+    const disposition = req.query.download
+      ? `attachment; ${filenameHeader(found.file.name)}`
+      : `inline; ${filenameHeader(found.file.name)}`;
+
+    res
+      .status(200)
+      .type(mimeType)
+      .set({
+        "Cache-Control": "private, max-age=31536000, immutable",
+        "Content-Disposition": disposition,
+        "Content-Length": String(buffer.byteLength),
+        "Access-Control-Allow-Origin": "*",
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "X-Content-Type-Options": "nosniff"
+      })
+      .send(buffer);
+  } catch (error) {
+    res.status(500).send(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export async function handleDeleteSessionFile(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const sessionId = req.params.sessionId;
+  const fileId = req.params.fileId;
+
+  try {
+    let removed: StoredSessionFile | undefined;
+    saveQueue = saveQueue.then(async () => {
+      const state = await readSessionState();
+      const session = findSession(state, sessionId);
+      if (!session) {
+        return;
+      }
+
+      removed = (session.files ?? []).find((file) => file.id === fileId);
+      session.files = (session.files ?? []).filter((file) => file.id !== fileId);
+      session.updatedAt = now();
+      await writeSessionState(state);
+    });
+    await saveQueue;
+
+    if (removed?.storageKey) {
+      await deleteStoredFile(removed.storageKey);
+    }
+
     res.json({ ok: true });
   } catch (error) {
     saveQueue = Promise.resolve();

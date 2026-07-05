@@ -1,6 +1,4 @@
 import type { Request, Response } from "express";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { stepCountIs, streamText, type ModelMessage, type TextStreamPart } from "ai";
 import {
   buildMemoryContextPrompt,
   createMemoryTools,
@@ -14,16 +12,23 @@ import {
   createRetrievalToolStats
 } from "./retrievalTool.js";
 import {
+  buildSessionFilesContext,
+  createSessionFileToolStats,
+  listFilesToolDefinition,
+  listFilesToolOutput,
+  normalizeSessionFiles,
+  readFileToolDefinition,
+  readFileToolResult,
+  type ResponsesInputContentPart,
+  type ResponsesToolDefinition,
+  type ResponsesToolOutput
+} from "./sessionFileTools.js";
+import {
   getRuntimeApiDefaults,
   readRuntimeApiCredentials,
   type ApiKeySource
 } from "./runtimeApiSettings.js";
 import { SYSTEM_PROMPT } from "./systemPrompt.js";
-
-const MAX_IMAGES_PER_MESSAGE = 4;
-const MAX_IMAGE_DATA_URL_LENGTH = 3_000_000;
-const DEFAULT_TOOL_MAX_STEPS = 4;
-const MAX_TOOL_MAX_STEPS = 8;
 
 type ChatRole = "user" | "assistant" | "system";
 type OpenRouterReasoningEffort =
@@ -46,18 +51,43 @@ type RuntimeApiSettings = {
   memoryItems: MemoryItem[];
 };
 
-type ClientImageAttachment = {
-  name?: string;
-  mimeType?: string;
-  size?: number;
-  dataUrl: string;
-};
-
 type ClientChatMessage = {
   role: ChatRole;
   content: string;
-  images?: ClientImageAttachment[];
 };
+
+type ResponsesInputMessage =
+  | {
+      type: "message";
+      role: "user";
+      content: ResponsesInputContentPart[];
+    }
+  | {
+      type: "message";
+      role: "assistant";
+      id: string;
+      status: "completed";
+      content: Array<{ type: "output_text"; text: string; annotations: unknown[] }>;
+    };
+
+type ResponsesFunctionCallItem = {
+  type: "function_call";
+  id?: string;
+  call_id: string;
+  name: string;
+  arguments: string;
+};
+
+type ResponsesFunctionCallOutputItem = {
+  type: "function_call_output";
+  call_id: string;
+  output: ResponsesToolOutput;
+};
+
+type ResponsesInputItem =
+  | ResponsesInputMessage
+  | ResponsesFunctionCallItem
+  | ResponsesFunctionCallOutputItem;
 
 type CanvasContext = {
   viewportWidth: number;
@@ -83,6 +113,11 @@ type ToolStreamState = {
   reasoningEvents: number;
 };
 
+type ResponsesToolExecutionResult = {
+  output: ResponsesToolOutput;
+  followUpInput?: ResponsesInputItem[];
+};
+
 function flushResponse(res: Response): void {
   const flush = (res as Response & { flush?: () => void }).flush;
   if (typeof flush === "function") {
@@ -96,36 +131,6 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
   }
 
   return Math.round(Math.min(max, Math.max(min, value)));
-}
-
-function normalizeUploadedImages(input: unknown): ClientImageAttachment[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-
-  return input
-    .slice(0, MAX_IMAGES_PER_MESSAGE)
-    .filter((image): image is Partial<ClientImageAttachment> => {
-      return typeof image === "object" && image !== null;
-    })
-    .map((image) => ({
-      name: typeof image.name === "string" ? image.name.slice(0, 160) : undefined,
-      mimeType:
-        typeof image.mimeType === "string" ? image.mimeType.slice(0, 80) : undefined,
-      size:
-        typeof image.size === "number" && Number.isFinite(image.size)
-          ? image.size
-          : undefined,
-      dataUrl: typeof image.dataUrl === "string" ? image.dataUrl : ""
-    }))
-    .filter((image) => {
-      return (
-        image.dataUrl.length <= MAX_IMAGE_DATA_URL_LENGTH &&
-        /^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(
-          image.dataUrl
-        )
-      );
-    });
 }
 
 function normalizeCanvasContext(input: unknown): CanvasContext {
@@ -237,35 +242,38 @@ function normalizeMessages(input: unknown): ClientChatMessage[] {
     })
     .map((message) => ({
       role: message.role === "assistant" ? "assistant" : "user",
-      content: String(message.content).slice(0, 20_000),
-      images:
-        message.role === "assistant"
-          ? []
-          : normalizeUploadedImages((message as { images?: unknown }).images)
+      content: String(message.content).slice(0, 20_000)
     }));
 }
 
-function toModelMessage(message: ClientChatMessage): ModelMessage {
-  const images = message.images ?? [];
-  if (!images.length || message.role !== "user") {
+function toResponsesInputMessage(
+  message: ClientChatMessage,
+  index: number
+): ResponsesInputMessage {
+  if (message.role === "assistant") {
     return {
-      role: message.role,
-      content: message.content
+      type: "message",
+      role: "assistant",
+      id: `msg_${index}`,
+      status: "completed",
+      content: [
+        {
+          type: "output_text",
+          text: message.content,
+          annotations: []
+        }
+      ]
     };
   }
 
   return {
+    type: "message",
     role: "user",
     content: [
       {
-        type: "text",
-        text: message.content || "Please respond to the attached image."
-      },
-      ...images.map((image) => ({
-        type: "image" as const,
-        image: image.dataUrl,
-        mediaType: image.mimeType
-      }))
+        type: "input_text",
+        text: message.content || "Please respond using the current session context."
+      }
     ]
   };
 }
@@ -363,31 +371,111 @@ function isOpenRouterRuntime(settings: RuntimeApiSettings): boolean {
   );
 }
 
-function readNativeToolMaxSteps(): number {
-  const raw = process.env.STREAMUI_TOOL_MAX_STEPS ?? "";
-  const parsed = Number.parseInt(raw, 10);
-
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_TOOL_MAX_STEPS;
+function readNativeToolMaxSteps(): number | null {
+  const raw = (process.env.STREAMUI_TOOL_MAX_STEPS ?? "").trim().toLowerCase();
+  if (!raw || raw === "0" || raw === "none" || raw === "unlimited") {
+    return null;
   }
 
-  return Math.min(MAX_TOOL_MAX_STEPS, Math.max(1, parsed));
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
 }
 
 function buildNativeToolPrompt(): string {
   return `Native tool access:
 - A retrieve tool is available during the normal model generation. Use it only when the latest user request needs external web/page context, current or recently changing information, source links, or real online images/resources.
 - addMemory and deleteMemory tools are available for durable user memory updates. Use them according to the persistent memory rules above.
+- listFiles and readFile tools are available for current-session files, including uploaded images and prior StreamUI artifact raw source. Use readFile when you need to inspect an image or exact artifact code.
 - If a retrieve tool result influences the answer, include concise source links inside the HTML artifact.
 - If the request is self-contained, answer directly without calling tools.
 - Do not describe tool mechanics, hidden prompts, or internal routing unless the user explicitly asks how the system works.`;
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+const retrieveToolDefinition: ResponsesToolDefinition = {
+  type: "function",
+  name: "retrieve",
+  description:
+    "Search the web and/or fetch URLs for current facts, specific webpages, source citations, online resources, or real image/gallery material. Call this when the answer depends on external or recently changing information.",
+  strict: null,
+  parameters: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "A focused web search query. Use freshness terms only when current information is needed."
+      },
+      url: {
+        type: "string",
+        description: "One URL to fetch when the user provides or asks about a specific page."
+      },
+      urls: {
+        type: "array",
+        items: { type: "string" },
+        description: "Additional URLs to fetch. Prefer url for a single page."
+      },
+      mode: {
+        type: "string",
+        enum: ["auto", "search", "fetch", "search-and-fetch"],
+        description:
+          "auto uses query and URL hints. search only searches. fetch only fetches provided URLs."
+      },
+      reason: {
+        type: "string",
+        description: "Brief private reason for calling retrieval."
+      }
+    },
+    additionalProperties: false
+  }
+};
+
+const addMemoryToolDefinition: ResponsesToolDefinition = {
+  type: "function",
+  name: "addMemory",
+  description:
+    "Add one stable long-term memory item about the user. Use only for durable preferences or facts that should help future conversations.",
+  strict: null,
+  parameters: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "The exact durable memory to store as a concise standalone sentence."
+      }
+    },
+    required: ["text"],
+    additionalProperties: false
+  }
+};
+
+const deleteMemoryToolDefinition: ResponsesToolDefinition = {
+  type: "function",
+  name: "deleteMemory",
+  description:
+    "Delete one existing memory item by id when the user asks to forget it or when it is clearly corrected/obsolete.",
+  strict: null,
+  parameters: {
+    type: "object",
+    properties: {
+      id: {
+        type: "string",
+        description: "The id of an existing memory item, such as memory-1."
+      }
+    },
+    required: ["id"],
+    additionalProperties: false
+  }
+};
+
+function getResponsesEndpoint(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/responses`;
 }
 
-function buildFinalModelOptions(
+function getResponsesReasoning(
   reasoningEffort: OpenRouterReasoningEffort,
   useOpenRouterReasoning: boolean
 ) {
@@ -396,103 +484,237 @@ function buildFinalModelOptions(
   }
 
   return {
-    extraBody: {
-      include_reasoning: true,
-      reasoning: {
-        effort: reasoningEffort,
-        exclude: false,
-        enabled: true
+    effort: reasoningEffort === "xhigh" ? "high" : reasoningEffort
+  };
+}
+
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
+async function stringifyToolOutput(
+  output: string | AsyncIterable<string>
+): Promise<string> {
+  if (typeof output === "string") {
+    return output;
+  }
+
+  let text = "";
+  for await (const chunk of output) {
+    text += chunk;
+  }
+  return text;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeResponsesFunctionCall(input: unknown): ResponsesFunctionCallItem | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const item = input as Partial<ResponsesFunctionCallItem>;
+  if (
+    item.type !== "function_call" ||
+    typeof item.call_id !== "string" ||
+    typeof item.name !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    type: "function_call",
+    id: typeof item.id === "string" ? item.id : undefined,
+    call_id: item.call_id,
+    name: item.name,
+    arguments: typeof item.arguments === "string" ? item.arguments : "{}"
+  };
+}
+
+function mergeFunctionCall(
+  map: Map<string, ResponsesFunctionCallItem>,
+  call: ResponsesFunctionCallItem | null
+): void {
+  if (!call) {
+    return;
+  }
+
+  const existing = map.get(call.call_id);
+  map.set(call.call_id, {
+    ...existing,
+    ...call,
+    arguments: call.arguments || existing?.arguments || "{}"
+  });
+}
+
+function appendFunctionCallsFromOutput(
+  output: unknown,
+  map: Map<string, ResponsesFunctionCallItem>
+): void {
+  if (!Array.isArray(output)) {
+    return;
+  }
+
+  for (const item of output) {
+    mergeFunctionCall(map, normalizeResponsesFunctionCall(item));
+  }
+}
+
+async function streamResponsesOnce({
+  endpoint,
+  apiSettings,
+  input,
+  instructions,
+  tools,
+  res,
+  state,
+  useOpenRouterReasoning
+}: {
+  endpoint: string;
+  apiSettings: RuntimeApiSettings;
+  input: ResponsesInputItem[];
+  instructions: string;
+  tools: ResponsesToolDefinition[];
+  res: Response;
+  state: ToolStreamState;
+  useOpenRouterReasoning: boolean;
+}): Promise<ResponsesFunctionCallItem[]> {
+  const body: Record<string, unknown> = {
+    model: apiSettings.model,
+    input,
+    instructions,
+    tools,
+    tool_choice: "auto",
+    stream: true,
+    max_output_tokens: 9000
+  };
+  const reasoning = getResponsesReasoning(
+    apiSettings.reasoningEffort,
+    useOpenRouterReasoning
+  );
+  if (reasoning) {
+    body.reasoning = reasoning;
+  }
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiSettings.apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:5173",
+      "X-Title": "StreamUI Runtime Demo"
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok || !response.body) {
+    const text = await response.text();
+    throw new Error(text || `Responses API request failed with ${response.status}.`);
+  }
+
+  const decoder = new TextDecoder();
+  const calls = new Map<string, ResponsesFunctionCallItem>();
+  const callsByOutputIndex = new Map<number, ResponsesFunctionCallItem>();
+  const callsByItemId = new Map<string, ResponsesFunctionCallItem>();
+  let buffer = "";
+
+  const handleEvent = (event: unknown) => {
+    if (!event || typeof event !== "object") {
+      return;
+    }
+
+    const data = event as Record<string, unknown>;
+    const type = data.type;
+    if (
+      (type === "response.content_part.delta" ||
+        type === "response.output_text.delta") &&
+      typeof data.delta === "string"
+    ) {
+      writeStreamEvent(res, { type: "content", text: data.delta }, state);
+      return;
+    }
+
+    if (type === "response.reasoning.delta" && typeof data.delta === "string") {
+      writeStreamEvent(res, { type: "reasoning", text: data.delta }, state);
+      return;
+    }
+
+    if (type === "response.output_item.added") {
+      const call = normalizeResponsesFunctionCall(data.item);
+      if (call) {
+        const outputIndex =
+          typeof data.output_index === "number" ? data.output_index : undefined;
+        if (typeof outputIndex === "number") {
+          callsByOutputIndex.set(outputIndex, call);
+        }
+        if (call.id) {
+          callsByItemId.set(call.id, call);
+        }
       }
+      return;
+    }
+
+    if (type === "response.function_call_arguments.done") {
+      const outputIndex =
+        typeof data.output_index === "number" ? data.output_index : undefined;
+      const itemId = typeof data.item_id === "string" ? data.item_id : "";
+      const target =
+        (typeof outputIndex === "number"
+          ? callsByOutputIndex.get(outputIndex)
+          : undefined) ?? callsByItemId.get(itemId);
+      if (target && typeof data.arguments === "string") {
+        target.arguments = data.arguments;
+      }
+      return;
+    }
+
+    if (type === "response.output_item.done") {
+      mergeFunctionCall(calls, normalizeResponsesFunctionCall(data.item));
+      return;
+    }
+
+    if (type === "response.done" && data.response && typeof data.response === "object") {
+      appendFunctionCallsFromOutput(
+        (data.response as { output?: unknown }).output,
+        calls
+      );
     }
   };
-}
 
-function readStreamText(part: TextStreamPart<any>): string {
-  if (part.type !== "text-delta" && part.type !== "reasoning-delta") {
-    return "";
-  }
-
-  const compatPart = part as {
-    text?: unknown;
-    delta?: unknown;
-    textDelta?: unknown;
+  const flushLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) {
+      return;
+    }
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") {
+      return;
+    }
+    handleEvent(safeJsonParse(payload));
   };
-  if (typeof compatPart.text === "string") {
-    return compatPart.text;
-  }
-  if (typeof compatPart.delta === "string") {
-    return compatPart.delta;
-  }
-  if (typeof compatPart.textDelta === "string") {
-    return compatPart.textDelta;
+
+  for await (const chunk of response.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    lines.forEach(flushLine);
   }
 
-  return "";
-}
-
-function writeAiSdkStreamPart(
-  part: TextStreamPart<any>,
-  res: Response,
-  state: ToolStreamState
-): void {
-  if (
-    part.type === "tool-input-start" ||
-    part.type === "tool-input-end" ||
-    part.type === "tool-input-delta" ||
-    part.type === "tool-call" ||
-    part.type === "tool-result" ||
-    part.type === "start-step" ||
-    part.type === "finish-step" ||
-    part.type === "start" ||
-    part.type === "finish" ||
-    part.type === "text-start" ||
-    part.type === "text-end" ||
-    part.type === "reasoning-start" ||
-    part.type === "reasoning-end" ||
-    part.type === "source" ||
-    part.type === "file" ||
-    part.type === "raw" ||
-    part.type === "abort" ||
-    part.type === "tool-output-denied"
-  ) {
-    return;
+  const tail = decoder.decode();
+  if (tail) {
+    buffer += tail;
+  }
+  if (buffer.trim()) {
+    buffer.split(/\r?\n/).forEach(flushLine);
   }
 
-  if (part.type === "tool-error") {
-    writeStreamEvent(
-      res,
-      {
-        type: "reasoning",
-        text: `Tool error: ${getErrorMessage(part.error)}`
-      },
-      state
-    );
-    return;
-  }
-
-  if (part.type === "reasoning-delta") {
-    writeStreamEvent(
-      res,
-      { type: "reasoning", text: readStreamText(part) },
-      state
-    );
-    return;
-  }
-
-  if (part.type === "text-delta") {
-    writeStreamEvent(
-      res,
-      { type: "content", text: readStreamText(part) },
-      state
-    );
-    return;
-  }
-
-  if (part.type === "error") {
-    throw part.error instanceof Error
-      ? part.error
-      : new Error("OpenRouter stream returned an error.");
-  }
+  return Array.from(calls.values());
 }
 
 export async function handleOpenRouterChat(
@@ -501,6 +723,7 @@ export async function handleOpenRouterChat(
 ): Promise<void> {
   const body = req.body as {
     messages?: unknown;
+    files?: unknown;
     canvas?: unknown;
     themeMode?: unknown;
     apiSettings?: unknown;
@@ -513,6 +736,7 @@ export async function handleOpenRouterChat(
     const apiSettings = readRuntimeApiSettings(body.apiSettings);
     const model = apiSettings.model;
     const messages = normalizeMessages(body.messages);
+    const files = normalizeSessionFiles(body.files);
     const canvasContext = normalizeCanvasContext(body.canvas);
     const themeMode = normalizeThemeMode(body.themeMode);
     const useOpenRouterReasoning = isOpenRouterRuntime(apiSettings);
@@ -536,15 +760,9 @@ export async function handleOpenRouterChat(
       reasoningEvents: 0
     };
 
-    const provider = createOpenRouter({
-      apiKey: apiSettings.apiKey,
-      baseURL: apiSettings.baseUrl,
-      appName: "StreamUI Runtime Demo",
-      appUrl: "http://localhost:5173",
-      compatibility: useOpenRouterReasoning ? "strict" : "compatible"
-    });
     const retrievalStats = createRetrievalToolStats();
     const memoryStats = createMemoryToolStats();
+    const fileStats = createSessionFileToolStats();
     const toolMaxSteps = readNativeToolMaxSteps();
     let nativeSteps = 0;
     let nativeToolCalls = 0;
@@ -574,6 +792,109 @@ export async function handleOpenRouterChat(
       ...retrievalTools,
       ...memoryTools
     };
+    const toolDefinitions = [
+      retrieveToolDefinition,
+      addMemoryToolDefinition,
+      deleteMemoryToolDefinition,
+      listFilesToolDefinition,
+      readFileToolDefinition
+    ];
+    const executeResponsesTool = async (
+      call: ResponsesFunctionCallItem
+    ): Promise<ResponsesToolExecutionResult> => {
+      const args = safeJsonParse(call.arguments);
+      nativeToolCalls += 1;
+
+      try {
+        if (call.name === "retrieve") {
+          const execute = tools.retrieve.execute;
+          if (!execute) {
+            throw new Error("retrieve tool is unavailable.");
+          }
+          return {
+            output: await stringifyToolOutput(
+              await execute(args as never, {
+                toolCallId: call.call_id,
+                messages: []
+              })
+            )
+          };
+        }
+        if (call.name === "addMemory") {
+          const execute = tools.addMemory.execute;
+          if (!execute) {
+            throw new Error("addMemory tool is unavailable.");
+          }
+          return {
+            output: await stringifyToolOutput(
+              await execute(args as never, {
+                toolCallId: call.call_id,
+                messages: []
+              })
+            )
+          };
+        }
+        if (call.name === "deleteMemory") {
+          const execute = tools.deleteMemory.execute;
+          if (!execute) {
+            throw new Error("deleteMemory tool is unavailable.");
+          }
+          return {
+            output: await stringifyToolOutput(
+              await execute(args as never, {
+                toolCallId: call.call_id,
+                messages: []
+              })
+            )
+          };
+        }
+        if (call.name === "listFiles") {
+          writeStreamEvent(
+            res,
+            { type: "reasoning", text: "Reading session file list..." },
+            toolStreamState
+          );
+          return {
+            output: listFilesToolOutput(files, fileStats)
+          };
+        }
+        if (call.name === "readFile") {
+          writeStreamEvent(
+            res,
+            { type: "reasoning", text: "Reading session file..." },
+            toolStreamState
+          );
+          const result = await readFileToolResult(files, args, fileStats);
+          return {
+            output: result.output,
+            followUpInput: result.followUpContent
+              ? [
+                  {
+                    type: "message",
+                    role: "user",
+                    content: result.followUpContent
+                  }
+                ]
+              : undefined
+          };
+        }
+
+        throw new Error(`Unknown tool ${call.name}.`);
+      } catch (error) {
+        nativeToolErrors += 1;
+        const message = getErrorMessage(error);
+        writeStreamEvent(
+          res,
+          { type: "reasoning", text: `Tool error: ${message}` },
+          toolStreamState
+        );
+        return {
+          output: JSON.stringify({
+            error: message
+          })
+        };
+      }
+    };
 
     writeStreamEvent(
       res,
@@ -581,49 +902,57 @@ export async function handleOpenRouterChat(
       toolStreamState
     );
 
-    const result = streamText({
-      model: provider(
-        model,
-        buildFinalModelOptions(apiSettings.reasoningEffort, useOpenRouterReasoning)
-      ),
-      system: [
+    const instructions = [
         SYSTEM_PROMPT,
         buildMemoryContextPrompt({
           userPreferencePrompt: apiSettings.userPreferencePrompt,
           memoryItems: apiSettings.memoryItems
         }),
+        buildSessionFilesContext(files),
         buildThemeContextPrompt(themeMode),
         buildCanvasContextPrompt(canvasContext),
         buildNativeToolPrompt()
       ]
         .filter(Boolean)
-        .join("\n\n"),
-      messages: messages.map(toModelMessage),
-      tools,
-      stopWhen: stepCountIs(toolMaxSteps),
-      experimental_onToolCallStart: () => {
-        nativeToolCalls += 1;
-      },
-      experimental_onToolCallFinish: (event) => {
-        if (!event.success) {
-          nativeToolErrors += 1;
-          writeStreamEvent(
-            res,
-            {
-              type: "reasoning",
-              text: `Tool error: ${getErrorMessage(event.error)}`
-            },
-            toolStreamState
-          );
-        }
-      },
-      onStepFinish: () => {
-        nativeSteps += 1;
-      }
-    });
+        .join("\n\n");
+    const responseInput: ResponsesInputItem[] = messages.map(
+      toResponsesInputMessage
+    );
+    const endpoint = getResponsesEndpoint(apiSettings.baseUrl);
 
-    for await (const part of result.fullStream) {
-      writeAiSdkStreamPart(part, res, toolStreamState);
+    for (
+      let step = 0;
+      toolMaxSteps === null || step < toolMaxSteps;
+      step += 1
+    ) {
+      nativeSteps += 1;
+      const functionCalls = await streamResponsesOnce({
+        endpoint,
+        apiSettings,
+        input: responseInput,
+        instructions,
+        tools: toolDefinitions,
+        res,
+        state: toolStreamState,
+        useOpenRouterReasoning
+      });
+
+      if (!functionCalls.length) {
+        break;
+      }
+
+      for (const call of functionCalls) {
+        responseInput.push(call);
+        const toolResult = await executeResponsesTool(call);
+        responseInput.push({
+          type: "function_call_output",
+          call_id: call.call_id,
+          output: toolResult.output
+        });
+        if (toolResult.followUpInput) {
+          responseInput.push(...toolResult.followUpInput);
+        }
+      }
     }
 
     res.end();
@@ -636,7 +965,7 @@ export async function handleOpenRouterChat(
       0
     );
     console.info(
-      `[chat:${requestId}] complete duration_ms=${Date.now() - startedAt} native_steps=${nativeSteps} tool_max_steps=${toolMaxSteps} tool_calls=${nativeToolCalls} retrieval_calls=${retrievalStats.calls} retrieval_errors=${retrievalStats.errors + nativeToolErrors} retrieval_sources=${retrievalSources} retrieval_verified_images=${retrievalImages} memory_adds=${memoryStats.adds} memory_deletes=${memoryStats.deletes} memory_errors=${memoryStats.errors} content_chars=${toolStreamState.contentChars} content_events=${toolStreamState.contentEvents} reasoning_chars=${toolStreamState.reasoningChars} reasoning_events=${toolStreamState.reasoningEvents}`
+      `[chat:${requestId}] complete duration_ms=${Date.now() - startedAt} native_steps=${nativeSteps} tool_max_steps=${toolMaxSteps ?? "unlimited"} tool_calls=${nativeToolCalls} retrieval_calls=${retrievalStats.calls} retrieval_errors=${retrievalStats.errors + nativeToolErrors} retrieval_sources=${retrievalSources} retrieval_verified_images=${retrievalImages} memory_adds=${memoryStats.adds} memory_deletes=${memoryStats.deletes} memory_errors=${memoryStats.errors} file_lists=${fileStats.lists} file_reads=${fileStats.reads} file_errors=${fileStats.errors} content_chars=${toolStreamState.contentChars} content_events=${toolStreamState.contentEvents} reasoning_chars=${toolStreamState.reasoningChars} reasoning_events=${toolStreamState.reasoningEvents}`
     );
   } catch (error) {
     const message =

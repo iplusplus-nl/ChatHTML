@@ -8,7 +8,7 @@ import {
   FileText,
   ImageDown
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   copySnapshotSourceCode,
   copySnapshotVisibleText,
@@ -80,6 +80,7 @@ export function ArtifactExportMenu({
   const [isHovered, setIsHovered] = useState(false);
   const [isPinned, setIsPinned] = useState(false);
   const [status, setStatus] = useState<ExportStatus | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   const filenames = useMemo(
     () => ({
@@ -115,6 +116,33 @@ export function ArtifactExportMenu({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isPinned]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    const closeMenu = () => {
+      setIsHovered(false);
+      setIsPinned(false);
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && rootRef.current?.contains(target)) {
+        return;
+      }
+
+      closeMenu();
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("blur", closeMenu);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("blur", closeMenu);
+    };
+  }, [isOpen]);
 
   const runAction = async (action: ArtifactExportAction) => {
     if (activeAction) {
@@ -198,6 +226,7 @@ export function ArtifactExportMenu({
 
   return (
     <div
+      ref={rootRef}
       className={`artifact-export-menu ${isOpen ? "is-open" : ""} ${
         isPinned ? "is-pinned" : ""
       }`}

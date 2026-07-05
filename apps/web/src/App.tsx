@@ -61,10 +61,14 @@ import {
   summarizeSession,
   type ChatSession,
   type ClientMessage,
+  type SessionFile,
   type SessionState
 } from "./domain/chat/sessionModel";
 import { toApiMessages } from "./features/chat/apiMessages";
-import type { ImageAttachment } from "./core/imageAttachments";
+import type {
+  ImageAttachment,
+  UploadedSessionFile
+} from "./core/imageAttachments";
 import { extractStreamUiParts } from "./runtime/streamui/protocol";
 import { createStreamingRenderer } from "./runtime/streamui/streamingRenderer";
 import type {
@@ -93,6 +97,132 @@ const THEME_STORAGE_KEY = "streamui.theme.v1";
 const MAX_RUNTIME_REPAIR_ATTEMPTS = 2;
 const MAX_RUNTIME_REPAIR_SOURCE_CHARS = 32_000;
 const MAX_RUNTIME_REPAIR_ERROR_CHARS = 4_000;
+
+function mergeSessionFiles(files: SessionFile[]): SessionFile[] {
+  const merged = new Map<string, SessionFile>();
+  for (const file of files) {
+    merged.set(file.id, file);
+  }
+
+  return Array.from(merged.values()).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+type SessionFileUploadInput = {
+  kind: SessionFile["kind"];
+  name: string;
+  mimeType: string;
+  dataUrl?: string;
+  text?: string;
+  width?: number;
+  height?: number;
+  sourceMessageId?: string;
+  summary?: string;
+  draft?: boolean;
+};
+
+function imageAttachmentToFileUpload(
+  attachment: ImageAttachment,
+  sourceMessageId?: string,
+  draft = false
+): SessionFileUploadInput {
+  return {
+    kind: "image",
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sourceMessageId,
+    dataUrl: attachment.dataUrl,
+    width: attachment.width,
+    height: attachment.height,
+    summary: `Uploaded image ${attachment.name}`,
+    draft
+  };
+}
+
+function createArtifactFileUpload(
+  messageId: string,
+  rawStream: string,
+  snapshot: RenderSnapshot | undefined,
+  summary: string | undefined
+): SessionFileUploadInput | null {
+  const source = rawStream || snapshot?.raw || snapshot?.completedHtml || "";
+  if (!source.trim()) {
+    return null;
+  }
+
+  return {
+    kind: "artifact",
+    name: `${messageId}.streamui.html`,
+    mimeType: "text/html",
+    sourceMessageId: messageId,
+    text: source,
+    summary: summary || "StreamUI artifact raw source"
+  };
+}
+
+async function uploadSessionFile(
+  sessionId: string,
+  input: SessionFileUploadInput
+): Promise<SessionFile> {
+  const response = await fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/files`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(input)
+    }
+  );
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    file?: unknown;
+    error?: unknown;
+  };
+  if (!response.ok || !payload.file) {
+    throw new Error(
+      typeof payload.error === "string"
+        ? payload.error
+        : `File upload failed with HTTP ${response.status}.`
+    );
+  }
+
+  return payload.file as SessionFile;
+}
+
+async function deleteSessionFile(sessionId: string, fileId: string): Promise<void> {
+  const response = await fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(
+      fileId
+    )}`,
+    {
+      method: "DELETE"
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`File delete failed with HTTP ${response.status}.`);
+  }
+}
+
+function commitUploadedImageFile(
+  attachment: ImageAttachment,
+  sourceMessageId: string
+): SessionFile | null {
+  if (!attachment.sessionFile) {
+    return null;
+  }
+
+  const { draft: _draft, ...file } = attachment.sessionFile;
+  const shouldKeepInlineDataUrl = !file.storageKey && !file.embedUrl;
+  return {
+    ...file,
+    kind: "image",
+    sourceMessageId,
+    ...(shouldKeepInlineDataUrl ? { dataUrl: attachment.dataUrl } : {}),
+    width: file.width ?? attachment.width,
+    height: file.height ?? attachment.height
+  };
+}
 
 function serializeSessionStateForSave(state: SessionState): string {
   return JSON.stringify({
@@ -370,6 +500,7 @@ function getAppendMessageImages(message: AppendMessage): ImageAttachment[] {
 type StreamThreadProps = {
   activeSessionId: string;
   messages: ClientMessage[];
+  files: SessionFile[];
   themeMode: ThemeMode;
   model: string;
   modelOptions: string[];
@@ -409,6 +540,7 @@ function scrollToLastOutputStart(viewport: HTMLElement): boolean {
 function StreamThread({
   activeSessionId,
   messages,
+  files,
   themeMode,
   model,
   modelOptions,
@@ -422,6 +554,10 @@ function StreamThread({
   const messageById = useMemo(
     () => new Map(messages.map((message) => [message.id, message])),
     [messages]
+  );
+  const fileById = useMemo(
+    () => new Map(files.map((file) => [file.id, file])),
+    [files]
   );
 
   useEffect(() => {
@@ -511,7 +647,9 @@ function StreamThread({
             return (
               <ChatMessage
                 role={clientMessage.role}
-                attachments={clientMessage.attachments}
+                files={clientMessage.fileIds
+                  ?.map((fileId) => fileById.get(fileId))
+                  .filter((file): file is SessionFile => Boolean(file))}
               >
                 {clientMessage.content}
               </ChatMessage>
@@ -545,11 +683,19 @@ export default function App() {
   const [runtimeSettings, setRuntimeSettings] =
     useState<RuntimeSettingsSummary | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [attachmentUploadGate, setAttachmentUploadGate] = useState<{
+    inFlight: number;
+    errorIds: string[];
+  }>({
+    inFlight: 0,
+    errorIds: []
+  });
   const activeSession =
     sessionState.sessions.find(
       (session) => session.id === sessionState.activeSessionId
     ) ?? sessionState.sessions[0];
   const messages = activeSession?.messages ?? initialMessages;
+  const activeFiles = activeSession?.files ?? [];
   const selectableModels = useMemo(
     () => getSelectableModelOptions(apiSettings),
     [apiSettings]
@@ -566,7 +712,50 @@ export default function App() {
     ((id: string, error: RenderError) => void) | null
   >(null);
   const runtimeRepairInFlightRef = useRef<Set<string>>(new Set());
-  const attachmentAdapter = useMemo(() => new StreamImageAttachmentAdapter(), []);
+  const attachmentAdapter = useMemo(
+    () =>
+      new StreamImageAttachmentAdapter({
+        getSessionId: () => activeSessionIdRef.current,
+        uploadImage: async (sessionId, attachment) => {
+          const file = await uploadSessionFile(
+            sessionId,
+            imageAttachmentToFileUpload(attachment, undefined, true)
+          );
+          if (file.kind !== "image") {
+            throw new Error("Image upload returned a non-image file.");
+          }
+          return file as UploadedSessionFile;
+        },
+        deleteFile: deleteSessionFile,
+        onUploadStart: (id) => {
+          setAttachmentUploadGate((current) => ({
+            inFlight: current.inFlight + 1,
+            errorIds: current.errorIds.filter((errorId) => errorId !== id)
+          }));
+        },
+        onUploadComplete: (id) => {
+          setAttachmentUploadGate((current) => ({
+            inFlight: Math.max(0, current.inFlight - 1),
+            errorIds: current.errorIds.filter((errorId) => errorId !== id)
+          }));
+        },
+        onUploadError: (id) => {
+          setAttachmentUploadGate((current) => ({
+            inFlight: Math.max(0, current.inFlight - 1),
+            errorIds: current.errorIds.includes(id)
+              ? current.errorIds
+              : [...current.errorIds, id]
+          }));
+        },
+        onRemove: (id) => {
+          setAttachmentUploadGate((current) => ({
+            ...current,
+            errorIds: current.errorIds.filter((errorId) => errorId !== id)
+          }));
+        }
+      }),
+    []
+  );
   const setSessionStateAndRef = useCallback(
     (updater: SessionState | ((current: SessionState) => SessionState)) => {
       const current = sessionStateRef.current;
@@ -755,31 +944,58 @@ export default function App() {
     };
   }, []);
 
-  const updateActiveSessionMessages = useCallback(
-    (updater: (messages: ClientMessage[]) => ClientMessage[]) => {
+  const updateActiveSession = useCallback(
+    (updater: (session: ChatSession) => ChatSession) => {
       setSessionStateAndRef((current) => {
-        const now = Date.now();
+        let didUpdate = false;
         const sessions = current.sessions.map((session) => {
           if (session.id !== current.activeSessionId) {
             return session;
           }
 
-          const nextMessages = updater(session.messages);
-          return {
-            ...session,
-            title: summarizeSession(nextMessages),
-            updatedAt: now,
-            messages: nextMessages
-          };
+          didUpdate = true;
+          return updater(session);
         });
 
-        return {
-          ...current,
-          sessions: sortSessions(sessions)
-        };
+        return didUpdate
+          ? {
+              ...current,
+              sessions: sortSessions(sessions)
+            }
+          : current;
       });
     },
     [setSessionStateAndRef]
+  );
+
+  const updateActiveSessionMessages = useCallback(
+    (updater: (messages: ClientMessage[]) => ClientMessage[]) => {
+      updateActiveSession((session) => {
+        const nextMessages = updater(session.messages);
+        return {
+          ...session,
+          title: summarizeSession(nextMessages),
+          updatedAt: Date.now(),
+          messages: nextMessages
+        };
+      });
+    },
+    [updateActiveSession]
+  );
+
+  const upsertActiveSessionFiles = useCallback(
+    (files: SessionFile[]) => {
+      if (!files.length) {
+        return;
+      }
+
+      updateActiveSession((session) => ({
+        ...session,
+        updatedAt: Date.now(),
+        files: mergeSessionFiles([...session.files, ...files])
+      }));
+    },
+    [updateActiveSession]
   );
 
   const updateAssistant = useCallback(
@@ -979,11 +1195,19 @@ export default function App() {
       }
 
       const appendUserMessage = options.appendUserMessage ?? true;
+      const userMessageId = createId("user");
+      const previousMessages = messagesRef.current;
+      const uploadedFiles = attachments
+        .map((attachment) => commitUploadedImageFile(attachment, userMessageId))
+        .filter((file): file is SessionFile => file !== null);
+      const hasUnuploadedAttachments = uploadedFiles.length !== attachments.length;
       const userMessage: ClientMessage = {
-        id: createId("user"),
+        id: userMessageId,
         role: "user",
         content: trimmed,
-        attachments,
+        fileIds: uploadedFiles.length
+          ? uploadedFiles.map((file) => file.id)
+          : undefined,
         status: "complete"
       };
       const assistantId = createId("assistant");
@@ -1005,15 +1229,19 @@ export default function App() {
         updateAssistant(assistantId, { snapshot });
       });
 
-      const requestHistory = options.requestHistory ?? [
-        ...messagesRef.current,
-        userMessage
-      ];
-      updateActiveSessionMessages((current) =>
-        appendUserMessage
-          ? [...current, userMessage, assistantMessage]
-          : [...current, assistantMessage]
-      );
+      updateActiveSession((session) => {
+        const nextMessages = appendUserMessage
+          ? [...session.messages, userMessage, assistantMessage]
+          : [...session.messages, assistantMessage];
+
+        return {
+          ...session,
+          title: summarizeSession(nextMessages),
+          updatedAt: Date.now(),
+          messages: nextMessages,
+          files: mergeSessionFiles([...session.files, ...uploadedFiles])
+        };
+      });
       setIsSending(true);
 
       let raw = "";
@@ -1073,6 +1301,19 @@ export default function App() {
       };
 
       try {
+        if (hasUnuploadedAttachments) {
+          throw new Error("Image upload is still in progress. Please wait before sending.");
+        }
+
+        const requestHistory = options.requestHistory ?? [...previousMessages, userMessage];
+        const requestSession = sessionStateRef.current.sessions.find(
+          (session) => session.id === activeSessionIdRef.current
+        );
+        const requestFiles = mergeSessionFiles([
+          ...(requestSession?.files ?? []),
+          ...uploadedFiles
+        ]);
+
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: {
@@ -1080,6 +1321,7 @@ export default function App() {
           },
           body: JSON.stringify({
             messages: toApiMessages(requestHistory),
+            files: requestFiles,
             canvas: getCanvasContext(),
             themeMode,
             apiSettings: serializeApiSettings(apiSettings),
@@ -1142,6 +1384,21 @@ export default function App() {
           streamUiComplete: finalParts.streamUiComplete,
           status: "complete"
         });
+        const artifactUpload = createArtifactFileUpload(
+          assistantId,
+          raw,
+          finalSnapshot,
+          artifactContext?.textSummary
+        );
+        if (artifactUpload) {
+          try {
+            upsertActiveSessionFiles([
+              await uploadSessionFile(activeSessionIdRef.current, artifactUpload)
+            ]);
+          } catch (uploadError) {
+            console.warn("Could not persist StreamUI artifact file.", uploadError);
+          }
+        }
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "The chat request failed.";
@@ -1163,8 +1420,9 @@ export default function App() {
       handleMemoryStreamEvent,
       searchSettings,
       themeMode,
-      updateActiveSessionMessages,
-      updateAssistant
+      updateActiveSession,
+      updateAssistant,
+      upsertActiveSessionFiles
     ]
   );
 
@@ -1251,18 +1509,28 @@ export default function App() {
 
   const handleNewMessage = useCallback(
     async (message: AppendMessage) => {
+      if (
+        attachmentUploadGate.inFlight > 0 ||
+        attachmentUploadGate.errorIds.length > 0
+      ) {
+        return;
+      }
+
       await sendStreamUiRequest(
         getAppendMessageText(message),
         getAppendMessageImages(message)
       );
     },
-    [sendStreamUiRequest]
+    [attachmentUploadGate.errorIds.length, attachmentUploadGate.inFlight, sendStreamUiRequest]
   );
 
   const runtime = useExternalStoreRuntime({
     messages,
     isRunning: isSending,
-    isSendDisabled: isSending,
+    isSendDisabled:
+      isSending ||
+      attachmentUploadGate.inFlight > 0 ||
+      attachmentUploadGate.errorIds.length > 0,
     convertMessage,
     onNew: handleNewMessage,
     adapters: {
@@ -1304,6 +1572,7 @@ export default function App() {
         <StreamThread
           activeSessionId={sessionState.activeSessionId}
           messages={messages}
+          files={activeFiles}
           themeMode={themeMode}
           model={apiSettings.model}
           modelOptions={selectableModels}

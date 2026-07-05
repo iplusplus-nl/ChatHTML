@@ -96,37 +96,21 @@ describe("chat apiMessages", () => {
     assert.doesNotMatch(content, /Raw text/);
   });
 
-  it("filters welcome messages and maps image attachments", () => {
+  it("filters welcome messages and references session files by id", () => {
     const messages: ClientMessage[] = [
       { id: "welcome", role: "assistant", content: "Welcome" },
       {
         id: "u1",
         role: "user",
         content: "Describe this",
-        attachments: [
-          {
-            id: "img1",
-            name: "photo.png",
-            mimeType: "image/png",
-            size: 12,
-            dataUrl: "data:image/png;base64,aaaa"
-          }
-        ]
+        fileIds: ["file-img1"]
       }
     ];
 
     assert.deepEqual(toApiMessages(messages), [
       {
         role: "user",
-        content: "Describe this",
-        images: [
-          {
-            name: "photo.png",
-            mimeType: "image/png",
-            size: 12,
-            dataUrl: "data:image/png;base64,aaaa"
-          }
-        ]
+        content: "Describe this\n\nSession file ids attached to this message: file-img1"
       }
     ]);
   });

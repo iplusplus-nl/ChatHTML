@@ -1411,6 +1411,11 @@ button {
   box-shadow: none;
 }
 
+.app-shell[data-theme="night"] .message-file-chip {
+  color: #e4e4e7;
+  background: #3a3a3a;
+}
+
 .app-shell[data-theme="night"] .reasoning-text,
 .app-shell[data-theme="night"] .raw-stream-text {
   border-left-color: rgba(255, 255, 255, 0.12);
@@ -1669,6 +1674,22 @@ button {
   object-fit: cover;
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 8px;
+}
+
+.message-file-chip {
+  display: inline-flex;
+  min-height: 28px;
+  max-width: 220px;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: #52525b;
+  background: #f0f0f0;
+  font-size: 12px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .muted {
@@ -2349,6 +2370,16 @@ button {
   background: #ffffff;
 }
 
+.attachment-thumb.is-uploading img,
+.attachment-thumb.is-uploading .attachment-extension {
+  opacity: 0.58;
+}
+
+.attachment-thumb.is-error img,
+.attachment-thumb.is-error .attachment-extension {
+  border-color: #fda29b;
+}
+
 .attachment-extension {
   display: grid;
   width: 92px;
@@ -2360,6 +2391,41 @@ button {
   background: #ffffff;
   font-size: 13px;
   font-weight: 760;
+}
+
+.attachment-upload-spinner {
+  position: absolute;
+  top: 23px;
+  left: 35px;
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(24, 24, 27, 0.18);
+  border-top-color: #18181b;
+  border-radius: 999px;
+  animation: attachment-spin 800ms linear infinite;
+}
+
+.attachment-upload-error {
+  position: absolute;
+  right: 5px;
+  bottom: 20px;
+  left: 5px;
+  padding: 2px 4px;
+  overflow: hidden;
+  border-radius: 5px;
+  color: #ffffff;
+  background: rgba(180, 35, 24, 0.9);
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes attachment-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .attachment-thumb figcaption {
@@ -2386,6 +2452,11 @@ button {
   background: rgba(255, 255, 255, 0.92);
   font-size: 13px;
   font-weight: 800;
+}
+
+.attachment-remove:disabled {
+  cursor: wait;
+  opacity: 0.46;
 }
 
 .attachment-error {
