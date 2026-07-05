@@ -598,6 +598,21 @@ type StreamThreadProps = {
 
 const SESSION_OUTPUT_SCROLL_SETTLE_MS = 900;
 const SESSION_OUTPUT_SCROLL_RETRY_MS = [0, 80, 240, 520];
+const AUTO_SCROLL_BOTTOM_THRESHOLD = 160;
+
+function isNearScrollBottom(viewport: HTMLElement): boolean {
+  return (
+    viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <=
+    AUTO_SCROLL_BOTTOM_THRESHOLD
+  );
+}
+
+function scrollToBottom(viewport: HTMLElement): void {
+  viewport.scrollTo({
+    top: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+    behavior: "auto"
+  });
+}
 
 function scrollToLastOutputStart(viewport: HTMLElement): boolean {
   const outputs = Array.from(
@@ -637,6 +652,7 @@ function StreamThread({
 }: StreamThreadProps) {
   const isNewChat = useAuiState((state) => state.thread.messages.length === 0);
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const shouldFollowBottomRef = useRef(true);
   const messageById = useMemo(
     () => new Map(messages.map((message) => [message.id, message])),
     [messages]
@@ -688,6 +704,41 @@ function StreamThread({
       resizeObserver?.disconnect();
     };
   }, [activeSessionId]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+
+    if (!viewport) {
+      return undefined;
+    }
+
+    const handleScroll = () => {
+      shouldFollowBottomRef.current = isNearScrollBottom(viewport);
+    };
+
+    handleScroll();
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      viewport.removeEventListener("scroll", handleScroll);
+    };
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+
+    if (!viewport || !shouldFollowBottomRef.current) {
+      return undefined;
+    }
+
+    const animationFrameId = window.requestAnimationFrame(() => {
+      if (shouldFollowBottomRef.current) {
+        scrollToBottom(viewport);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [activeSessionId, messages]);
 
   return (
     <ThreadPrimitive.Root

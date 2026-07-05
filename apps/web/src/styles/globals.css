@@ -1456,22 +1456,12 @@ button {
 }
 
 .app-shell[data-theme="night"] .chat-input-dropzone {
-  background: #303030;
+  background: rgba(48, 48, 48, 0.82);
   box-shadow: none;
 }
 
-.app-shell[data-theme="night"] .composer-footer.has-messages::before {
-  background:
-    linear-gradient(
-      to top,
-      #1f1f1f 0%,
-      #1f1f1f 72%,
-      rgba(31, 31, 31, 0)
-    );
-}
-
 .app-shell[data-theme="night"] .chat-input-dropzone:focus-within {
-  background: #303030;
+  background: rgba(48, 48, 48, 0.9);
   box-shadow: none;
 }
 
@@ -2140,21 +2130,6 @@ button {
   padding: 12px 0 20px;
 }
 
-.composer-footer.has-messages::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: -28px -24px 0;
-  background:
-    linear-gradient(
-      to top,
-      #ffffff 0%,
-      #ffffff 72%,
-      rgba(255, 255, 255, 0)
-    );
-  pointer-events: none;
-}
-
 .chat-input-bar {
   display: block;
   width: 100%;
@@ -2171,7 +2146,9 @@ button {
   padding: 8px 10px;
   border: 0;
   border-radius: 28px;
-  background: #f4f4f4;
+  background: rgba(244, 244, 244, 0.82);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
   box-shadow: none;
   transition:
     background 160ms ease,
@@ -2179,7 +2156,7 @@ button {
 }
 
 .chat-input-dropzone:focus-within {
-  background: #f4f4f4;
+  background: rgba(244, 244, 244, 0.92);
   box-shadow: none;
 }
 
