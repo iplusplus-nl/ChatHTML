@@ -138,6 +138,12 @@ type PageFetchResult = {
   fetchedAt: string;
 };
 
+type ParsedPageSource = RetrievalSource & {
+  htmlCharCount?: number;
+  scriptCount?: number;
+  bodyTextCharCount?: number;
+};
+
 let playwrightAvailableCache: boolean | undefined;
 
 function isPackageAvailable(name: string): boolean {
@@ -826,7 +832,7 @@ function parseHtmlSource(
   page: PageFetchResult,
   config: RetrievalConfig,
   seed?: SearchResult
-): RetrievalSource {
+): ParsedPageSource {
   if (!page.html) {
     return {
       id: 0,
@@ -846,6 +852,7 @@ function parseHtmlSource(
   }
 
   const $ = load(page.html);
+  const scriptCount = $("script").length;
   $("script, style, noscript, template, svg, canvas").remove();
 
   const title =
@@ -872,6 +879,7 @@ function parseHtmlSource(
   if (!text) {
     text = normalizeWhitespace($("body").text());
   }
+  const bodyTextCharCount = text.length;
 
   const links: RetrievedLink[] = [];
   $("a[href]").each((_, el) => {
@@ -942,11 +950,51 @@ function parseHtmlSource(
     status: page.status,
     contentType: page.contentType,
     fetchedAt: page.fetchedAt,
+    htmlCharCount: page.html.length,
+    scriptCount,
+    bodyTextCharCount,
     images: seedImage
       ? [seedImage]
       : uniqueByUrl(images).slice(0, config.maxImagesPerPage),
     links: uniqueByUrl(links).slice(0, config.maxLinksPerPage)
   };
+}
+
+export function shouldRenderSpaFallback(source: {
+  status?: number;
+  contentType?: string;
+  text?: string;
+  snippet?: string;
+  images?: RetrievedImage[];
+  links?: RetrievedLink[];
+  htmlCharCount?: number;
+  scriptCount?: number;
+  bodyTextCharCount?: number;
+}): boolean {
+  const status = source.status ?? 200;
+  const contentType = source.contentType ?? "";
+  const textLength = normalizeWhitespace(source.text ?? "").length;
+  const snippetLength = normalizeWhitespace(source.snippet ?? "").length;
+  const visibleTextLength = Math.max(
+    textLength,
+    source.bodyTextCharCount ?? 0,
+    snippetLength
+  );
+  const imageCount = source.images?.length ?? 0;
+  const linkCount = source.links?.length ?? 0;
+  const htmlCharCount = source.htmlCharCount ?? 0;
+  const scriptCount = source.scriptCount ?? 0;
+
+  return (
+    status >= 200 &&
+    status < 300 &&
+    (!contentType || isLikelyHtml(contentType)) &&
+    htmlCharCount >= 800 &&
+    scriptCount >= 1 &&
+    visibleTextLength < 180 &&
+    imageCount === 0 &&
+    linkCount <= 2
+  );
 }
 
 async function fetchJson(
@@ -1942,6 +1990,7 @@ async function fetchSources(
   urls: string[],
   searchResults: SearchResult[],
   config: RetrievalConfig,
+  notes: string[],
   onStatus?: (message: string) => void
 ): Promise<RetrievalSource[]> {
   const seeds = new Map(searchResults.map((result) => [sourceKey(result.url), result]));
@@ -1958,7 +2007,41 @@ async function fetchSources(
 
       try {
         const page = await fetchPage(url, config);
-        return parseHtmlSource(page, config, seeds.get(sourceKey(url)));
+        const source = parseHtmlSource(page, config, seeds.get(sourceKey(url)));
+        if (
+          config.browserEngine === "fetch" &&
+          shouldRenderSpaFallback(source)
+        ) {
+          if (!isPlaywrightAvailable()) {
+            notes.push(
+              `Static fetch for ${hostname} looked like a client-rendered SPA shell, but Playwright is not installed; only the static shell was returned.`
+            );
+            return source;
+          }
+
+          onStatus?.(`Browsing: rendering ${hostname} with Playwright...`);
+          notes.push(
+            `Static fetch for ${hostname} returned a likely SPA shell, so StreamUI automatically retried with Playwright.`
+          );
+          try {
+            return parseHtmlSource(
+              await fetchWithPlaywright(url, config),
+              config,
+              seeds.get(sourceKey(url))
+            );
+          } catch (fallbackError) {
+            notes.push(
+              `Automatic Playwright retry for ${hostname} failed: ${
+                fallbackError instanceof Error
+                  ? fallbackError.message
+                  : String(fallbackError)
+              }`
+            );
+            return source;
+          }
+        }
+
+        return source;
       } catch (error) {
         return {
           id: 0,
@@ -2083,7 +2166,13 @@ export async function collectRetrievalContext(
   ).map((target) => target.url);
   const pageSources =
     config.fetchMaxPages > 0
-      ? await fetchSources(urlsToFetch, searchResults, config, options.onStatus)
+      ? await fetchSources(
+          urlsToFetch,
+          searchResults,
+          config,
+          notes,
+          options.onStatus
+        )
       : [];
   const fetchedKeys = new Set(pageSources.map((source) => sourceKey(source.url)));
   const searchOnlySources = searchResults
