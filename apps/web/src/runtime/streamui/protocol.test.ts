@@ -27,6 +27,18 @@ describe("extractStreamUiParts", () => {
     assert.equal(parts.streamui, "<section><p>Loading");
   });
 
+  it("accepts protocol tags with attributes", () => {
+    const parts = extractStreamUiParts(
+      '<sessiontitle data-x="1">Demo</sessiontitle><chat role="note"></chat><streamui data-kind="reply"><p>Hi</p></streamui>'
+    );
+
+    assert.equal(parts.sessionTitle, "Demo");
+    assert.equal(parts.hasChat, true);
+    assert.equal(parts.hasStreamUi, true);
+    assert.equal(parts.streamUiComplete, true);
+    assert.equal(parts.streamui, "<p>Hi</p>");
+  });
+
   it("removes protocol tags accidentally emitted inside streamui", () => {
     const parts = extractStreamUiParts(
       "<streamui><chat>ignore</chat><p>Keep</p><sessiontitle>ignore</sessiontitle></streamui>"

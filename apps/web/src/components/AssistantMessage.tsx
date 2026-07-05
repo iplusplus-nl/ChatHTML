@@ -1,5 +1,9 @@
 import { MessagePrimitive } from "@assistant-ui/react";
 import { useMemo } from "react";
+import {
+  isInternalArtifactContextText,
+  stripInternalArtifactContextText
+} from "../features/chat/internalArtifactContext";
 import { extractStreamUiParts } from "../runtime/streamui/protocol";
 import { createStreamingRenderer } from "../runtime/streamui/streamingRenderer";
 import type {
@@ -25,6 +29,27 @@ type AssistantMessageProps = {
   error?: string;
   onRuntimeError(id: string, error: RenderError): void;
 };
+
+function hasLikelyVisibleStreamUiContent(rawStream?: string): boolean {
+  if (!rawStream) {
+    return false;
+  }
+
+  const parts = extractStreamUiParts(rawStream);
+  if (!parts.hasStreamUi) {
+    return false;
+  }
+
+  return Boolean(
+    parts.streamui
+      .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+      .replace(/<style\b[\s\S]*$/gi, "")
+      .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+      .replace(/<script\b[\s\S]*$/gi, "")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .trim()
+  );
+}
 
 export function AssistantMessage({
   id,
@@ -82,6 +107,22 @@ export function AssistantMessage({
     }
     return withRuntimeErrors(renderer.getSnapshot());
   }, [hasStreamUi, rawStream, runtimeErrors, snapshot, status, themeMode]);
+  const visibleContent = stripInternalArtifactContextText(content);
+  const hasVisibleArtifact = Boolean(
+    hasStreamUi &&
+      resolvedSnapshot &&
+      (!rawStream || hasLikelyVisibleStreamUiContent(rawStream))
+  );
+  const placeholder =
+    status === "streaming" && !visibleContent && !error && !hasVisibleArtifact
+      ? "Generating response..."
+      : !visibleContent &&
+          !error &&
+          !hasVisibleArtifact &&
+          (isInternalArtifactContextText(content) ||
+            isInternalArtifactContextText(rawStream ?? ""))
+        ? "No visible response was generated."
+        : undefined;
 
   return (
     <MessagePrimitive.Root className="chat-row assistant">
@@ -96,6 +137,7 @@ export function AssistantMessage({
         <AssistantTextBubble
           content={content}
           error={error}
+          placeholder={placeholder}
         />
         {hasStreamUi && resolvedSnapshot ? (
           <AssistantPreviewBubble

@@ -26,7 +26,7 @@ describe("chat apiMessages", () => {
     const content = getApiMessageContent(message);
 
     assert.match(content, /^Visible answer/);
-    assert.match(content, /\[StreamUI artifact artifact-[a-z0-9]+\]/);
+    assert.match(content, /\[StreamUI internal artifact context artifact-[a-z0-9]+\]/);
   });
 
   it("does not treat plain raw assistant text as an artifact", () => {
@@ -51,7 +51,8 @@ describe("chat apiMessages", () => {
 
     const content = getApiMessageContent(message);
 
-    assert.match(content, /\[StreamUI artifact artifact-[a-z0-9]+\]/);
+    assert.match(content, /\[StreamUI internal artifact context artifact-[a-z0-9]+\]/);
+    assert.match(content, /Internal continuity reference only/);
     assert.match(content, /Visible text summary: Artifact text/);
     assert.match(content, /Structure summary: .*section/);
     assert.match(content, /Editable summary: .*visible text: Artifact text/);
@@ -67,7 +68,7 @@ describe("chat apiMessages", () => {
 
     const content = getApiMessageContent(message);
 
-    assert.match(content, /\[StreamUI artifact artifact-[a-z0-9]+\]/);
+    assert.match(content, /\[StreamUI internal artifact context artifact-[a-z0-9]+\]/);
     assert.match(content, /Visible text summary: No visible text captured./);
     assert.match(content, /Structure summary: tags: div/);
   });
@@ -91,9 +92,20 @@ describe("chat apiMessages", () => {
 
     const content = getApiMessageContent(message);
 
-    assert.match(content, /\[StreamUI artifact artifact-fixed\]/);
+    assert.match(content, /\[StreamUI internal artifact context artifact-fixed\]/);
     assert.match(content, /Visible text summary: Stored text/);
     assert.doesNotMatch(content, /Raw text/);
+  });
+
+  it("strips leaked internal artifact context from visible assistant content", () => {
+    const message: ClientMessage = {
+      id: "a1",
+      role: "assistant",
+      content:
+        "[StreamUI artifact artifact-abc123]\nSource hash: abc123; source chars: 12\nVisible text summary: Hidden\nStructure summary: tags: p\nEditable summary: visible text: Hidden"
+    };
+
+    assert.equal(getApiMessageContent(message), "");
   });
 
   it("filters welcome messages and references session files by id", () => {

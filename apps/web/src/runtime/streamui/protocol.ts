@@ -4,19 +4,18 @@ function extractBetween(
   raw: string,
   tagName: "sessiontitle" | "chat" | "streamui"
 ): { content: string; hasOpen: boolean; hasClose: boolean } {
-  const lower = raw.toLowerCase();
-  const openTag = `<${tagName}>`;
-  const closeTag = `</${tagName}>`;
-  const openIndex = lower.indexOf(openTag);
+  const openPattern = new RegExp(`<${tagName}\\b[^>]*>`, "i");
+  const openMatch = openPattern.exec(raw);
 
-  if (openIndex === -1) {
+  if (!openMatch || openMatch.index === undefined) {
     return { content: "", hasOpen: false, hasClose: false };
   }
 
-  const contentStart = openIndex + openTag.length;
-  const closeIndex = lower.indexOf(closeTag, contentStart);
+  const contentStart = openMatch.index + openMatch[0].length;
+  const closePattern = new RegExp(`</${tagName}>`, "i");
+  const closeMatch = closePattern.exec(raw.slice(contentStart));
 
-  if (closeIndex === -1) {
+  if (!closeMatch) {
     return {
       content: raw.slice(contentStart),
       hasOpen: true,
@@ -25,7 +24,7 @@ function extractBetween(
   }
 
   return {
-    content: raw.slice(contentStart, closeIndex),
+    content: raw.slice(contentStart, contentStart + closeMatch.index),
     hasOpen: true,
     hasClose: true
   };
@@ -37,24 +36,26 @@ function extractStreamUi(raw: string): {
   hasClose: boolean;
 } {
   const lower = raw.toLowerCase();
-  const openTag = "<streamui>";
   const closeTag = "</streamui>";
-  const openIndex = lower.indexOf(openTag);
+  const openPattern = /<streamui\b[^>]*>/i;
+  const openMatch = openPattern.exec(raw);
 
-  if (openIndex === -1) {
+  if (!openMatch || openMatch.index === undefined) {
     return { content: "", hasOpen: false, hasClose: false };
   }
 
-  const contentStart = openIndex + openTag.length;
+  const contentStart = openMatch.index + openMatch[0].length;
   const contentTail = raw.slice(contentStart);
   const lowerTail = lower.slice(contentStart);
 
   return {
     content: contentTail
       .replace(/<\/?streamui>/gi, "")
+      .replace(/<streamui\b[^>]*>/gi, "")
       .replace(/<sessiontitle>[\s\S]*?<\/sessiontitle>/gi, "")
-      .replace(/<sessiontitle>[\s\S]*$/gi, "")
-      .replace(/<\/?chat>/gi, ""),
+      .replace(/<sessiontitle\b[^>]*>[\s\S]*?<\/sessiontitle>/gi, "")
+      .replace(/<sessiontitle\b[^>]*>[\s\S]*$/gi, "")
+      .replace(/<\/?chat[^>]*>/gi, ""),
     hasOpen: true,
     hasClose: lowerTail.includes(closeTag)
   };
@@ -63,10 +64,11 @@ function extractStreamUi(raw: string): {
 function removeProtocolTags(raw: string): string {
   return raw
     .replace(/<sessiontitle>[\s\S]*?<\/sessiontitle>/gi, "")
-    .replace(/<sessiontitle>[\s\S]*$/gi, "")
-    .replace(/<\/?chat>/gi, "")
-    .replace(/<streamui>[\s\S]*?<\/streamui>/gi, "")
-    .replace(/<streamui>[\s\S]*$/gi, "")
+    .replace(/<sessiontitle\b[^>]*>[\s\S]*?<\/sessiontitle>/gi, "")
+    .replace(/<sessiontitle\b[^>]*>[\s\S]*$/gi, "")
+    .replace(/<\/?chat[^>]*>/gi, "")
+    .replace(/<streamui\b[^>]*>[\s\S]*?<\/streamui>/gi, "")
+    .replace(/<streamui\b[^>]*>[\s\S]*$/gi, "")
     .trim();
 }
 

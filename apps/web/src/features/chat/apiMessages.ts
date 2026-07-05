@@ -4,6 +4,7 @@ import {
   htmlToTranscriptText,
   type ArtifactContext
 } from "../../core/artifactContext";
+import { stripInternalArtifactContextText } from "./internalArtifactContext";
 
 export { htmlToTranscriptText };
 
@@ -50,7 +51,9 @@ function formatArtifactContext(
 ): string {
   const textSummary = context.textSummary || "No visible text captured.";
   const lines = [
-    `[StreamUI artifact ${context.id}]`,
+    `[StreamUI internal artifact context ${context.id}]`,
+    "Internal continuity reference only. Do not quote, summarize, or display this block to the user.",
+    "Use it only to understand or revise the previous rendered StreamUI artifact.",
     `Source hash: ${context.sourceHash}; source chars: ${context.sourceChars}`,
     `Visible text summary: ${clipEnd(
       textSummary,
@@ -78,7 +81,7 @@ export function getApiMessageContent(
   options: ApiMessageContentOptions = {}
 ): string {
   const detail = options.detail ?? "recent";
-  const visibleContent = message.content.trim();
+  const visibleContent = stripInternalArtifactContextText(message.content);
   const artifactContext = getArtifactContext(message);
 
   if (visibleContent && artifactContext) {
@@ -101,7 +104,7 @@ export function getApiMessageContent(
     return "[Assistant produced a StreamUI artifact for this turn.]";
   }
 
-  return message.content;
+  return visibleContent;
 }
 
 function getMessageLimit(detail: "recent" | "summary"): number {

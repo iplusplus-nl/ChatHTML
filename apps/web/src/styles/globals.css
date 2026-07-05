@@ -1411,6 +1411,10 @@ button {
   box-shadow: none;
 }
 
+.app-shell[data-theme="night"] .message-bubble.assistant.is-placeholder {
+  color: #a1a1aa;
+}
+
 .app-shell[data-theme="night"] .message-file-chip {
   color: #e4e4e7;
   background: #3a3a3a;
@@ -1619,6 +1623,10 @@ button {
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.message-bubble.assistant.is-placeholder {
+  color: #777a83;
 }
 
 .message-bubble.user {
