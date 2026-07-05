@@ -23,7 +23,7 @@ test("native retrieve tool records telemetry and returns retrieval context", asy
   const stats = createRetrievalToolStats();
   const statuses: string[] = [];
   const tools = createRetrievalTools({
-    messages: [{ role: "user", content: "Find the latest StreamUI sources." }],
+    messages: [{ role: "user", content: "Find the latest ChatHTML sources." }],
     searchSettings: { enabled: false },
     stats,
     onStatus: (message: string) => statuses.push(message)
@@ -33,7 +33,7 @@ test("native retrieve tool records telemetry and returns retrieval context", asy
 
   const output = await stringifyToolOutput(await execute(
     {
-      query: "latest StreamUI sources",
+      query: "latest ChatHTML sources",
       mode: "search",
       reason: "Need current references."
     },
@@ -45,12 +45,12 @@ test("native retrieve tool records telemetry and returns retrieval context", asy
 
   assert.equal(stats.calls, 1);
   assert.equal(stats.errors, 0);
-  assert.equal(stats.inputs[0].query, "latest StreamUI sources");
+  assert.equal(stats.inputs[0].query, "latest ChatHTML sources");
   assert.equal(stats.contexts.length, 1);
   assert.equal(stats.contexts[0].enabled, false);
-  assert.match(output, /StreamUI retrieve tool result:/);
+  assert.match(output, /ChatHTML retrieve tool result:/);
   assert.match(output, /STREAMUI_RETRIEVAL is disabled/);
   assert.deepEqual(statuses, [
-    'Retrieving: searching "latest StreamUI sources"...'
+    'Retrieving: searching "latest ChatHTML sources"...'
   ]);
 });

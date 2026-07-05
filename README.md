@@ -1,6 +1,6 @@
-# StreamUI Runtime Demo
+# ChatHTML Runtime Demo
 
-This is a local demo for the StreamUI Runtime method: streaming, sandboxed rendering of LLM-generated frontend code. It is not positioned as a ChatGPT clone or an AI app builder. The ChatGPT-style shell exists so a normal message can turn into a progressively rendered UI artifact.
+This is a local demo for the ChatHTML Runtime method: streaming, sandboxed rendering of LLM-generated frontend code. It is not positioned as a ChatGPT clone or an AI app builder. The ChatGPT-style shell exists so a normal message can turn into a progressively rendered UI artifact.
 
 The repo is now organized as an npm workspace. The first app lives in `apps/web`; future native, desktop, or service surfaces can be added under `apps/*` without crowding the web runtime.
 
@@ -29,7 +29,7 @@ STREAMUI_RETRIEVAL=true
 STREAMUI_SEARCH_PROVIDER=auto
 ```
 
-The default model is `google/gemini-3.1-pro-preview` when `OPENROUTER_MODEL` is not set. Reasoning effort defaults to `low` to keep the reasoning disclosure responsive. StreamUI calls OpenRouter's Responses API directly and gives the model native tools for retrieval, session files, and memory updates before continuing the same response. The backend loads `.env` from the repo root and can also read an overriding `apps/web/.env`.
+The default model is `google/gemini-3.1-pro-preview` when `OPENROUTER_MODEL` is not set. Reasoning effort defaults to `low` to keep the reasoning disclosure responsive. ChatHTML calls OpenRouter's Responses API directly and gives the model native tools for retrieval, session files, and memory updates before continuing the same response. The backend loads `.env` from the repo root and can also read an overriding `apps/web/.env`.
 
 ## Run
 
@@ -37,7 +37,7 @@ The default model is `google/gemini-3.1-pro-preview` when `OPENROUTER_MODEL` is 
 npm run dev
 ```
 
-The root script delegates to `@streamui/web`. The Vite app runs at `http://127.0.0.1:5173`, and the Express proxy runs at `http://127.0.0.1:8787`.
+The root script delegates to `@chathtml/web`. The Vite app runs at `http://127.0.0.1:5173`, and the Express proxy runs at `http://127.0.0.1:8787`.
 
 The browser calls the local backend at `POST /api/chat`; the backend reads `OPENROUTER_API_KEY` from `.env` and forwards the request to OpenRouter's `/responses` endpoint. The API key is never sent to the browser. The backend streams newline-delimited JSON events with separate `reasoning`, `content`, and memory-update chunks.
 
@@ -50,7 +50,7 @@ By default the backend writes to `sessions/state.sqlite`. Existing `sessions/sta
 For production, set `STREAMUI_SESSION_DB` to a path on a persistent disk or volume, for example:
 
 ```bash
-STREAMUI_SESSION_DB=/data/streamui/state.sqlite
+STREAMUI_SESSION_DB=/data/chathtml/state.sqlite
 ```
 
 If the SQLite file lives in an ephemeral deploy directory, sessions will still disappear after an instance restart or redeploy. This shared-history mode is intended for testing; production multi-user deployments should add an authenticated identity layer.
@@ -58,13 +58,13 @@ If the SQLite file lives in an ephemeral deploy directory, sessions will still d
 You can also run workspace scripts directly:
 
 ```bash
-npm --workspace @streamui/web run dev
-npm --workspace @streamui/web run build
+npm --workspace @chathtml/web run dev
+npm --workspace @chathtml/web run build
 ```
 
 ## Retrieval and External Resources
 
-StreamUI exposes a native `retrieve` tool to the model in the main Responses API call. The Responses function-call loop handles tool calls and tool results, so there is no separate planner pass or keyword router. The retrieval tool can:
+ChatHTML exposes a native `retrieve` tool to the model in the main Responses API call. The Responses function-call loop handles tool calls and tool results, so there is no separate planner pass or keyword router. The retrieval tool can:
 
 - Search the web through Brave, Tavily, Serper, or a DuckDuckGo HTML fallback.
 - Search dedicated visual sources for image/gallery prompts, including Openverse, Wikimedia-oriented web results, NASA, Library of Congress, The Met, Art Institute of Chicago, and optional Pexels, Unsplash, and Rijksmuseum integrations.
@@ -76,7 +76,7 @@ The model decides whether to call `retrieve`; by default native tool calling con
 
 The chat input also supports local image attachments. Images are converted to data URLs in the browser, lightly resized when needed, uploaded to `POST /api/sessions/:sessionId/files` as draft files while they sit in the composer, and committed to the active session file list only when the user sends the message. Local development writes file bytes under `sessions/files`; production can replace that layer with S3, R2, MinIO, or another object store.
 
-Session files have stable ids and capability URLs. Draft files can be previewed through their capability URL but are hidden from `GET /api/sessions`, `GET /api/sessions/:sessionId/files`, and model file tools until sent. The model can use `listFiles` and `readFile` to inspect committed session files; image reads return JSON metadata as the tool result and then attach the image bytes as a follow-up multimodal input message for models that support vision. If the model wants to render a user-uploaded image inside the generated artifact, it should copy the file's `embedUrl` exactly into HTML, such as `<img src="...">`. Assistant StreamUI artifacts are also saved into the session file list as raw source files so later turns can read exact prior artifact code.
+Session files have stable ids and capability URLs. Draft files can be previewed through their capability URL but are hidden from `GET /api/sessions`, `GET /api/sessions/:sessionId/files`, and model file tools until sent. The model can use `listFiles` and `readFile` to inspect committed session files; image reads return JSON metadata as the tool result and then attach the image bytes as a follow-up multimodal input message for models that support vision. If the model wants to render a user-uploaded image inside the generated artifact, it should copy the file's `embedUrl` exactly into HTML, such as `<img src="...">`. Assistant ChatHTML artifacts are also saved into the session file list as raw source files so later turns can read exact prior artifact code.
 
 File API endpoints:
 
@@ -115,6 +115,8 @@ The sandboxed artifact can use HTTPS images, media, iframes, stylesheets, script
 ## Runtime Protocol
 
 For visual, interactive, frontend, educational, or UI-like prompts, the system prompt asks the model to stream:
+
+The wire protocol still uses the legacy `<streamui>` tag and `streamui-*` class/capability names for compatibility with existing sessions and renderer code.
 
 ```html
 <sessiontitle>Concise hidden history title</sessiontitle>
@@ -160,7 +162,7 @@ If no valid `<streamui>` block appears, the assistant response stays as a normal
 - `apps/web/server/retrieval.ts` owns search providers, URL fetching, optional Playwright browsing, HTML parsing, image/link extraction, and structured retrieval context.
 - `apps/web/server/index.ts` runs the local Express proxy and loads repo-root `.env`.
 - `apps/web/src/server/systemPrompt.ts` defines the model behavior and output protocol.
-- `apps/web/src/App.tsx` wires assistant-ui's external-store runtime to the StreamUI request/render pipeline.
+- `apps/web/src/App.tsx` wires assistant-ui's external-store runtime to the ChatHTML request/render pipeline.
 - `apps/web/src/components/ChatInput.tsx` contains the assistant-ui composer and attachment controls.
 - `apps/web/src/core/assistantAttachments.ts` adapts local image uploads into assistant-ui attachments and model image parts.
 - `apps/web/src/core/createStreamingRenderer.ts` owns the renderer lifecycle.

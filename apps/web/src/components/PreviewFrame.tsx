@@ -51,7 +51,7 @@ function sanitizeDownloadFilename(value: unknown): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 120);
 
-  return filename || "streamui-export.txt";
+  return filename || "chathtml-export.txt";
 }
 
 function sanitizeMimeType(value: unknown): string {
@@ -342,7 +342,7 @@ export function PreviewFrame({
         }
         downloadTextFile(
           capabilityAction.text,
-          capabilityAction.filename || "streamui-export.txt",
+          capabilityAction.filename || "chathtml-export.txt",
           capabilityAction.mimeType
         );
         setCapabilityStatus({ kind: "success", message: "Download started" });
@@ -384,7 +384,7 @@ export function PreviewFrame({
       <iframe
         ref={frameRef}
         className="preview-frame"
-        title="StreamUI artifact preview"
+        title="ChatHTML artifact preview"
         sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         srcDoc={initialSrcDocRef.current}
         onLoad={() => {

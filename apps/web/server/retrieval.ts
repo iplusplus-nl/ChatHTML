@@ -17,9 +17,9 @@ const DEFAULT_ALLOW_PRIVATE_URLS = false;
 const DEFAULT_MAX_LINKS_PER_PAGE = 24;
 const DEFAULT_MAX_IMAGES_PER_PAGE = 18;
 const USER_AGENT =
-  "StreamUI-Retrieval/0.1 (+https://localhost; local development retrieval service)";
+  "ChatHTML-Retrieval/0.1 (+https://localhost; local development retrieval service)";
 const IMAGE_USER_AGENT =
-  "Mozilla/5.0 (compatible; StreamUI-Retrieval/0.1; +https://stream.aiz.ink)";
+  "Mozilla/5.0 (compatible; ChatHTML-Retrieval/0.1; +https://stream.aiz.ink)";
 const require = createRequire(import.meta.url);
 
 type SearchProvider = "auto" | "brave" | "tavily" | "serper" | "duckduckgo" | "none";
@@ -2021,7 +2021,7 @@ async function fetchSources(
 
           onStatus?.(`Browsing: rendering ${hostname} with Playwright...`);
           notes.push(
-            `Static fetch for ${hostname} returned a likely SPA shell, so StreamUI automatically retried with Playwright.`
+            `Static fetch for ${hostname} returned a likely SPA shell, so ChatHTML automatically retried with Playwright.`
           );
           try {
             return parseHtmlSource(
@@ -2196,7 +2196,7 @@ export async function collectRetrievalContext(
     used: sources.length > 0 || notes.length > 0,
     reason:
       sources.length > 0
-        ? "The StreamUI retrieve tool collected external context."
+        ? "The ChatHTML retrieve tool collected external context."
         : "Retrieval ran but did not return usable sources.",
     nowIso,
     searchProvider: searchResults[0]?.provider,
@@ -2653,7 +2653,7 @@ export function buildRetrievalContextPrompt(
     `- Server timestamp: ${context.nowIso}`,
     "- Use this timestamp for current date/time grounding unless the user gives a different date.",
     "",
-    "StreamUI retrieve tool result:",
+    "ChatHTML retrieve tool result:",
     `- Status: ${context.used ? "ran" : "not run"}`,
     `- Reason: ${context.reason}`
   ];

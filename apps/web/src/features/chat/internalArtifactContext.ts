@@ -1,7 +1,7 @@
 const STREAMUI_ARTIFACT_CONTEXT_START =
-  /^\s*\[StreamUI (?:internal )?artifact(?: context)?\s+artifact-[^\]]+\]/i;
+  /^\s*\[(?:ChatHTML|StreamUI) (?:internal )?artifact(?: context)?\s+artifact-[^\]]+\]/i;
 const STREAMUI_ARTIFACT_CONTEXT_BLOCK =
-  /(^|\n)\s*\[StreamUI (?:internal )?artifact(?: context)?\s+artifact-[^\]]+\][\s\S]*?(?=\n{2,}|$)/gi;
+  /(^|\n)\s*\[(?:ChatHTML|StreamUI) (?:internal )?artifact(?: context)?\s+artifact-[^\]]+\][\s\S]*?(?=\n{2,}|$)/gi;
 const STREAMUI_ARTIFACT_CONTEXT_HINT =
   /Source hash:|Visible text summary:|Structure summary:|Style summary:|Editable summary:/i;
 

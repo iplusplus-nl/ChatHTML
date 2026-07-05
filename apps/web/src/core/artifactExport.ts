@@ -192,7 +192,7 @@ export function createArtifactFilename(
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
 
-  return `${sanitized || "streamui-artifact"}.${extension}`;
+  return `${sanitized || "chathtml-artifact"}.${extension}`;
 }
 
 export function normalizeSvgMarkup(markup: string): string {
@@ -211,7 +211,7 @@ export function getSnapshotDiagnostics(
 ): string {
   const visibleText = getSnapshotVisibleText(snapshot);
   const lines = [
-    "StreamUI Artifact Diagnostics",
+    "ChatHTML Artifact Diagnostics",
     `Generated: ${new Date().toISOString()}`,
     `Status: ${snapshot.status}`,
     `Theme mode: ${options.themeMode ?? "unknown"}`,

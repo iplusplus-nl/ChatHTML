@@ -7,7 +7,7 @@ describe("ignoredRuntimeErrors", () => {
     assert.equal(
       isIgnoredRuntimeError({
         kind: "security",
-        message: "Browser permission APIs are not allowed in StreamUI artifacts."
+        message: "Browser permission APIs are not allowed in ChatHTML artifacts."
       }),
       true
     );
@@ -18,7 +18,7 @@ describe("ignoredRuntimeErrors", () => {
       isIgnoredRuntimeError({
         kind: "security",
         message:
-          "Geolocation, camera, and microphone APIs are not allowed in StreamUI artifacts."
+          "Geolocation, camera, and microphone APIs are not allowed in ChatHTML artifacts."
       }),
       false
     );

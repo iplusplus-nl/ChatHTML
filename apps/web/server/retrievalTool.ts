@@ -201,7 +201,7 @@ export function createRetrievalTools({
           }
           const message =
             error instanceof Error ? error.message : "Unknown retrieval error.";
-          return `StreamUI retrieve tool result:\n- Status: error\n- Reason: ${message}\n- Do not imply that retrieval succeeded.`;
+          return `ChatHTML retrieve tool result:\n- Status: error\n- Reason: ${message}\n- Do not imply that retrieval succeeded.`;
         }
       }
     })

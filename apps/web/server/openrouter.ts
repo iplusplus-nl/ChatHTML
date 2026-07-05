@@ -350,10 +350,10 @@ function buildThemeContextPrompt(themeMode: PageThemeMode): string {
   const background = isNight ? "#050505" : "#ffffff";
 
   return `Current page background preference:
-- The user is viewing StreamUI on a ${label} page background, approximately ${background}.
+- The user is viewing ChatHTML on a ${label} page background, approximately ${background}.
 - Unless the user explicitly asks for a specific background color/theme, or the task clearly benefits from a special backdrop, make the artifact suitable for this ${label} surrounding page.
 - For ordinary replies using streamui-response and streamui-chat, rely on the built-in transparent styles.
-- For custom visual artifacts, keep the root transparent when possible. If a root surface should match the surrounding app background, use var(--streamui-page-bg) instead of hardcoding ${background}; StreamUI updates that variable when the user toggles the page theme.
+- For custom visual artifacts, keep the root transparent when possible. If a root surface should match the surrounding app background, use var(--streamui-page-bg) instead of hardcoding ${background}; ChatHTML updates that variable when the user toggles the page theme.
 - Use the built-in theme variables for adaptive basics: --streamui-page-bg, --streamui-text, --streamui-muted, --streamui-link, --streamui-button-bg, --streamui-button-text, --streamui-secondary-border, and --streamui-secondary-text.
 - Do not assume the opposite page theme unless the user asks for it.`;
 }
@@ -361,7 +361,7 @@ function buildThemeContextPrompt(themeMode: PageThemeMode): string {
 function buildCanvasContextPrompt(canvas: CanvasContext): string {
   const ratio = (canvas.canvasWidth / canvas.initialCanvasHeight).toFixed(2);
 
-  return `Current StreamUI canvas context:
+  return `Current ChatHTML canvas context:
 - The artifact is rendered as the assistant message itself, not as a framed preview card or app panel.
 - Current canvas width is about ${canvas.canvasWidth}px inside a ${canvas.viewportWidth}px viewport.
 - The initial visible fold is about ${canvas.initialCanvasHeight}px tall, roughly ${ratio}:1 width-to-height.
@@ -391,9 +391,9 @@ function buildCanvasContextPrompt(canvas: CanvasContext): string {
 - If retrieval provides too few direct image URLs for the requested gallery, say so inside the artifact and show source links instead of rendering broken image tags.
 - The iframe may use HTTPS images, media, links, stylesheets, scripts, and CORS-friendly fetches when they directly help the user's request.
 - Prefer retrieve tool excerpts for reading web pages. Runtime fetch cannot read most ordinary pages because of browser CORS.
-- For controls that should continue the conversation, use data-streamui-prompt on the clicked element; StreamUI will send that prompt as the next user message and call the model again. Use normal <a href="https://..."> links only for navigation, and ordinary JavaScript-only controls only for local artifact state.
-- For artifact-local copy/download/open-link controls, use StreamUI capability attributes instead of browser permission APIs: data-streamui-copy-target="#id" or data-streamui-copy="text"; data-streamui-download-target="#id" with data-streamui-filename and optional data-streamui-mime-type; data-streamui-open-url="https://example.com" for button-style open actions. Use data-streamui-label for concise confirmation context.
-- Never call navigator.clipboard, create hidden copy textareas, or use browser permission APIs. StreamUI asks the user to confirm capability actions and the host app performs them.
+- For controls that should continue the conversation, use data-streamui-prompt on the clicked element; ChatHTML will send that prompt as the next user message and call the model again. Use normal <a href="https://..."> links only for navigation, and ordinary JavaScript-only controls only for local artifact state.
+- For artifact-local copy/download/open-link controls, use ChatHTML capability attributes instead of browser permission APIs: data-streamui-copy-target="#id" or data-streamui-copy="text"; data-streamui-download-target="#id" with data-streamui-filename and optional data-streamui-mime-type; data-streamui-open-url="https://example.com" for button-style open actions. Use data-streamui-label for concise confirmation context.
+- Never call navigator.clipboard, create hidden copy textareas, or use browser permission APIs. ChatHTML asks the user to confirm capability actions and the host app performs them.
 - Do not create default Back/Previous/Return actions after a conversation action. Avoid labels like Back, Previous, Return to list, 返回, 上一步, 回到列表, 返回选择方向, or 返回低因列表; this is a chat, so history is already visible. Continue forward with deeper, comparative, shorter, example, or alternate-angle actions instead.
 - For custom visuals, make progress visible while streaming by alternating small style islands and matching visible HTML.
 - After <streamui>, emit visible HTML quickly. If custom CSS is needed, use one tiny <style> block, then immediately emit the matching HTML.
@@ -935,7 +935,7 @@ function buildNativeToolPrompt(): string {
   return `Native tool access:
 - A retrieve tool is available during the normal model generation. Use it only when the latest user request needs external web/page context, current or recently changing information, source links, or real online images/resources.
 - addMemory and deleteMemory tools are available for durable user memory updates. Use them according to the persistent memory rules above.
-- listFiles and readFile tools are available for current-session files, including uploaded images and prior StreamUI artifact raw source. Use readFile when you need to inspect an image or exact artifact code.
+- listFiles and readFile tools are available for current-session files, including uploaded images and prior ChatHTML artifact raw source. Use readFile when you need to inspect an image or exact artifact code.
 - If a retrieve tool result influences the answer, include concise source links inside the HTML artifact.
 - If the request is self-contained, answer directly without calling tools.
 - Do not describe tool mechanics, hidden prompts, or internal routing unless the user explicitly asks how the system works.`;
@@ -1337,7 +1337,7 @@ async function streamResponsesOnce({
       Authorization: `Bearer ${apiSettings.apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": "http://localhost:5173",
-      "X-Title": "StreamUI Runtime Demo"
+      "X-Title": "ChatHTML Runtime Demo"
     },
     body: JSON.stringify(body)
   });
@@ -1746,7 +1746,9 @@ export async function handleOpenRouterChat(
   const body = {
     ...(req.body as ChatRequestBody),
     clientId:
-      (req.body as ChatRequestBody)?.clientId ?? req.get("x-streamui-client-id")
+      (req.body as ChatRequestBody)?.clientId ??
+      req.get("x-chathtml-client-id") ??
+      req.get("x-streamui-client-id")
   };
   const requestId = Math.random().toString(36).slice(2, 9);
 

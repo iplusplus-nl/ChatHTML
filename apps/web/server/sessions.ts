@@ -107,7 +107,8 @@ const sqliteFile = path.resolve(
     path.join(sessionsDir, "state.sqlite")
 );
 const DEFAULT_SESSION_STATE_KEY = "global";
-const SESSION_CLIENT_ID_HEADER = "x-streamui-client-id";
+const SESSION_CLIENT_ID_HEADER = "x-chathtml-client-id";
+const LEGACY_SESSION_CLIENT_ID_HEADER = "x-streamui-client-id";
 const STREAM_INTERRUPTED_ERROR =
   "The stream was interrupted before it completed.";
 const MAX_DELETED_SESSION_TOMBSTONES = 5000;
@@ -162,7 +163,9 @@ export function getSessionStateKeyFromClientId(_input: unknown): string {
 }
 
 function getRequestClientId(req: Request): string {
-  const headerId = normalizeClientId(req.get(SESSION_CLIENT_ID_HEADER));
+  const headerId = normalizeClientId(
+    req.get(SESSION_CLIENT_ID_HEADER) ?? req.get(LEGACY_SESSION_CLIENT_ID_HEADER)
+  );
   if (headerId) {
     return headerId;
   }
@@ -474,7 +477,7 @@ async function readLegacyJsonState(): Promise<StoredSessionState | null> {
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     if (code !== "ENOENT") {
-      console.warn("Could not read StreamUI sessions.", error);
+      console.warn("Could not read ChatHTML sessions.", error);
     }
 
     return null;
@@ -558,7 +561,7 @@ async function readSessionState(
       return sqliteState;
     }
   } catch (error) {
-    console.warn("Could not read StreamUI SQLite sessions.", error);
+    console.warn("Could not read ChatHTML SQLite sessions.", error);
   }
 
   const legacyState =
@@ -591,7 +594,7 @@ async function readAllSessionStates(): Promise<StoredSessionState[]> {
     try {
       states.push(normalizeState(JSON.parse(row.value)));
     } catch (error) {
-      console.warn("Could not parse StreamUI session row.", error);
+      console.warn("Could not parse ChatHTML session row.", error);
     }
   }
   return states;

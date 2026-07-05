@@ -47,7 +47,7 @@ describe("createStreamingRenderer", () => {
     renderer.feed("<script>localStorage.getItem('y')</script>");
 
     assert.deepEqual(errors, [
-      "Browser storage APIs are not allowed in StreamUI artifacts."
+      "Browser storage APIs are not allowed in ChatHTML artifacts."
     ]);
     assert.equal(renderer.getSnapshot().errors.length, 1);
   });
@@ -61,7 +61,7 @@ describe("createStreamingRenderer", () => {
     readRenderer.feed("<script>navigator.clipboard.readText()</script>");
     assert.deepEqual(
       readRenderer.getSnapshot().errors.map((error) => error.message),
-      ["Clipboard reads are not allowed in StreamUI artifacts."]
+      ["Clipboard reads are not allowed in ChatHTML artifacts."]
     );
   });
 

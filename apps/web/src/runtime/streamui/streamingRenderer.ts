@@ -11,15 +11,15 @@ import type {
 const SECURITY_RULES: Array<{ pattern: RegExp; message: string }> = [
   {
     pattern: /\b(localStorage|sessionStorage)\b/i,
-    message: "Browser storage APIs are not allowed in StreamUI artifacts."
+    message: "Browser storage APIs are not allowed in ChatHTML artifacts."
   },
   {
     pattern: /\bdocument\s*\.\s*cookie\b/i,
-    message: "Cookie access is not allowed in StreamUI artifacts."
+    message: "Cookie access is not allowed in ChatHTML artifacts."
   },
   {
     pattern: /\bdocument\s*\.\s*write\s*\(/i,
-    message: "document.write is not allowed in StreamUI artifacts."
+    message: "document.write is not allowed in ChatHTML artifacts."
   },
   {
     pattern: /\b(?:window\s*\.\s*)?(?:parent|top|opener)\s*\./i,
@@ -28,11 +28,11 @@ const SECURITY_RULES: Array<{ pattern: RegExp; message: string }> = [
   {
     pattern: /\bnavigator\s*\.\s*(geolocation|mediaDevices)\b/i,
     message:
-      "Geolocation, camera, and microphone APIs are not allowed in StreamUI artifacts."
+      "Geolocation, camera, and microphone APIs are not allowed in ChatHTML artifacts."
   },
   {
     pattern: /\bnavigator\s*\.\s*clipboard\s*\.\s*(read|readText)\b/i,
-    message: "Clipboard reads are not allowed in StreamUI artifacts."
+    message: "Clipboard reads are not allowed in ChatHTML artifacts."
   }
 ];
 

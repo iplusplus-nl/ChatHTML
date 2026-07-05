@@ -445,7 +445,7 @@ export function SessionSidebar({
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "streamui-preferences.json";
+    link.download = "chathtml-preferences.json";
     link.rel = "noopener";
     document.body.appendChild(link);
     link.click();
@@ -550,7 +550,7 @@ export function SessionSidebar({
         <>
           <div className="sidebar-header">
             <div className="sidebar-brand-row">
-              <span className="sidebar-brand">StreamUI</span>
+              <span className="sidebar-brand">ChatHTML</span>
               <button
                 className="sidebar-collapse-button"
                 type="button"

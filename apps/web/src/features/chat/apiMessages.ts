@@ -51,9 +51,9 @@ function formatArtifactContext(
 ): string {
   const textSummary = context.textSummary || "No visible text captured.";
   const lines = [
-    `[StreamUI internal artifact context ${context.id}]`,
+    `[ChatHTML internal artifact context ${context.id}]`,
     "Internal continuity reference only. Do not quote, summarize, or display this block to the user.",
-    "Use it only to understand or revise the previous rendered StreamUI artifact.",
+    "Use it only to understand or revise the previous rendered ChatHTML artifact.",
     `Source hash: ${context.sourceHash}; source chars: ${context.sourceChars}`,
     `Visible text summary: ${clipEnd(
       textSummary,
@@ -101,7 +101,7 @@ export function getApiMessageContent(
     message.rawStream &&
     (message.hasStreamUi || STREAMUI_TAG_PATTERN.test(message.rawStream))
   ) {
-    return "[Assistant produced a StreamUI artifact for this turn.]";
+    return "[Assistant produced a ChatHTML artifact for this turn.]";
   }
 
   return visibleContent;

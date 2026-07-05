@@ -676,13 +676,13 @@ function assistantArtifactToSessionFile(
     {
       id: `file-artifact-${message.id}`,
       kind: "artifact",
-      name: `${message.id}.streamui.html`,
+      name: `${message.id}.chathtml.html`,
       mimeType: "text/html",
       size: message.rawStream.length,
       createdAt: now,
       sourceMessageId: message.id,
       text: message.rawStream,
-      summary: context?.textSummary || "StreamUI artifact raw source"
+      summary: context?.textSummary || "ChatHTML artifact raw source"
     },
     now
   );

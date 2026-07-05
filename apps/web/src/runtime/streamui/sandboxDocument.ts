@@ -281,7 +281,7 @@ export function buildIframeDocument(
             Object.defineProperty(navigator.clipboard, "readText", {
               configurable: true,
               value: () => Promise.reject(new DOMException(
-                "Clipboard reads are not available inside StreamUI artifacts.",
+                "Clipboard reads are not available inside ChatHTML artifacts.",
                 "NotAllowedError"
               ))
             });
@@ -295,7 +295,7 @@ export function buildIframeDocument(
             value: {
               writeText: bridgedClipboardWriteText,
               readText: () => Promise.reject(new DOMException(
-                "Clipboard reads are not available inside StreamUI artifacts.",
+                "Clipboard reads are not available inside ChatHTML artifacts.",
                 "NotAllowedError"
               ))
             }

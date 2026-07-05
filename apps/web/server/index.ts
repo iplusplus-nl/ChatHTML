@@ -64,5 +64,5 @@ if (existsSync(clientDist)) {
 }
 
 app.listen(port, host, () => {
-  console.log(`StreamUI proxy listening on http://${host}:${port}`);
+  console.log(`ChatHTML proxy listening on http://${host}:${port}`);
 });

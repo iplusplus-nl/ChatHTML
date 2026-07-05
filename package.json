@@ -1,5 +1,5 @@
 {
-  "name": "streamui",
+  "name": "chathtml",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,10 +10,10 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm --workspace @streamui/web run dev",
-    "server": "npm --workspace @streamui/web run server",
-    "build": "npm --workspace @streamui/web run build",
-    "preview": "npm --workspace @streamui/web run preview",
-    "test": "npm --workspace @streamui/web run test"
+    "dev": "npm --workspace @chathtml/web run dev",
+    "server": "npm --workspace @chathtml/web run server",
+    "build": "npm --workspace @chathtml/web run build",
+    "preview": "npm --workspace @chathtml/web run preview",
+    "test": "npm --workspace @chathtml/web run test"
   }
 }

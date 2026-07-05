@@ -51,7 +51,7 @@ describe("artifactExport", () => {
       createArtifactFilename("assistant:one/two.svg", "png"),
       "assistant-one-two.png"
     );
-    assert.equal(createArtifactFilename("   ", "svg"), "streamui-artifact.svg");
+    assert.equal(createArtifactFilename("   ", "svg"), "chathtml-artifact.svg");
     assert.equal(
       createArtifactFilename("artifact report", "html"),
       "artifact-report.html"
@@ -93,7 +93,7 @@ describe("artifactExport", () => {
       themeMode: "night"
     });
 
-    assert.match(diagnostics, /StreamUI Artifact Diagnostics/);
+    assert.match(diagnostics, /ChatHTML Artifact Diagnostics/);
     assert.match(diagnostics, /Requested export width: 720/);
     assert.match(diagnostics, /runtime: boom/);
     assert.match(diagnostics, /Visible text:/);

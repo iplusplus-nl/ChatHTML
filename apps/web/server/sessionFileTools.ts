@@ -228,7 +228,7 @@ export const listFilesToolDefinition: ResponsesToolDefinition = {
   type: "function",
   name: "listFiles",
   description:
-    "List files available in the current StreamUI session, including uploaded images and prior artifact source files. Use this before readFile when you need file ids or metadata.",
+    "List files available in the current ChatHTML session, including uploaded images and prior artifact source files. Use this before readFile when you need file ids or metadata.",
   strict: null,
   parameters: {
     type: "object",
@@ -241,7 +241,7 @@ export const readFileToolDefinition: ResponsesToolDefinition = {
   type: "function",
   name: "readFile",
   description:
-    "Read one file from the current StreamUI session by id. Artifact and text files return source text. Image files return metadata; the image bytes are attached as a follow-up multimodal input message when the model supports vision.",
+    "Read one file from the current ChatHTML session by id. Artifact and text files return source text. Image files return metadata; the image bytes are attached as a follow-up multimodal input message when the model supports vision.",
   strict: null,
   parameters: {
     type: "object",

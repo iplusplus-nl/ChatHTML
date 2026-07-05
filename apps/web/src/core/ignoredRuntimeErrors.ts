@@ -20,7 +20,8 @@ export function isIgnoredRuntimeError(error: RuntimeEventLike): boolean {
 
   if (
     error.kind === "security" &&
-    message === "browser permission apis are not allowed in streamui artifacts."
+    (message === "browser permission apis are not allowed in chathtml artifacts." ||
+      message === "browser permission apis are not allowed in streamui artifacts.")
   ) {
     return true;
   }

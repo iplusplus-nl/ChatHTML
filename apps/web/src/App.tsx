@@ -132,7 +132,7 @@ const LEGACY_ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
 const THEME_STORAGE_KEY = "streamui.theme.v1";
 const SESSION_CLIENT_ID_STORAGE_KEY = "streamui.clientId.v1";
 const SESSION_INDEX_CACHE_KEY = "streamui.sessionIndex.v1";
-const SESSION_CLIENT_ID_HEADER = "X-StreamUI-Client-Id";
+const SESSION_CLIENT_ID_HEADER = "X-ChatHTML-Client-Id";
 const SESSION_SYNC_INTERVAL_MS = 4_000;
 const MAX_RUNTIME_REPAIR_ATTEMPTS = 2;
 const MAX_RUNTIME_REPAIR_SOURCE_CHARS = 32_000;
@@ -340,11 +340,11 @@ function createArtifactFileUpload(
 
   return {
     kind: "artifact",
-    name: `${messageId}.streamui.html`,
+    name: `${messageId}.chathtml.html`,
     mimeType: "text/html",
     sourceMessageId: messageId,
     text: source,
-    summary: summary || "StreamUI artifact raw source"
+    summary: summary || "ChatHTML artifact raw source"
   };
 }
 
@@ -465,7 +465,7 @@ function saveSessionStateOnPageExit(
     keepalive: true,
     body: serializedState
   }).catch((error) => {
-    console.warn("Could not flush StreamUI sessions before page exit.", error);
+    console.warn("Could not flush ChatHTML sessions before page exit.", error);
   });
 }
 
@@ -627,10 +627,10 @@ function buildRuntimeRepairPrompt(
   const completedHtml = message.snapshot?.completedHtml || "";
   const source = rawArtifact || completedHtml;
 
-  return `A previous StreamUI artifact rendered with runtime errors. Repair it now.
+  return `A previous ChatHTML artifact rendered with runtime errors. Repair it now.
 
 Requirements:
-- Return a complete StreamUI response using the normal protocol: <sessiontitle>, empty <chat></chat>, and exactly one <streamui> block.
+- Return a complete ChatHTML response using the normal protocol: <sessiontitle>, empty <chat></chat>, and exactly one <streamui> block.
 - Preserve the user's original intent, visible content, layout, and style as much as possible.
 - Fix the runtime/console errors listed below.
 - Avoid repeating the same failing script pattern.
@@ -1001,7 +1001,7 @@ function StreamThread({
       >
         <AuiIf condition={(state) => state.thread.messages.length === 0}>
           <section className="thread-welcome">
-            <p>StreamUI Runtime</p>
+            <p>ChatHTML Runtime</p>
             <h2>How can I help you today?</h2>
           </section>
         </AuiIf>
@@ -1230,7 +1230,7 @@ export default function App() {
       })
       .catch((error) => {
         if (!cancelled) {
-          console.warn("Could not load StreamUI runtime settings.", error);
+          console.warn("Could not load ChatHTML runtime settings.", error);
         }
       });
 
@@ -1281,7 +1281,7 @@ export default function App() {
       })
       .catch((error) => {
         if (!cancelled) {
-          console.warn("Could not load StreamUI session index.", error);
+          console.warn("Could not load ChatHTML session index.", error);
         }
       });
 
@@ -1345,7 +1345,7 @@ export default function App() {
       })
       .catch((error) => {
         if (!cancelled) {
-          console.warn("Could not load StreamUI sessions.", error);
+          console.warn("Could not load ChatHTML sessions.", error);
         }
       })
       .finally(() => {
@@ -1422,7 +1422,7 @@ export default function App() {
         });
       } catch (error) {
         if (!cancelled) {
-          console.warn("Could not sync StreamUI sessions.", error);
+          console.warn("Could not sync ChatHTML sessions.", error);
         }
       }
     };
@@ -1472,7 +1472,7 @@ export default function App() {
         })
         .catch((error) => {
           if ((error as { name?: unknown }).name !== "AbortError") {
-            console.warn("Could not save StreamUI sessions.", error);
+            console.warn("Could not save ChatHTML sessions.", error);
           }
         });
     }, 350);
@@ -1510,7 +1510,7 @@ export default function App() {
         clearLegacyLocalSessions();
       })
       .catch((error) => {
-        console.warn("Could not save StreamUI sessions.", error);
+        console.warn("Could not save ChatHTML sessions.", error);
       });
   }, []);
 
@@ -2028,7 +2028,7 @@ export default function App() {
           }
         } catch (error) {
           if ((error as { name?: unknown }).name !== "AbortError") {
-            console.warn("Could not reconcile StreamUI stream state.", error);
+            console.warn("Could not reconcile ChatHTML stream state.", error);
           }
         } finally {
           serverSyncInFlight = false;
@@ -2250,7 +2250,7 @@ export default function App() {
               )
             ]);
           } catch (uploadError) {
-            console.warn("Could not persist StreamUI artifact file.", uploadError);
+            console.warn("Could not persist ChatHTML artifact file.", uploadError);
           }
         }
       } catch (error) {
@@ -2444,7 +2444,7 @@ export default function App() {
               }
             } catch (error) {
               if ((error as { name?: unknown }).name !== "AbortError") {
-                console.warn("Could not reconcile StreamUI stream state.", error);
+                console.warn("Could not reconcile ChatHTML stream state.", error);
               }
             } finally {
               serverSyncInFlight = false;
@@ -2646,7 +2646,7 @@ export default function App() {
               return;
             }
             if ((error as { name?: unknown }).name !== "AbortError") {
-              console.warn("Could not resume StreamUI run.", error);
+              console.warn("Could not resume ChatHTML run.", error);
             }
           } finally {
             if (typeof serverSyncIntervalId === "number") {

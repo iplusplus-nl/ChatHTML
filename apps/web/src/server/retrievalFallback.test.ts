@@ -10,7 +10,7 @@ test("detects a likely SPA shell for Playwright fallback", () => {
       htmlCharCount: 2_500,
       scriptCount: 3,
       bodyTextCharCount: 24,
-      text: "StreamUI",
+      text: "ChatHTML",
       images: [],
       links: []
     }),
