@@ -131,11 +131,17 @@ const LEGACY_SESSION_STORAGE_KEY = "streamui.sessions.v1";
 const LEGACY_ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
 const THEME_STORAGE_KEY = "streamui.theme.v1";
 const SESSION_CLIENT_ID_STORAGE_KEY = "streamui.clientId.v1";
+const SESSION_INDEX_CACHE_KEY = "streamui.sessionIndex.v1";
 const SESSION_CLIENT_ID_HEADER = "X-StreamUI-Client-Id";
 const SESSION_SYNC_INTERVAL_MS = 4_000;
 const MAX_RUNTIME_REPAIR_ATTEMPTS = 2;
 const MAX_RUNTIME_REPAIR_SOURCE_CHARS = 32_000;
 const MAX_RUNTIME_REPAIR_ERROR_CHARS = 4_000;
+
+type SessionListPreview = {
+  activeSessionId: string;
+  sessions: SessionListItem[];
+};
 
 function mergeSessionFiles(files: SessionFile[]): SessionFile[] {
   const merged = new Map<string, SessionFile>();
@@ -144,6 +150,115 @@ function mergeSessionFiles(files: SessionFile[]): SessionFile[] {
   }
 
   return Array.from(merged.values()).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+function normalizeSessionListPreview(input: unknown): SessionListPreview | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const state = input as {
+    activeSessionId?: unknown;
+    sessions?: unknown;
+  };
+  if (!Array.isArray(state.sessions)) {
+    return null;
+  }
+
+  const seen = new Set<string>();
+  const sessions: SessionListItem[] = [];
+  for (const item of state.sessions) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const session = item as { id?: unknown; title?: unknown };
+    const id = typeof session.id === "string" ? session.id.trim() : "";
+    if (!id || seen.has(id)) {
+      continue;
+    }
+
+    seen.add(id);
+    sessions.push({
+      id,
+      title:
+        typeof session.title === "string" && session.title.trim()
+          ? session.title.trim()
+          : "New Session"
+    });
+  }
+
+  if (!sessions.length) {
+    return null;
+  }
+
+  const requestedActiveId =
+    typeof state.activeSessionId === "string" ? state.activeSessionId : "";
+  const activeSessionId = sessions.some(
+    (session) => session.id === requestedActiveId
+  )
+    ? requestedActiveId
+    : sessions[0].id;
+
+  return {
+    activeSessionId,
+    sessions
+  };
+}
+
+function sessionListPreviewFromState(state: SessionState): SessionListPreview | null {
+  const sessions = state.sessions
+    .filter((session) => !isSessionEmpty(session))
+    .map((session) => ({
+      id: session.id,
+      title: session.title || summarizeSession(session.messages)
+    }));
+
+  if (!sessions.length) {
+    return null;
+  }
+
+  const activeSessionId = sessions.some(
+    (session) => session.id === state.activeSessionId
+  )
+    ? state.activeSessionId
+    : sessions[0].id;
+
+  return {
+    activeSessionId,
+    sessions
+  };
+}
+
+function loadCachedSessionListPreview(): SessionListPreview | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    return normalizeSessionListPreview(
+      JSON.parse(window.localStorage.getItem(SESSION_INDEX_CACHE_KEY) ?? "null")
+    );
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedSessionListPreview(preview: SessionListPreview | null): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    if (!preview) {
+      window.localStorage.removeItem(SESSION_INDEX_CACHE_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(SESSION_INDEX_CACHE_KEY, JSON.stringify(preview));
+  } catch {
+    // Sidebar cache is only a startup hint.
+  }
 }
 
 type SessionFileUploadInput = {
@@ -955,6 +1070,8 @@ export default function App() {
     useState<SearchSettings>(loadSearchSettings);
   const [displaySettings, setDisplaySettings] =
     useState<DisplaySettings>(loadDisplaySettings);
+  const [sessionListPreview, setSessionListPreview] =
+    useState<SessionListPreview | null>(loadCachedSessionListPreview);
   const [runtimeSettings, setRuntimeSettings] =
     useState<RuntimeSettingsSummary | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -992,6 +1109,9 @@ export default function App() {
   const sessionsLoadedRef = useRef(sessionsLoaded);
   const saveAbortRef = useRef<AbortController | null>(null);
   const lastSavedSessionPayloadRef = useRef<string | null>(null);
+  const lastSessionListPreviewPayloadRef = useRef<string | null>(
+    sessionListPreview ? JSON.stringify(sessionListPreview) : null
+  );
   const renderersRef = useRef<Map<string, StreamingRenderer>>(new Map());
   const runConnectionsRef = useRef<Map<string, AbortController>>(new Map());
   const pendingArtifactActionRef = useRef<PendingArtifactAction | null>(null);
@@ -1130,6 +1250,45 @@ export default function App() {
   useEffect(() => {
     saveDisplaySettings(displaySettings);
   }, [displaySettings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    fetch("/api/sessions/index", {
+      headers: sessionRequestHeaders(sessionClientIdRef.current)
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Session index load failed with HTTP ${response.status}.`);
+        }
+        return response.json() as Promise<unknown>;
+      })
+      .then((data) => {
+        if (cancelled) {
+          return;
+        }
+
+        const preview = normalizeSessionListPreview(data);
+        lastSessionListPreviewPayloadRef.current = preview
+          ? JSON.stringify(preview)
+          : null;
+        setSessionListPreview(preview);
+        saveCachedSessionListPreview(preview);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("Could not load StreamUI session index.", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2630,6 +2789,27 @@ export default function App() {
       })),
     [sessionState.sessions]
   );
+  const sidebarPreview =
+    !sessionsLoaded && sessionListPreview ? sessionListPreview : null;
+  const sidebarSessionItems = sidebarPreview?.sessions ?? sessionItems;
+  const sidebarActiveSessionId =
+    sidebarPreview?.activeSessionId ?? sessionState.activeSessionId;
+
+  useEffect(() => {
+    if (!sessionsLoaded) {
+      return;
+    }
+
+    const preview = sessionListPreviewFromState(sessionState);
+    const payload = preview ? JSON.stringify(preview) : null;
+    if (payload === lastSessionListPreviewPayloadRef.current) {
+      return;
+    }
+
+    lastSessionListPreviewPayloadRef.current = payload;
+    setSessionListPreview(preview);
+    saveCachedSessionListPreview(preview);
+  }, [sessionState, sessionsLoaded]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -2637,8 +2817,8 @@ export default function App() {
         themeMode={themeMode}
         sidebar={
           <SessionSidebar
-            sessions={sessionItems}
-            activeSessionId={sessionState.activeSessionId}
+            sessions={sidebarSessionItems}
+            activeSessionId={sidebarActiveSessionId}
             isSending={isSending}
             themeMode={themeMode}
             apiSettings={apiSettings}

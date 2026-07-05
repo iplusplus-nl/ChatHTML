@@ -642,6 +642,22 @@ function presentState(req: Request, state: StoredSessionState): StoredSessionSta
   };
 }
 
+function presentSessionIndex(state: StoredSessionState) {
+  const compacted = compactEmptyStoredSessions(
+    state.sessions,
+    state.activeSessionId
+  );
+
+  return {
+    activeSessionId: compacted.activeSessionId,
+    sessions: compacted.sessions.map((session) => ({
+      id: session.id,
+      title: session.title || "New Session",
+      updatedAt: session.updatedAt
+    }))
+  };
+}
+
 function findSession(
   state: StoredSessionState,
   sessionId: string
@@ -1000,6 +1016,19 @@ export async function handleGetSessions(
 ): Promise<void> {
   try {
     res.json(presentState(req, await readSessionState(getRequestStateKey(req))));
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+export async function handleGetSessionIndex(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    res.json(presentSessionIndex(await readSessionState(getRequestStateKey(req))));
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error)

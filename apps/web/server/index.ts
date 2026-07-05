@@ -11,6 +11,7 @@ import {
   handleCreateSessionFile,
   handleDeleteSessionFile,
   handleGetFileContent,
+  handleGetSessionIndex,
   handleGetSessionFiles,
   handleGetSessions,
   handleSaveSessions
@@ -43,6 +44,7 @@ app.post("/api/models", handleModelsRequest);
 app.post("/api/retrieve", handleRetrievalRequest);
 app.get("/api/settings", handleGetRuntimeSettings);
 app.get("/api/sessions", handleGetSessions);
+app.get("/api/sessions/index", handleGetSessionIndex);
 app.post("/api/sessions", handleSaveSessions);
 app.put("/api/sessions", handleSaveSessions);
 app.get("/api/sessions/:sessionId/files", handleGetSessionFiles);
