@@ -909,6 +909,7 @@ export default function App() {
   const sessionClientIdRef = useRef(loadSessionClientId());
   const sessionStateRef = useRef(sessionState);
   const deletedSessionIdsRef = useRef<Set<string>>(new Set());
+  const transientEmptySessionIdRef = useRef<string | null>(null);
   const messagesRef = useRef(messages);
   const activeSessionIdRef = useRef(sessionState.activeSessionId);
   const isSendingRef = useRef(isSending);
@@ -1069,13 +1070,25 @@ export default function App() {
         if (!cancelled) {
           const serverState = normalizeStoredSessionState(data);
           const legacyState = loadLegacyLocalSessionState();
-          setSessionStateAndRef(
+          const loadedState =
             !hasPersistedMessages(serverState) &&
-              legacyState &&
-              hasPersistedMessages(legacyState)
+            legacyState &&
+            hasPersistedMessages(legacyState)
               ? legacyState
-              : serverState
-          );
+              : serverState;
+
+          setSessionStateAndRef((current) => {
+            const transientId = transientEmptySessionIdRef.current;
+            const active = current.sessions.find(
+              (session) => session.id === current.activeSessionId
+            );
+
+            return transientId &&
+              active?.id === transientId &&
+              isSessionEmpty(active)
+              ? mergeSyncedSessionState(current, loadedState)
+              : loadedState;
+          });
         }
       })
       .catch((error) => {
@@ -1104,6 +1117,17 @@ export default function App() {
 
     const syncSessions = async () => {
       if (runConnectionsRef.current.size > 0) {
+        return;
+      }
+
+      const currentState = sessionStateRef.current;
+      const active = currentState.sessions.find(
+        (session) => session.id === currentState.activeSessionId
+      );
+      if (
+        active?.id === transientEmptySessionIdRef.current &&
+        isSessionEmpty(active)
+      ) {
         return;
       }
 
@@ -1412,10 +1436,12 @@ export default function App() {
         (session) => session.id === compacted.activeSessionId
       );
       if (active && isSessionEmpty(active)) {
+        transientEmptySessionIdRef.current = active.id;
         return compacted;
       }
 
       const session = createEmptySession(undefined, undefined, apiSettings.model);
+      transientEmptySessionIdRef.current = session.id;
       return {
         sessions: [session, ...compacted.sessions],
         activeSessionId: session.id
@@ -1428,6 +1454,9 @@ export default function App() {
       const target = current.sessions.find((session) => session.id === id);
       if (!target) {
         return current;
+      }
+      if (target.id !== transientEmptySessionIdRef.current) {
+        transientEmptySessionIdRef.current = null;
       }
 
       return compactEmptySessions(
@@ -1445,6 +1474,9 @@ export default function App() {
       return;
     }
 
+    if (transientEmptySessionIdRef.current === id) {
+      transientEmptySessionIdRef.current = null;
+    }
     deletedSessionIdsRef.current.add(id);
     setSessionStateAndRef((current) => {
       const remaining = current.sessions.filter((session) => session.id !== id);
@@ -1528,6 +1560,9 @@ export default function App() {
 
       const appendUserMessage = options.appendUserMessage ?? true;
       const requestSessionId = activeSessionIdRef.current;
+      if (transientEmptySessionIdRef.current === requestSessionId) {
+        transientEmptySessionIdRef.current = null;
+      }
       const requestSessionForModel = sessionStateRef.current.sessions.find(
         (session) => session.id === requestSessionId
       );
