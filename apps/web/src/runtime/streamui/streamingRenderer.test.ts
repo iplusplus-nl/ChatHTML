@@ -52,6 +52,19 @@ describe("createStreamingRenderer", () => {
     assert.equal(renderer.getSnapshot().errors.length, 1);
   });
 
+  it("allows bridged clipboard writes but blocks clipboard reads", () => {
+    const writeRenderer = createStreamingRenderer();
+    writeRenderer.feed("<script>navigator.clipboard.writeText('x')</script>");
+    assert.equal(writeRenderer.getSnapshot().errors.length, 0);
+
+    const readRenderer = createStreamingRenderer();
+    readRenderer.feed("<script>navigator.clipboard.readText()</script>");
+    assert.deepEqual(
+      readRenderer.getSnapshot().errors.map((error) => error.message),
+      ["Clipboard reads are not allowed in StreamUI artifacts."]
+    );
+  });
+
   it("notifies snapshot subscribers", () => {
     const renderer = createStreamingRenderer();
     const statuses: string[] = [];

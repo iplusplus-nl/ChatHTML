@@ -54,6 +54,16 @@ describe("sandboxDocument", () => {
     assert.match(document, /actionType: "open-url"/);
   });
 
+  it("bridges clipboard writes through the host", () => {
+    const document = buildIframeDocument(
+      "<button>Copy</button><script>navigator.clipboard.writeText('x')</script>"
+    );
+
+    assert.match(document, /installClipboardBridge/);
+    assert.match(document, /bridgedClipboardWriteText/);
+    assert.match(document, /capability-result/);
+  });
+
   it("measures content bounds instead of the previous iframe viewport height", () => {
     const document = buildIframeDocument(
       "<details open><summary>More</summary><p>Text</p></details>"

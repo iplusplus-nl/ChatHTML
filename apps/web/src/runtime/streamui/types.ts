@@ -19,12 +19,14 @@ export type StreamUiPromptAction = {
 export type StreamUiCopyAction = {
   type: "copy";
   text: string;
+  capabilityId?: string;
   label?: string;
 };
 
 export type StreamUiDownloadAction = {
   type: "download";
   text: string;
+  capabilityId?: string;
   filename?: string;
   mimeType?: string;
   label?: string;
@@ -33,6 +35,7 @@ export type StreamUiDownloadAction = {
 export type StreamUiOpenUrlAction = {
   type: "open-url";
   url: string;
+  capabilityId?: string;
   label?: string;
 };
 

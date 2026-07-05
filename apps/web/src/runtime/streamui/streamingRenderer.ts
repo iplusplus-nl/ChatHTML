@@ -26,8 +26,13 @@ const SECURITY_RULES: Array<{ pattern: RegExp; message: string }> = [
     message: "Access to parent, top, or opener windows is not allowed."
   },
   {
-    pattern: /\bnavigator\s*\.\s*(geolocation|mediaDevices|clipboard)\b/i,
-    message: "Browser permission APIs are not allowed in StreamUI artifacts."
+    pattern: /\bnavigator\s*\.\s*(geolocation|mediaDevices)\b/i,
+    message:
+      "Geolocation, camera, and microphone APIs are not allowed in StreamUI artifacts."
+  },
+  {
+    pattern: /\bnavigator\s*\.\s*clipboard\s*\.\s*(read|readText)\b/i,
+    message: "Clipboard reads are not allowed in StreamUI artifacts."
   }
 ];
 

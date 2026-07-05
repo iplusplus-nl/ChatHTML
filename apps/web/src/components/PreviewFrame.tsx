@@ -175,6 +175,7 @@ export function PreviewFrame({
         kind?: RenderError["kind"] | "resize" | "action";
         actionType?: string;
         prompt?: string;
+        capabilityId?: string;
         label?: string;
         text?: string;
         url?: string;
@@ -205,6 +206,9 @@ export function PreviewFrame({
         setCapabilityStatus(null);
         setCapabilityAction({
           type: "copy",
+          ...(typeof data.capabilityId === "string" && data.capabilityId
+            ? { capabilityId: data.capabilityId }
+            : {}),
           text: normalizeCapabilityText(data.text),
           ...(normalizeCapabilityLabel(data.label)
             ? { label: normalizeCapabilityLabel(data.label) }
@@ -217,6 +221,9 @@ export function PreviewFrame({
         setCapabilityStatus(null);
         setCapabilityAction({
           type: "download",
+          ...(typeof data.capabilityId === "string" && data.capabilityId
+            ? { capabilityId: data.capabilityId }
+            : {}),
           text: normalizeCapabilityText(data.text),
           filename: sanitizeDownloadFilename(data.filename),
           mimeType: sanitizeMimeType(data.mimeType),
@@ -232,6 +239,9 @@ export function PreviewFrame({
           setCapabilityStatus(null);
           setCapabilityAction({
             type: "open-url",
+            ...(typeof data.capabilityId === "string" && data.capabilityId
+              ? { capabilityId: data.capabilityId }
+              : {}),
             url: normalizeOpenUrl(data.url),
             ...(normalizeCapabilityLabel(data.label)
               ? { label: normalizeCapabilityLabel(data.label) }
@@ -281,6 +291,26 @@ export function PreviewFrame({
     applySnapshotToFrame();
   }, [applySnapshotToFrame]);
 
+  const sendCapabilityResult = useCallback(
+    (action: CapabilityAction, ok: boolean, message = "") => {
+      if (!action.capabilityId) {
+        return;
+      }
+
+      frameRef.current?.contentWindow?.postMessage(
+        {
+          source: "streamui-host",
+          kind: "capability-result",
+          capabilityId: action.capabilityId,
+          ok,
+          message
+        },
+        "*"
+      );
+    },
+    []
+  );
+
   useEffect(() => {
     if (!capabilityStatus || capabilityStatus.kind === "error") {
       return undefined;
@@ -305,6 +335,7 @@ export function PreviewFrame({
         }
         await copyTextToClipboard(capabilityAction.text);
         setCapabilityStatus({ kind: "success", message: "Copied" });
+        sendCapabilityResult(capabilityAction, true);
       } else if (capabilityAction.type === "download") {
         if (!capabilityAction.text) {
           throw new Error("Nothing to download.");
@@ -315,6 +346,7 @@ export function PreviewFrame({
           capabilityAction.mimeType
         );
         setCapabilityStatus({ kind: "success", message: "Download started" });
+        sendCapabilityResult(capabilityAction, true);
       } else {
         const opened = window.open(
           capabilityAction.url,
@@ -326,15 +358,25 @@ export function PreviewFrame({
         }
         opened.opener = null;
         setCapabilityStatus({ kind: "success", message: "Opened" });
+        sendCapabilityResult(capabilityAction, true);
       }
       setCapabilityAction(null);
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Artifact action failed.";
+      sendCapabilityResult(capabilityAction, false, message);
       setCapabilityStatus({
         kind: "error",
-        message:
-          error instanceof Error ? error.message : "Artifact action failed."
+        message
       });
     }
+  };
+
+  const cancelCapabilityAction = () => {
+    if (capabilityAction) {
+      sendCapabilityResult(capabilityAction, false, "The user cancelled this action.");
+    }
+    setCapabilityAction(null);
   };
 
   return (
@@ -361,7 +403,7 @@ export function PreviewFrame({
             <button
               className="artifact-capability-secondary"
               type="button"
-              onClick={() => setCapabilityAction(null)}
+              onClick={cancelCapabilityAction}
             >
               Cancel
             </button>

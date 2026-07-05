@@ -223,6 +223,86 @@ export function buildIframeDocument(
           }, "*");
         } catch {}
       };
+      const MAX_CAPABILITY_TEXT_CHARS = 1000000;
+      const pendingHostCapabilities = new Map();
+      let hostCapabilitySequence = 0;
+      const createHostCapabilityId = () =>
+        "capability-" + Date.now().toString(36) + "-" + (++hostCapabilitySequence).toString(36);
+      const postHostCapability = (actionType, payload = {}) => {
+        const capabilityId = createHostCapabilityId();
+        const request = new Promise((resolve, reject) => {
+          pendingHostCapabilities.set(capabilityId, { resolve, reject });
+        });
+        post("action", actionType, {
+          actionType,
+          capabilityId,
+          ...payload
+        });
+        return request;
+      };
+      window.addEventListener("message", (event) => {
+        const data = event.data || {};
+        if (
+          data.source !== "streamui-host" ||
+          data.kind !== "capability-result" ||
+          typeof data.capabilityId !== "string"
+        ) {
+          return;
+        }
+
+        const pending = pendingHostCapabilities.get(data.capabilityId);
+        if (!pending) {
+          return;
+        }
+
+        pendingHostCapabilities.delete(data.capabilityId);
+        if (data.ok) {
+          pending.resolve();
+        } else {
+          pending.reject(new DOMException(
+            String(data.message || "The host rejected this capability request."),
+            "NotAllowedError"
+          ));
+        }
+      });
+      const bridgedClipboardWriteText = (text) => {
+        return postHostCapability("copy", {
+          label: "Clipboard write",
+          text: String(text ?? "").slice(0, MAX_CAPABILITY_TEXT_CHARS)
+        });
+      };
+      const installClipboardBridge = () => {
+        try {
+          if (navigator.clipboard) {
+            Object.defineProperty(navigator.clipboard, "writeText", {
+              configurable: true,
+              value: bridgedClipboardWriteText
+            });
+            Object.defineProperty(navigator.clipboard, "readText", {
+              configurable: true,
+              value: () => Promise.reject(new DOMException(
+                "Clipboard reads are not available inside StreamUI artifacts.",
+                "NotAllowedError"
+              ))
+            });
+            return;
+          }
+        } catch {}
+
+        try {
+          Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: {
+              writeText: bridgedClipboardWriteText,
+              readText: () => Promise.reject(new DOMException(
+                "Clipboard reads are not available inside StreamUI artifacts.",
+                "NotAllowedError"
+              ))
+            }
+          });
+        } catch {}
+      };
+      installClipboardBridge();
       const isExtensionNoise = (message = "", filename = "") => {
         const text = String(message || "").toLowerCase();
         const file = String(filename || "").toLowerCase();
@@ -305,7 +385,6 @@ export function buildIframeDocument(
         });
       };
       const MAX_ACTION_PROMPT_CHARS = 2000;
-      const MAX_CAPABILITY_TEXT_CHARS = 1000000;
       const findPromptAction = (target) => {
         if (!(target instanceof Element)) {
           return null;

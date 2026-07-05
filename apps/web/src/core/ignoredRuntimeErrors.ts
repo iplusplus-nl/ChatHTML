@@ -19,6 +19,13 @@ export function isIgnoredRuntimeError(error: RuntimeEventLike): boolean {
   }
 
   if (
+    error.kind === "security" &&
+    message === "browser permission apis are not allowed in streamui artifacts."
+  ) {
+    return true;
+  }
+
+  if (
     extensionSource &&
     (combined.includes("sandbox access violation") ||
       combined.includes("undefined is not an object"))
