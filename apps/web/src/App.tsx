@@ -112,6 +112,9 @@ type SendStreamUiRequestOptions = {
 const LEGACY_SESSION_STORAGE_KEY = "streamui.sessions.v1";
 const LEGACY_ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
 const THEME_STORAGE_KEY = "streamui.theme.v1";
+const SESSION_CLIENT_ID_STORAGE_KEY = "streamui.clientId.v1";
+const SESSION_CLIENT_ID_HEADER = "X-StreamUI-Client-Id";
+const SESSION_SYNC_INTERVAL_MS = 4_000;
 const MAX_RUNTIME_REPAIR_ATTEMPTS = 2;
 const MAX_RUNTIME_REPAIR_SOURCE_CHARS = 32_000;
 const MAX_RUNTIME_REPAIR_ERROR_CHARS = 4_000;
@@ -137,6 +140,41 @@ type SessionFileUploadInput = {
   summary?: string;
   draft?: boolean;
 };
+
+function createSessionClientId(): string {
+  const random =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `client-${random}`;
+}
+
+function loadSessionClientId(): string {
+  if (typeof window === "undefined") {
+    return createSessionClientId();
+  }
+
+  const existing = window.localStorage
+    .getItem(SESSION_CLIENT_ID_STORAGE_KEY)
+    ?.trim();
+  if (existing) {
+    return existing;
+  }
+
+  const clientId = createSessionClientId();
+  window.localStorage.setItem(SESSION_CLIENT_ID_STORAGE_KEY, clientId);
+  return clientId;
+}
+
+function sessionRequestHeaders(
+  clientId: string,
+  contentType?: string
+): HeadersInit {
+  return {
+    ...(contentType ? { "Content-Type": contentType } : {}),
+    [SESSION_CLIENT_ID_HEADER]: clientId
+  };
+}
 
 function imageAttachmentToFileUpload(
   attachment: ImageAttachment,
@@ -179,16 +217,15 @@ function createArtifactFileUpload(
 
 async function uploadSessionFile(
   sessionId: string,
-  input: SessionFileUploadInput
+  input: SessionFileUploadInput,
+  clientId: string
 ): Promise<SessionFile> {
   const response = await fetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/files`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(input)
+      headers: sessionRequestHeaders(clientId, "application/json"),
+      body: JSON.stringify({ ...input, clientId })
     }
   );
 
@@ -207,13 +244,18 @@ async function uploadSessionFile(
   return payload.file as SessionFile;
 }
 
-async function deleteSessionFile(sessionId: string, fileId: string): Promise<void> {
+async function deleteSessionFile(
+  sessionId: string,
+  fileId: string,
+  clientId: string
+): Promise<void> {
   const response = await fetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(
       fileId
     )}`,
     {
-      method: "DELETE"
+      method: "DELETE",
+      headers: sessionRequestHeaders(clientId)
     }
   );
 
@@ -242,8 +284,14 @@ function commitUploadedImageFile(
   };
 }
 
-function serializeSessionStateForSave(state: SessionState): string {
+function serializeSessionStateForSave(
+  state: SessionState,
+  clientId: string,
+  deletedSessionIds: string[] = []
+): string {
   return JSON.stringify({
+    clientId,
+    deletedSessionIds,
     sessions: serializeSessions(state.sessions),
     activeSessionId: state.activeSessionId
   });
@@ -251,19 +299,21 @@ function serializeSessionStateForSave(state: SessionState): string {
 
 function saveSerializedSessionState(
   serializedState: string,
+  clientId: string,
   signal?: AbortSignal
 ): Promise<Response> {
   return fetch("/api/sessions", {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: sessionRequestHeaders(clientId, "application/json"),
     signal,
     body: serializedState
   });
 }
 
-function saveSessionStateOnPageExit(serializedState: string): void {
+function saveSessionStateOnPageExit(
+  serializedState: string,
+  clientId: string
+): void {
   if (
     typeof navigator !== "undefined" &&
     typeof navigator.sendBeacon === "function"
@@ -276,9 +326,7 @@ function saveSessionStateOnPageExit(serializedState: string): void {
 
   void fetch("/api/sessions", {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: sessionRequestHeaders(clientId, "application/json"),
     keepalive: true,
     body: serializedState
   }).catch((error) => {
@@ -718,7 +766,9 @@ export default function App() {
     () => getSelectableModelOptions(apiSettings),
     [apiSettings]
   );
+  const sessionClientIdRef = useRef(loadSessionClientId());
   const sessionStateRef = useRef(sessionState);
+  const deletedSessionIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef(messages);
   const activeSessionIdRef = useRef(sessionState.activeSessionId);
   const isSendingRef = useRef(isSending);
@@ -738,14 +788,16 @@ export default function App() {
         uploadImage: async (sessionId, attachment) => {
           const file = await uploadSessionFile(
             sessionId,
-            imageAttachmentToFileUpload(attachment, undefined, true)
+            imageAttachmentToFileUpload(attachment, undefined, true),
+            sessionClientIdRef.current
           );
           if (file.kind !== "image") {
             throw new Error("Image upload returned a non-image file.");
           }
           return file as UploadedSessionFile;
         },
-        deleteFile: deleteSessionFile,
+        deleteFile: (sessionId, fileId) =>
+          deleteSessionFile(sessionId, fileId, sessionClientIdRef.current),
         onUploadStart: (id) => {
           setAttachmentUploadGate((current) => ({
             inFlight: current.inFlight + 1,
@@ -864,7 +916,9 @@ export default function App() {
 
     let cancelled = false;
 
-    fetch("/api/sessions")
+    fetch("/api/sessions", {
+      headers: sessionRequestHeaders(sessionClientIdRef.current)
+    })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`Session load failed with HTTP ${response.status}.`);
@@ -906,13 +960,89 @@ export default function App() {
       return undefined;
     }
 
+    let cancelled = false;
+
+    const syncSessions = async () => {
+      if (runConnectionsRef.current.size > 0) {
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/sessions", {
+          headers: sessionRequestHeaders(sessionClientIdRef.current)
+        });
+        if (!response.ok) {
+          throw new Error(`Session sync failed with HTTP ${response.status}.`);
+        }
+
+        const serverState = normalizeStoredSessionState(await response.json());
+        if (cancelled) {
+          return;
+        }
+
+        setSessionStateAndRef((current) => {
+          const activeSessionId = serverState.sessions.some(
+            (session) => session.id === current.activeSessionId
+          )
+            ? current.activeSessionId
+            : serverState.activeSessionId;
+          const next = {
+            ...serverState,
+            activeSessionId
+          };
+          const deletedSessionIds = Array.from(deletedSessionIdsRef.current);
+          const currentPayload = serializeSessionStateForSave(
+            current,
+            sessionClientIdRef.current,
+            deletedSessionIds
+          );
+          const nextPayload = serializeSessionStateForSave(
+            next,
+            sessionClientIdRef.current,
+            deletedSessionIds
+          );
+
+          return currentPayload === nextPayload ? current : next;
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Could not sync StreamUI sessions.", error);
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(
+      () => void syncSessions(),
+      SESSION_SYNC_INTERVAL_MS
+    );
+    void syncSessions();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [sessionsLoaded, setSessionStateAndRef]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !sessionsLoaded) {
+      return undefined;
+    }
+
     const controller = new AbortController();
     saveAbortRef.current?.abort();
     saveAbortRef.current = controller;
-    const serializedState = serializeSessionStateForSave(sessionState);
+    const serializedState = serializeSessionStateForSave(
+      sessionState,
+      sessionClientIdRef.current,
+      Array.from(deletedSessionIdsRef.current)
+    );
 
     const timeout = window.setTimeout(() => {
-      saveSerializedSessionState(serializedState, controller.signal)
+      saveSerializedSessionState(
+        serializedState,
+        sessionClientIdRef.current,
+        controller.signal
+      )
         .then((response) => {
           if (!response.ok) {
             throw new Error(`Session save failed with HTTP ${response.status}.`);
@@ -944,13 +1074,17 @@ export default function App() {
         return;
       }
 
-      const serializedState = serializeSessionStateForSave(sessionStateRef.current);
+      const serializedState = serializeSessionStateForSave(
+        sessionStateRef.current,
+        sessionClientIdRef.current,
+        Array.from(deletedSessionIdsRef.current)
+      );
       if (serializedState === lastSavedSessionPayloadRef.current) {
         return;
       }
 
       lastSavedSessionPayloadRef.current = serializedState;
-      saveSessionStateOnPageExit(serializedState);
+      saveSessionStateOnPageExit(serializedState, sessionClientIdRef.current);
     };
 
     const flushWhenHidden = () => {
@@ -1156,6 +1290,7 @@ export default function App() {
       return;
     }
 
+    deletedSessionIdsRef.current.add(id);
     setSessionStateAndRef((current) => {
       const remaining = current.sessions.filter((session) => session.id !== id);
       if (!remaining.length) {
@@ -1374,11 +1509,13 @@ export default function App() {
 
         const response = await fetch("/api/chat", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: sessionRequestHeaders(
+            sessionClientIdRef.current,
+            "application/json"
+          ),
           signal: streamController.signal,
           body: JSON.stringify({
+            clientId: sessionClientIdRef.current,
             sessionId: requestSessionId,
             runId: generationRunId,
             userMessage: appendUserMessage ? userMessage : undefined,
@@ -1474,7 +1611,11 @@ export default function App() {
         if (artifactUpload) {
           try {
             upsertActiveSessionFiles([
-              await uploadSessionFile(requestSessionId, artifactUpload)
+              await uploadSessionFile(
+                requestSessionId,
+                artifactUpload,
+                sessionClientIdRef.current
+              )
             ]);
           } catch (uploadError) {
             console.warn("Could not persist StreamUI artifact file.", uploadError);
@@ -1524,7 +1665,9 @@ export default function App() {
     }
 
     const refreshSessionsFromServer = async () => {
-      const response = await fetch("/api/sessions");
+      const response = await fetch("/api/sessions", {
+        headers: sessionRequestHeaders(sessionClientIdRef.current)
+      });
       if (!response.ok) {
         throw new Error(`Session load failed with HTTP ${response.status}.`);
       }
@@ -1644,7 +1787,10 @@ export default function App() {
               `/api/chat/runs/${encodeURIComponent(
                 generationRunId
               )}/events?after=${encodeURIComponent(String(lastStreamSequence))}`,
-              { signal: controller.signal }
+              {
+                headers: sessionRequestHeaders(sessionClientIdRef.current),
+                signal: controller.signal
+              }
             );
 
             if (response.status === 404) {

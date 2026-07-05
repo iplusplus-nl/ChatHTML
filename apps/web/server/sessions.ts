@@ -104,7 +104,8 @@ const sqliteFile = path.resolve(
     process.env.STREAMUI_SQLITE_PATH ||
     path.join(sessionsDir, "state.sqlite")
 );
-const SESSION_STATE_KEY = "global";
+const DEFAULT_SESSION_STATE_KEY = "global";
+const SESSION_CLIENT_ID_HEADER = "x-streamui-client-id";
 const STREAM_INTERRUPTED_ERROR =
   "The stream was interrupted before it completed.";
 
@@ -144,6 +145,41 @@ function stringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+function normalizeClientId(input: unknown): string {
+  const value = stringValue(input)
+    .trim()
+    .slice(0, 160)
+    .replace(/[^a-z0-9._:-]/gi, "");
+  return value.length >= 8 ? value : "";
+}
+
+export function getSessionStateKeyFromClientId(_input: unknown): string {
+  return DEFAULT_SESSION_STATE_KEY;
+}
+
+function getRequestClientId(req: Request): string {
+  const headerId = normalizeClientId(req.get(SESSION_CLIENT_ID_HEADER));
+  if (headerId) {
+    return headerId;
+  }
+
+  const queryId = normalizeClientId(req.query.clientId);
+  if (queryId) {
+    return queryId;
+  }
+
+  const body =
+    req.body && typeof req.body === "object"
+      ? (req.body as { clientId?: unknown })
+      : {};
+  return normalizeClientId(body.clientId);
+}
+
+function getRequestStateKey(req: Request): string {
+  getRequestClientId(req);
+  return DEFAULT_SESSION_STATE_KEY;
+}
+
 function normalizeStringArray(input: unknown): string[] | undefined {
   if (!Array.isArray(input)) {
     return undefined;
@@ -161,6 +197,11 @@ function normalizeStringArray(input: unknown): string[] | undefined {
   }
 
   return values.length ? values : undefined;
+}
+
+function normalizeDeletedSessionIds(input: unknown): Set<string> {
+  const ids = normalizeStringArray(input);
+  return new Set(ids ?? []);
 }
 
 function normalizeSessionFile(input: unknown): StoredSessionFile | null {
@@ -409,11 +450,12 @@ async function getDatabase(): Promise<SqliteDatabase> {
 }
 
 async function readSqliteState(
-  db: SqliteDatabase
+  db: SqliteDatabase,
+  stateKey: string
 ): Promise<StoredSessionState | null> {
   const row = (await db.get(
     "SELECT value FROM streamui_state WHERE key = ?",
-    SESSION_STATE_KEY
+    stateKey
   )) as { value?: unknown } | undefined;
 
   if (typeof row?.value !== "string") {
@@ -425,7 +467,8 @@ async function readSqliteState(
 
 async function writeSqliteState(
   db: SqliteDatabase,
-  state: StoredSessionState
+  state: StoredSessionState,
+  stateKey: string
 ): Promise<void> {
   const normalized = normalizeState(state);
   await db.run(
@@ -436,18 +479,20 @@ async function writeSqliteState(
         value = excluded.value,
         updated_at = excluded.updated_at
     `,
-    SESSION_STATE_KEY,
+    stateKey,
     JSON.stringify(normalized),
     now()
   );
 }
 
-async function readSessionState(): Promise<StoredSessionState> {
+async function readSessionState(
+  stateKey = DEFAULT_SESSION_STATE_KEY
+): Promise<StoredSessionState> {
   await ensureSessionsDir();
   const db = await getDatabase();
 
   try {
-    const sqliteState = await readSqliteState(db);
+    const sqliteState = await readSqliteState(db, stateKey);
     if (sqliteState) {
       return sqliteState;
     }
@@ -455,16 +500,40 @@ async function readSessionState(): Promise<StoredSessionState> {
     console.warn("Could not read StreamUI SQLite sessions.", error);
   }
 
-  const legacyState = await readLegacyJsonState();
+  const legacyState =
+    stateKey === DEFAULT_SESSION_STATE_KEY ? await readLegacyJsonState() : null;
   const state = legacyState ?? createEmptyState();
-  await writeSqliteState(db, state);
+  await writeSqliteState(db, state, stateKey);
   return state;
 }
 
-async function writeSessionState(state: StoredSessionState): Promise<void> {
+async function writeSessionState(
+  state: StoredSessionState,
+  stateKey = DEFAULT_SESSION_STATE_KEY
+): Promise<void> {
   await ensureSessionsDir();
   const db = await getDatabase();
-  await writeSqliteState(db, state);
+  await writeSqliteState(db, state, stateKey);
+}
+
+async function readAllSessionStates(): Promise<StoredSessionState[]> {
+  await ensureSessionsDir();
+  const db = await getDatabase();
+  const rows = (await db.all("SELECT value FROM streamui_state")) as Array<{
+    value?: unknown;
+  }>;
+  const states: StoredSessionState[] = [];
+  for (const row of rows) {
+    if (typeof row.value !== "string") {
+      continue;
+    }
+    try {
+      states.push(normalizeState(JSON.parse(row.value)));
+    } catch (error) {
+      console.warn("Could not parse StreamUI session row.", error);
+    }
+  }
+  return states;
 }
 
 function getRequestOrigin(req: Request): string {
@@ -621,11 +690,14 @@ function mergeMessagesForClientSave(
 
 function mergeClientSaveState(
   current: StoredSessionState,
-  incoming: StoredSessionState
+  incoming: StoredSessionState,
+  deletedSessionIds = new Set<string>()
 ): StoredSessionState {
   const currentById = new Map(current.sessions.map((session) => [session.id, session]));
   const incomingIds = new Set(incoming.sessions.map((session) => session.id));
-  const sessions = incoming.sessions.map((session) => {
+  const sessions = incoming.sessions
+    .filter((session) => !deletedSessionIds.has(session.id))
+    .map((session) => {
     const currentSession = currentById.get(session.id);
     if (!currentSession) {
       return session;
@@ -642,10 +714,10 @@ function mergeClientSaveState(
         ? mergeSessionFiles(currentSession.files, session.files)
         : session.files
     };
-  });
+    });
 
   for (const session of current.sessions) {
-    if (!incomingIds.has(session.id) && hasActiveRunMessage(session)) {
+    if (!incomingIds.has(session.id) && !deletedSessionIds.has(session.id)) {
       sessions.push(session);
     }
   }
@@ -702,12 +774,13 @@ function upsertMessages(
 }
 
 async function enqueueSessionStateUpdate(
+  stateKey: string,
   updater: (state: StoredSessionState) => void | StoredSessionState
 ): Promise<void> {
   const operation = saveQueue.then(async () => {
-    const state = await readSessionState();
+    const state = await readSessionState(stateKey);
     const updated = updater(state) ?? state;
-    await writeSessionState(updated);
+    await writeSessionState(updated, stateKey);
   });
   saveQueue = operation.then(
     () => undefined,
@@ -717,15 +790,17 @@ async function enqueueSessionStateUpdate(
 }
 
 export async function upsertSessionMessages({
+  stateKey = DEFAULT_SESSION_STATE_KEY,
   sessionId,
   messages,
   files
 }: {
+  stateKey?: string;
   sessionId: string;
   messages: SessionMessageInput[];
   files?: StoredSessionFile[];
 }): Promise<void> {
-  await enqueueSessionStateUpdate((state) => {
+  await enqueueSessionStateUpdate(stateKey, (state) => {
     const session = ensureSession(state, sessionId);
     upsertMessages(session, messages);
     if (files?.length) {
@@ -736,15 +811,17 @@ export async function upsertSessionMessages({
 }
 
 export async function patchSessionMessage({
+  stateKey = DEFAULT_SESSION_STATE_KEY,
   sessionId,
   messageId,
   patch
 }: {
+  stateKey?: string;
   sessionId: string;
   messageId: string;
   patch: SessionMessagePatch;
 }): Promise<void> {
-  await enqueueSessionStateUpdate((state) => {
+  await enqueueSessionStateUpdate(stateKey, (state) => {
     const session = findSession(state, sessionId);
     if (!session) {
       return;
@@ -823,7 +900,7 @@ export async function handleGetSessions(
   res: Response
 ): Promise<void> {
   try {
-    res.json(presentState(req, await readSessionState()));
+    res.json(presentState(req, await readSessionState(getRequestStateKey(req))));
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error)
@@ -836,10 +913,17 @@ export async function handleSaveSessions(
   res: Response
 ): Promise<void> {
   try {
+    const stateKey = getRequestStateKey(req);
     const state = normalizeState(req.body);
+    const deletedSessionIds = normalizeDeletedSessionIds(
+      (req.body as { deletedSessionIds?: unknown })?.deletedSessionIds
+    );
     saveQueue = saveQueue.then(async () => {
-      const current = await readSessionState();
-      await writeSessionState(mergeClientSaveState(current, state));
+      const current = await readSessionState(stateKey);
+      await writeSessionState(
+        mergeClientSaveState(current, state, deletedSessionIds),
+        stateKey
+      );
     });
     await saveQueue;
     res.json({ ok: true });
@@ -856,7 +940,7 @@ export async function handleGetSessionFiles(
   res: Response
 ): Promise<void> {
   try {
-    const state = await readSessionState();
+    const state = await readSessionState(getRequestStateKey(req));
     const session = findSession(state, req.params.sessionId);
     if (!session) {
       res.status(404).json({ error: "Session not found." });
@@ -880,6 +964,7 @@ export async function handleCreateSessionFile(
   res: Response
 ): Promise<void> {
   const sessionId = req.params.sessionId;
+  const stateKey = getRequestStateKey(req);
   const body = req.body as Record<string, unknown>;
   const kind = getUploadKind(body.kind);
 
@@ -928,14 +1013,14 @@ export async function handleCreateSessionFile(
 
     let savedFile: StoredSessionFile | null = null;
     saveQueue = saveQueue.then(async () => {
-      const state = await readSessionState();
+      const state = await readSessionState(stateKey);
       const session = ensureSession(state, sessionId);
       session.files = [
         ...(session.files ?? []).filter((candidate) => candidate.id !== file.id),
         file
       ];
       session.updatedAt = now();
-      await writeSessionState(state);
+      await writeSessionState(state, stateKey);
       savedFile = file;
     });
     await saveQueue;
@@ -954,8 +1039,12 @@ export async function handleGetFileContent(
   res: Response
 ): Promise<void> {
   try {
-    const state = await readSessionState();
-    const found = findFileById(state, req.params.fileId);
+    const states = await readAllSessionStates();
+    const found = states
+      .map((state) => findFileById(state, req.params.fileId))
+      .find((candidate): candidate is { session: StoredSession; file: StoredSessionFile } =>
+        Boolean(candidate)
+      );
     const token = stringValue(req.query.token);
     if (!found || !found.file.accessToken || token !== found.file.accessToken) {
       res.status(404).send("File not found.");
@@ -990,11 +1079,12 @@ export async function handleDeleteSessionFile(
 ): Promise<void> {
   const sessionId = req.params.sessionId;
   const fileId = req.params.fileId;
+  const stateKey = getRequestStateKey(req);
 
   try {
     let removed: StoredSessionFile | undefined;
     saveQueue = saveQueue.then(async () => {
-      const state = await readSessionState();
+      const state = await readSessionState(stateKey);
       const session = findSession(state, sessionId);
       if (!session) {
         return;
@@ -1003,7 +1093,7 @@ export async function handleDeleteSessionFile(
       removed = (session.files ?? []).find((file) => file.id === fileId);
       session.files = (session.files ?? []).filter((file) => file.id !== fileId);
       session.updatedAt = now();
-      await writeSessionState(state);
+      await writeSessionState(state, stateKey);
     });
     await saveQueue;
 

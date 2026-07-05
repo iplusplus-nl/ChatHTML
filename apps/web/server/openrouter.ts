@@ -25,6 +25,7 @@ import {
   type ResponsesToolOutput
 } from "./sessionFileTools.js";
 import {
+  getSessionStateKeyFromClientId,
   patchSessionMessage,
   upsertSessionMessages,
   type SessionMessageInput,
@@ -146,6 +147,7 @@ type ChatRequestBody = {
   themeMode?: unknown;
   apiSettings?: unknown;
   searchSettings?: unknown;
+  clientId?: unknown;
   sessionId?: unknown;
   runId?: unknown;
   userMessage?: unknown;
@@ -156,6 +158,7 @@ type ChatRunInput = {
   requestId: string;
   startedAt: number;
   runId: string;
+  stateKey: string;
   sessionId?: string;
   userMessage?: SessionMessageInput;
   assistantMessage?: SessionMessageInput;
@@ -545,6 +548,7 @@ function createChatRunInput(body: ChatRequestBody, requestId: string): ChatRunIn
   const userMessage = normalizeSessionMessageInput(body.userMessage);
   const assistantMessage = normalizeSessionMessageInput(body.assistantMessage);
   const requestedRunId = stringValue(body.runId, 160);
+  const stateKey = getSessionStateKeyFromClientId(body.clientId);
   const runId =
     requestedRunId ||
     stringValue(assistantMessage?.generationRunId, 160) ||
@@ -554,6 +558,7 @@ function createChatRunInput(body: ChatRequestBody, requestId: string): ChatRunIn
     requestId,
     startedAt: Date.now(),
     runId,
+    stateKey,
     sessionId: stringValue(body.sessionId, 160) || undefined,
     userMessage:
       userMessage?.role === "user"
@@ -701,6 +706,7 @@ function queueRunPersistence(
   run.persistPromise = run.persistPromise
     .then(() =>
       patchSessionMessage({
+        stateKey: run.input.stateKey,
         sessionId,
         messageId: assistantMessageId,
         patch
@@ -770,6 +776,7 @@ async function persistInitialRunMessages(run: ChatRun): Promise<void> {
   }
 
   await upsertSessionMessages({
+    stateKey: run.input.stateKey,
     sessionId,
     messages: [userMessage, assistantMessage].filter(
       (message): message is SessionMessageInput => Boolean(message)
@@ -1491,7 +1498,11 @@ export async function handleOpenRouterChat(
   req: Request,
   res: Response
 ): Promise<void> {
-  const body = req.body as ChatRequestBody;
+  const body = {
+    ...(req.body as ChatRequestBody),
+    clientId:
+      (req.body as ChatRequestBody)?.clientId ?? req.get("x-streamui-client-id")
+  };
   const requestId = Math.random().toString(36).slice(2, 9);
 
   try {

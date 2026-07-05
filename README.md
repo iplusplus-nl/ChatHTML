@@ -43,7 +43,9 @@ The browser calls the local backend at `POST /api/chat`; the backend reads `OPEN
 
 ## Session Storage
 
-Chat sessions are stored as one shared global state in SQLite. By default the backend writes to `sessions/state.sqlite`. Existing `sessions/state.json` data is migrated into SQLite the first time the database is empty.
+Chat sessions are stored persistently in SQLite as one shared testing state, so every browser and device connected to the same deployment sees the same chat history. The client periodically syncs from the backend while the page is open, and session saves are merged so an older tab is less likely to overwrite chats created elsewhere.
+
+By default the backend writes to `sessions/state.sqlite`. Existing `sessions/state.json` data is migrated into SQLite the first time the shared state is empty.
 
 For production, set `STREAMUI_SESSION_DB` to a path on a persistent disk or volume, for example:
 
@@ -51,7 +53,7 @@ For production, set `STREAMUI_SESSION_DB` to a path on a persistent disk or volu
 STREAMUI_SESSION_DB=/data/streamui/state.sqlite
 ```
 
-If the SQLite file lives in an ephemeral deploy directory, sessions will still disappear after an instance restart or redeploy.
+If the SQLite file lives in an ephemeral deploy directory, sessions will still disappear after an instance restart or redeploy. This shared-history mode is intended for testing; production multi-user deployments should add an authenticated identity layer.
 
 You can also run workspace scripts directly:
 
