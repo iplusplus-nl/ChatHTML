@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  copyTextToClipboard,
+  downloadTextFile
+} from "../core/artifactExport";
 import { isIgnoredRuntimeError } from "../core/ignoredRuntimeErrors";
 import {
   applyIframeTheme,
@@ -19,6 +23,84 @@ type PreviewFrameProps = {
   onArtifactAction(action: StreamUiAction): void;
 };
 
+type CapabilityAction =
+  | Extract<StreamUiAction, { type: "copy" }>
+  | Extract<StreamUiAction, { type: "download" }>
+  | Extract<StreamUiAction, { type: "open-url" }>;
+
+type CapabilityStatus = {
+  kind: "success" | "error";
+  message: string;
+};
+
+const MAX_CAPABILITY_TEXT_CHARS = 1_000_000;
+
+function normalizeCapabilityText(value: unknown): string {
+  return String(value ?? "").slice(0, MAX_CAPABILITY_TEXT_CHARS);
+}
+
+function normalizeCapabilityLabel(value: unknown): string | undefined {
+  const label = String(value ?? "").trim().slice(0, 200);
+  return label || undefined;
+}
+
+function sanitizeDownloadFilename(value: unknown): string {
+  const filename = String(value ?? "")
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+
+  return filename || "streamui-export.txt";
+}
+
+function sanitizeMimeType(value: unknown): string {
+  const mimeType = String(value ?? "").trim().slice(0, 120);
+  return mimeType || "text/plain;charset=utf-8";
+}
+
+function normalizeOpenUrl(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    throw new Error("No URL was provided.");
+  }
+
+  const url = new URL(raw, window.location.href);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Only http and https URLs can be opened.");
+  }
+
+  return url.href;
+}
+
+function getCapabilityTitle(action: CapabilityAction): string {
+  if (action.type === "copy") {
+    return "Copy from artifact";
+  }
+  if (action.type === "download") {
+    return "Download from artifact";
+  }
+  return "Open link from artifact";
+}
+
+function getCapabilityConfirmLabel(action: CapabilityAction): string {
+  if (action.type === "copy") {
+    return "Copy";
+  }
+  if (action.type === "download") {
+    return "Download";
+  }
+  return "Open";
+}
+
+function getCapabilityPreview(action: CapabilityAction): string {
+  if (action.type === "open-url") {
+    return action.url;
+  }
+
+  return action.text;
+}
+
 export function PreviewFrame({
   snapshot,
   themeMode,
@@ -30,6 +112,10 @@ export function PreviewFrame({
   const lastAppliedBodyHtmlRef = useRef("");
   const lastExecutedScriptHtmlRef = useRef("");
   const [height, setHeight] = useState(96);
+  const [capabilityAction, setCapabilityAction] =
+    useState<CapabilityAction | null>(null);
+  const [capabilityStatus, setCapabilityStatus] =
+    useState<CapabilityStatus | null>(null);
 
   if (initialSrcDocRef.current === null) {
     initialSrcDocRef.current = buildIframeDocument("", themeMode);
@@ -90,8 +176,11 @@ export function PreviewFrame({
         actionType?: string;
         prompt?: string;
         label?: string;
-        message?: string;
+        text?: string;
+        url?: string;
         filename?: string;
+        mimeType?: string;
+        message?: string;
         height?: number;
       };
 
@@ -107,6 +196,51 @@ export function PreviewFrame({
             type: "prompt",
             prompt: prompt.slice(0, 2000),
             ...(label ? { label: label.slice(0, 200) } : {})
+          });
+        }
+        return;
+      }
+
+      if (data.kind === "action" && data.actionType === "copy") {
+        setCapabilityStatus(null);
+        setCapabilityAction({
+          type: "copy",
+          text: normalizeCapabilityText(data.text),
+          ...(normalizeCapabilityLabel(data.label)
+            ? { label: normalizeCapabilityLabel(data.label) }
+            : {})
+        });
+        return;
+      }
+
+      if (data.kind === "action" && data.actionType === "download") {
+        setCapabilityStatus(null);
+        setCapabilityAction({
+          type: "download",
+          text: normalizeCapabilityText(data.text),
+          filename: sanitizeDownloadFilename(data.filename),
+          mimeType: sanitizeMimeType(data.mimeType),
+          ...(normalizeCapabilityLabel(data.label)
+            ? { label: normalizeCapabilityLabel(data.label) }
+            : {})
+        });
+        return;
+      }
+
+      if (data.kind === "action" && data.actionType === "open-url") {
+        try {
+          setCapabilityStatus(null);
+          setCapabilityAction({
+            type: "open-url",
+            url: normalizeOpenUrl(data.url),
+            ...(normalizeCapabilityLabel(data.label)
+              ? { label: normalizeCapabilityLabel(data.label) }
+              : {})
+          });
+        } catch (error) {
+          setCapabilityStatus({
+            kind: "error",
+            message: error instanceof Error ? error.message : "Invalid URL."
           });
         }
         return;
@@ -147,19 +281,110 @@ export function PreviewFrame({
     applySnapshotToFrame();
   }, [applySnapshotToFrame]);
 
+  useEffect(() => {
+    if (!capabilityStatus || capabilityStatus.kind === "error") {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCapabilityStatus(null);
+    }, 2_200);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [capabilityStatus]);
+
+  const runCapabilityAction = async () => {
+    if (!capabilityAction) {
+      return;
+    }
+
+    try {
+      if (capabilityAction.type === "copy") {
+        if (!capabilityAction.text) {
+          throw new Error("Nothing to copy.");
+        }
+        await copyTextToClipboard(capabilityAction.text);
+        setCapabilityStatus({ kind: "success", message: "Copied" });
+      } else if (capabilityAction.type === "download") {
+        if (!capabilityAction.text) {
+          throw new Error("Nothing to download.");
+        }
+        downloadTextFile(
+          capabilityAction.text,
+          capabilityAction.filename || "streamui-export.txt",
+          capabilityAction.mimeType
+        );
+        setCapabilityStatus({ kind: "success", message: "Download started" });
+      } else {
+        const opened = window.open(
+          capabilityAction.url,
+          "_blank",
+          "noopener,noreferrer"
+        );
+        if (!opened) {
+          throw new Error("The browser blocked this popup.");
+        }
+        opened.opener = null;
+        setCapabilityStatus({ kind: "success", message: "Opened" });
+      }
+      setCapabilityAction(null);
+    } catch (error) {
+      setCapabilityStatus({
+        kind: "error",
+        message:
+          error instanceof Error ? error.message : "Artifact action failed."
+      });
+    }
+  };
+
   return (
-    <iframe
-      ref={frameRef}
-      className="preview-frame"
-      title="StreamUI artifact preview"
-      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      srcDoc={initialSrcDocRef.current}
-      onLoad={() => {
-        lastAppliedBodyHtmlRef.current = "";
-        lastExecutedScriptHtmlRef.current = "";
-        applySnapshotToFrame();
-      }}
-      style={{ height }}
-    />
+    <>
+      <iframe
+        ref={frameRef}
+        className="preview-frame"
+        title="StreamUI artifact preview"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        srcDoc={initialSrcDocRef.current}
+        onLoad={() => {
+          lastAppliedBodyHtmlRef.current = "";
+          lastExecutedScriptHtmlRef.current = "";
+          applySnapshotToFrame();
+        }}
+        style={{ height }}
+      />
+      {capabilityAction ? (
+        <div className="artifact-capability-panel" role="dialog" aria-modal="false">
+          <strong>{getCapabilityTitle(capabilityAction)}</strong>
+          {capabilityAction.label ? <span>{capabilityAction.label}</span> : null}
+          <code>{getCapabilityPreview(capabilityAction)}</code>
+          <div className="artifact-capability-actions">
+            <button
+              className="artifact-capability-secondary"
+              type="button"
+              onClick={() => setCapabilityAction(null)}
+            >
+              Cancel
+            </button>
+            <button
+              className="artifact-capability-primary"
+              type="button"
+              onClick={() => {
+                void runCapabilityAction();
+              }}
+            >
+              {getCapabilityConfirmLabel(capabilityAction)}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {capabilityStatus ? (
+        <div
+          className={`artifact-capability-status is-${capabilityStatus.kind}`}
+          role={capabilityStatus.kind === "error" ? "alert" : "status"}
+        >
+          {capabilityStatus.message}
+        </div>
+      ) : null}
+    </>
   );
 }

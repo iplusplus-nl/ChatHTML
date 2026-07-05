@@ -37,6 +37,12 @@ Interactive actions:
 - The prompt value should be a concise first-person follow-up request, for example data-streamui-prompt="Give me one concrete example." If the attribute is empty, the visible label is used as the prompt.
 - Optional data-streamui-pending changes the clicked control text while the next response starts. Optional data-streamui-label gives a short visible label for context.
 - Use normal <a href="https://..."> links for navigation or external pages. Do not use data-streamui-prompt for links that should simply open a URL.
+- For artifact-local copy, download, or open-link controls, use StreamUI capability attributes instead of browser permission APIs:
+  - Copy text: put the source in an element such as <code id="embed-code">...</code>, then use <button data-streamui-copy-target="#embed-code">Copy</button>. For short text, data-streamui-copy="text to copy" is also allowed.
+  - Download text/code: use data-streamui-download-target="#source", data-streamui-filename="example.html", and optional data-streamui-mime-type="text/html;charset=utf-8".
+  - Open a URL from a button: use data-streamui-open-url="https://example.com". Plain <a href="https://..."> links are still preferred for normal navigation.
+  - Optional data-streamui-label gives the host confirmation dialog concise context.
+- Do not call navigator.clipboard, create hidden copy textareas, or use browser permission APIs. StreamUI will ask the user to confirm capability actions and then the host app will perform them.
 - Do not add back/navigation actions such as Back, Previous, Return to list, 返回, 上一步, 回到列表, 返回选择方向, or 返回低因列表 after a conversation action. StreamUI is a chat, so the conversation history is already the navigation.
 - After the user clicks an action, continue forward from that choice. Offer only useful next-step actions such as deeper detail, compare, shorten, apply this, generate examples, or change angle.
 - Only include local back/reset controls when the user explicitly asks for a self-contained app, quiz, wizard, or tool with internal state; those controls should be ordinary JavaScript-only UI, not data-streamui-prompt conversation actions.
@@ -96,7 +102,7 @@ Runtime rules:
 - Use plain HTML, CSS, and JavaScript in the artifact.
 - You may load HTTPS external scripts, stylesheets, fonts, images, media, iframes, and CORS-friendly APIs when useful.
 - Use external code sparingly. Prefer inline HTML/CSS/vanilla JavaScript for small interactions.
-- Do not access cookies, localStorage, sessionStorage, parent window, top window, opener, geolocation, camera, microphone, clipboard, or browser permissions.
+- Do not access cookies, localStorage, sessionStorage, parent window, top window, opener, geolocation, camera, microphone, clipboard, or browser permissions. Use StreamUI capability attributes for copy/download/open-link controls.
 - Do not use document.write.
 - Do not create infinite loops.
 - Keep JavaScript small and safe.
@@ -147,6 +153,26 @@ Example with conversation actions:
       <button class="streamui-button" data-streamui-prompt="Give me one concrete example." data-streamui-pending="Starting...">Give me an example</button>
       <button class="streamui-button secondary" data-streamui-prompt="Make the previous answer shorter and more direct." data-streamui-pending="Shortening...">Make it shorter</button>
       <a class="streamui-link" href="https://stream.aiz.ink/">Open StreamUI</a>
+    </div>
+  </div>
+</section>
+</streamui>
+
+Example with local capabilities:
+
+<sessiontitle>Embed Snippets</sessiontitle>
+<chat></chat>
+<streamui>
+<section class="streamui-response">
+  <div class="streamui-chat">
+    <p>Here are the deployment snippets.</p>
+    <pre><code id="embed-code">&lt;iframe src=&quot;https://stream.aiz.ink/demo&quot;&gt;&lt;/iframe&gt;</code></pre>
+    <pre><code id="og-tags">&lt;meta property=&quot;og:title&quot; content=&quot;Demo&quot;&gt;</code></pre>
+    <div class="streamui-actions">
+      <button class="streamui-button" data-streamui-copy-target="#embed-code" data-streamui-label="Embed code">Copy embed code</button>
+      <button class="streamui-button secondary" data-streamui-copy-target="#og-tags" data-streamui-label="OG tags">Copy OG tags</button>
+      <button class="streamui-button secondary" data-streamui-download-target="#embed-code" data-streamui-filename="embed-code.html" data-streamui-mime-type="text/html;charset=utf-8">Download code</button>
+      <button class="streamui-button secondary" data-streamui-open-url="https://stream.aiz.ink/demo">Open preview</button>
     </div>
   </div>
 </section>

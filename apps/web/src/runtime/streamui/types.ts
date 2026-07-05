@@ -10,11 +10,37 @@ export type RenderError = {
   timestamp: number;
 };
 
-export type StreamUiAction = {
+export type StreamUiPromptAction = {
   type: "prompt";
   prompt: string;
   label?: string;
 };
+
+export type StreamUiCopyAction = {
+  type: "copy";
+  text: string;
+  label?: string;
+};
+
+export type StreamUiDownloadAction = {
+  type: "download";
+  text: string;
+  filename?: string;
+  mimeType?: string;
+  label?: string;
+};
+
+export type StreamUiOpenUrlAction = {
+  type: "open-url";
+  url: string;
+  label?: string;
+};
+
+export type StreamUiAction =
+  | StreamUiPromptAction
+  | StreamUiCopyAction
+  | StreamUiDownloadAction
+  | StreamUiOpenUrlAction;
 
 export type RenderSnapshot = {
   raw: string;

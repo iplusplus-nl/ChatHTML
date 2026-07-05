@@ -185,7 +185,10 @@ export function buildIframeDocument(
     }
     .streamui-button:disabled,
     .streamui-button[aria-disabled="true"],
-    [data-streamui-prompt][aria-busy="true"] {
+    [data-streamui-prompt][aria-busy="true"],
+    [data-streamui-copy][aria-busy="true"],
+    [data-streamui-download][aria-busy="true"],
+    [data-streamui-open-url][aria-busy="true"] {
       cursor: progress;
       opacity: 0.62;
     }
@@ -302,12 +305,103 @@ export function buildIframeDocument(
         });
       };
       const MAX_ACTION_PROMPT_CHARS = 2000;
+      const MAX_CAPABILITY_TEXT_CHARS = 1000000;
       const findPromptAction = (target) => {
         if (!(target instanceof Element)) {
           return null;
         }
 
         return target.closest("[data-streamui-prompt]");
+      };
+      const findCapabilityAction = (target) => {
+        if (!(target instanceof Element)) {
+          return null;
+        }
+
+        return target.closest(
+          "[data-streamui-copy],[data-streamui-copy-target],[data-streamui-download],[data-streamui-download-target],[data-streamui-open-url]"
+        );
+      };
+      const findTargetText = (selector) => {
+        if (!selector) {
+          return "";
+        }
+
+        try {
+          const target = document.querySelector(selector);
+          if (!target) {
+            return "";
+          }
+          if ("value" in target && typeof target.value === "string") {
+            return target.value;
+          }
+          return target.textContent || "";
+        } catch {
+          return "";
+        }
+      };
+      const getCapabilityLabel = (element) => {
+        return (
+          element.getAttribute("data-streamui-label") ||
+          element.textContent ||
+          ""
+        ).trim().slice(0, 200);
+      };
+      const getCapabilityText = (element, attributeName, targetAttributeName) => {
+        const direct = element.getAttribute(attributeName);
+        const targetText = findTargetText(element.getAttribute(targetAttributeName));
+        return String(targetText || direct || "")
+          .slice(0, MAX_CAPABILITY_TEXT_CHARS);
+      };
+      const postCapabilityAction = (trigger) => {
+        const label = getCapabilityLabel(trigger);
+
+        if (
+          trigger.hasAttribute("data-streamui-copy") ||
+          trigger.hasAttribute("data-streamui-copy-target")
+        ) {
+          post("action", "copy", {
+            actionType: "copy",
+            label,
+            text: getCapabilityText(
+              trigger,
+              "data-streamui-copy",
+              "data-streamui-copy-target"
+            )
+          });
+          return true;
+        }
+
+        if (
+          trigger.hasAttribute("data-streamui-download") ||
+          trigger.hasAttribute("data-streamui-download-target")
+        ) {
+          post("action", "download", {
+            actionType: "download",
+            filename: trigger.getAttribute("data-streamui-filename") || "",
+            label,
+            mimeType: trigger.getAttribute("data-streamui-mime-type") || "",
+            text: getCapabilityText(
+              trigger,
+              "data-streamui-download",
+              "data-streamui-download-target"
+            )
+          });
+          return true;
+        }
+
+        if (trigger.hasAttribute("data-streamui-open-url")) {
+          post("action", "open-url", {
+            actionType: "open-url",
+            label,
+            url: String(trigger.getAttribute("data-streamui-open-url") || "")
+              .trim()
+              .slice(0, 2000)
+          });
+          return true;
+        }
+
+        return false;
       };
       const isActionDisabled = (element) => {
         return (
@@ -330,6 +424,17 @@ export function buildIframeDocument(
         }
       };
       document.addEventListener("click", (event) => {
+        const capabilityTrigger = findCapabilityAction(event.target);
+        if (capabilityTrigger) {
+          if (isActionDisabled(capabilityTrigger)) {
+            return;
+          }
+
+          event.preventDefault();
+          postCapabilityAction(capabilityTrigger);
+          return;
+        }
+
         const trigger = findPromptAction(event.target);
         if (!trigger) {
           return;

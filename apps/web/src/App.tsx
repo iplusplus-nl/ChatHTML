@@ -648,7 +648,7 @@ function getAppendMessageText(message: AppendMessage): string {
 }
 
 function buildArtifactActionMessage(action: StreamUiAction): string {
-  return action.prompt.trim().slice(0, 2000);
+  return action.type === "prompt" ? action.prompt.trim().slice(0, 2000) : "";
 }
 
 function findSessionMessage(

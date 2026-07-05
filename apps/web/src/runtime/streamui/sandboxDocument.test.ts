@@ -41,6 +41,19 @@ describe("sandboxDocument", () => {
     assert.match(document, /post\("action"/);
   });
 
+  it("includes the local capability action bridge", () => {
+    const document = buildIframeDocument(
+      '<button data-streamui-copy-target="#code">Copy</button><code id="code">x</code>'
+    );
+
+    assert.match(document, /data-streamui-copy/);
+    assert.match(document, /data-streamui-download/);
+    assert.match(document, /data-streamui-open-url/);
+    assert.match(document, /actionType: "copy"/);
+    assert.match(document, /actionType: "download"/);
+    assert.match(document, /actionType: "open-url"/);
+  });
+
   it("measures content bounds instead of the previous iframe viewport height", () => {
     const document = buildIframeDocument(
       "<details open><summary>More</summary><p>Text</p></details>"
