@@ -534,6 +534,26 @@ function getAppendMessageText(message: AppendMessage): string {
     .trim();
 }
 
+function findSessionMessage(
+  state: SessionState,
+  messageId: string
+): ClientMessage | undefined {
+  for (const session of state.sessions) {
+    const message = session.messages.find((candidate) => candidate.id === messageId);
+    if (message) {
+      return message;
+    }
+  }
+
+  return undefined;
+}
+
+function isTerminalAssistantStatus(
+  status: ClientMessage["status"] | undefined
+): status is "complete" | "error" {
+  return status === "complete" || status === "error";
+}
+
 function isImageAttachment(
   attachment: ImageAttachment | null
 ): attachment is ImageAttachment {
@@ -1416,6 +1436,86 @@ export default function App() {
       let streamConnected = false;
       let doneStatus: "complete" | "error" | undefined;
       let doneError = "";
+      let completedFromServer = false;
+      let serverSyncIntervalId: number | undefined;
+      let serverSyncInFlight = false;
+
+      const applyServerAssistantMessage = (serverMessage: ClientMessage) => {
+        if (serverMessage.role !== "assistant") {
+          return;
+        }
+        if (
+          serverMessage.generationRunId &&
+          serverMessage.generationRunId !== generationRunId
+        ) {
+          return;
+        }
+
+        const serverSequence = serverMessage.streamSequence ?? 0;
+        const serverRaw = serverMessage.rawStream ?? "";
+        const serverReasoning = serverMessage.reasoning ?? "";
+        const terminalStatus = isTerminalAssistantStatus(serverMessage.status)
+          ? serverMessage.status
+          : undefined;
+        const hasNewerStream =
+          serverSequence > lastStreamSequence ||
+          serverRaw.length > raw.length ||
+          serverReasoning.length > reasoning.length;
+        const hasTerminalUpdate =
+          Boolean(terminalStatus) && doneStatus !== terminalStatus;
+
+        if (!hasNewerStream && !hasTerminalUpdate) {
+          return;
+        }
+
+        raw = serverRaw || raw;
+        reasoning = serverReasoning || reasoning;
+        lastStreamSequence = Math.max(lastStreamSequence, serverSequence);
+        updateAssistant(assistantId, serverMessage);
+
+        if (terminalStatus) {
+          doneStatus = terminalStatus;
+          doneError = serverMessage.error ?? "";
+          completedFromServer = true;
+          streamController.abort();
+        }
+      };
+
+      const reconcileAssistantFromServer = async () => {
+        if (serverSyncInFlight || completedFromServer) {
+          return;
+        }
+
+        serverSyncInFlight = true;
+        try {
+          const response = await fetch("/api/sessions", {
+            headers: sessionRequestHeaders(sessionClientIdRef.current)
+          });
+          if (!response.ok) {
+            throw new Error(`Session sync failed with HTTP ${response.status}.`);
+          }
+
+          const serverState = normalizeStoredSessionState(await response.json());
+          const serverMessage = findSessionMessage(serverState, assistantId);
+          if (serverMessage) {
+            applyServerAssistantMessage(serverMessage);
+          }
+        } catch (error) {
+          if ((error as { name?: unknown }).name !== "AbortError") {
+            console.warn("Could not reconcile StreamUI stream state.", error);
+          }
+        } finally {
+          serverSyncInFlight = false;
+        }
+      };
+
+      const startServerReconcile = () => {
+        serverSyncIntervalId = window.setInterval(() => {
+          void reconcileAssistantFromServer();
+        }, 1500);
+        void reconcileAssistantFromServer();
+      };
+
       const handleContentChunk = (chunk: string, streamSequence?: number) => {
         raw += chunk;
         const parts = extractStreamUiParts(raw);
@@ -1506,6 +1606,7 @@ export default function App() {
           ...(requestSession?.files ?? []),
           ...uploadedFiles
         ]);
+        startServerReconcile();
 
         const response = await fetch("/api/chat", {
           method: "POST",
@@ -1557,6 +1658,12 @@ export default function App() {
         }
         if (streamBuffer.trim()) {
           streamBuffer.split("\n").forEach(handleStreamEvent);
+        }
+
+        await reconcileAssistantFromServer();
+
+        if (completedFromServer) {
+          return;
         }
 
         if (doneStatus === "error") {
@@ -1622,6 +1729,9 @@ export default function App() {
           }
         }
       } catch (error) {
+        if (completedFromServer) {
+          return;
+        }
         const message =
           error instanceof Error ? error.message : "The chat request failed.";
         if (streamConnected && doneStatus !== "error") {
@@ -1642,6 +1752,9 @@ export default function App() {
           status: "error"
         });
       } finally {
+        if (typeof serverSyncIntervalId === "number") {
+          window.clearInterval(serverSyncIntervalId);
+        }
         unsubscribeSnapshot();
         renderersRef.current.delete(assistantId);
         runConnectionsRef.current.delete(generationRunId);
@@ -1701,6 +1814,85 @@ export default function App() {
           let lastStreamSequence = message.streamSequence ?? 0;
           let doneStatus: "complete" | "error" | undefined;
           let doneError = "";
+          let completedFromServer = false;
+          let serverSyncIntervalId: number | undefined;
+          let serverSyncInFlight = false;
+
+          const applyServerAssistantMessage = (serverMessage: ClientMessage) => {
+            if (serverMessage.role !== "assistant") {
+              return;
+            }
+            if (
+              serverMessage.generationRunId &&
+              serverMessage.generationRunId !== generationRunId
+            ) {
+              return;
+            }
+
+            const serverSequence = serverMessage.streamSequence ?? 0;
+            const serverRaw = serverMessage.rawStream ?? "";
+            const serverReasoning = serverMessage.reasoning ?? "";
+            const terminalStatus = isTerminalAssistantStatus(serverMessage.status)
+              ? serverMessage.status
+              : undefined;
+            const hasNewerStream =
+              serverSequence > lastStreamSequence ||
+              serverRaw.length > raw.length ||
+              serverReasoning.length > reasoning.length;
+            const hasTerminalUpdate =
+              Boolean(terminalStatus) && doneStatus !== terminalStatus;
+
+            if (!hasNewerStream && !hasTerminalUpdate) {
+              return;
+            }
+
+            raw = serverRaw || raw;
+            reasoning = serverReasoning || reasoning;
+            lastStreamSequence = Math.max(lastStreamSequence, serverSequence);
+            updateAssistant(message.id, serverMessage);
+
+            if (terminalStatus) {
+              doneStatus = terminalStatus;
+              doneError = serverMessage.error ?? "";
+              completedFromServer = true;
+              controller.abort();
+            }
+          };
+
+          const reconcileAssistantFromServer = async () => {
+            if (serverSyncInFlight || completedFromServer) {
+              return;
+            }
+
+            serverSyncInFlight = true;
+            try {
+              const response = await fetch("/api/sessions", {
+                headers: sessionRequestHeaders(sessionClientIdRef.current)
+              });
+              if (!response.ok) {
+                throw new Error(`Session sync failed with HTTP ${response.status}.`);
+              }
+
+              const serverState = normalizeStoredSessionState(await response.json());
+              const serverMessage = findSessionMessage(serverState, message.id);
+              if (serverMessage) {
+                applyServerAssistantMessage(serverMessage);
+              }
+            } catch (error) {
+              if ((error as { name?: unknown }).name !== "AbortError") {
+                console.warn("Could not reconcile StreamUI stream state.", error);
+              }
+            } finally {
+              serverSyncInFlight = false;
+            }
+          };
+
+          const startServerReconcile = () => {
+            serverSyncIntervalId = window.setInterval(() => {
+              void reconcileAssistantFromServer();
+            }, 1500);
+            void reconcileAssistantFromServer();
+          };
 
           const handleContentChunk = (chunk: string, streamSequence?: number) => {
             raw += chunk;
@@ -1783,6 +1975,7 @@ export default function App() {
           };
 
           try {
+            startServerReconcile();
             const response = await fetch(
               `/api/chat/runs/${encodeURIComponent(
                 generationRunId
@@ -1827,6 +2020,12 @@ export default function App() {
             }
             if (streamBuffer.trim()) {
               streamBuffer.split("\n").forEach(handleStreamEvent);
+            }
+
+            await reconcileAssistantFromServer();
+
+            if (completedFromServer) {
+              return;
             }
 
             if (doneStatus === "error") {
@@ -1874,10 +2073,16 @@ export default function App() {
               status: "complete"
             });
           } catch (error) {
+            if (completedFromServer) {
+              return;
+            }
             if ((error as { name?: unknown }).name !== "AbortError") {
               console.warn("Could not resume StreamUI run.", error);
             }
           } finally {
+            if (typeof serverSyncIntervalId === "number") {
+              window.clearInterval(serverSyncIntervalId);
+            }
             unsubscribeSnapshot();
             renderersRef.current.delete(message.id);
             runConnectionsRef.current.delete(generationRunId);
