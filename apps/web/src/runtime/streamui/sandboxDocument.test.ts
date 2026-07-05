@@ -27,4 +27,14 @@ describe("sandboxDocument", () => {
     assert.match(document, /actionType: "prompt"/);
     assert.match(document, /post\("action"/);
   });
+
+  it("measures content bounds instead of the previous iframe viewport height", () => {
+    const document = buildIframeDocument(
+      "<details open><summary>More</summary><p>Text</p></details>"
+    );
+
+    assert.match(document, /getBoundingClientRect/);
+    assert.doesNotMatch(document, /scrollHeight \|\| 0/);
+    assert.doesNotMatch(document, /offsetHeight \|\| 0/);
+  });
 });

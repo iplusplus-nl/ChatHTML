@@ -676,14 +676,7 @@ function getAppendMessageText(message: AppendMessage): string {
 }
 
 function buildArtifactActionMessage(action: StreamUiAction): string {
-  const prompt = action.prompt.trim().slice(0, 2000);
-  const label = action.label?.trim().slice(0, 200);
-
-  if (!label || label === prompt) {
-    return prompt;
-  }
-
-  return `I clicked "${label}".\n\n${prompt}`;
+  return action.prompt.trim().slice(0, 2000);
 }
 
 function findSessionMessage(

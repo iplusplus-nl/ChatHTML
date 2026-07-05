@@ -241,15 +241,43 @@ export function buildIframeDocument(
         return false;
       };
       let lastHeight = 0;
-      const measure = () => {
+      const measureContentHeight = () => {
         const body = document.body;
-        const html = document.documentElement;
-        const height = Math.ceil(Math.max(
-          body?.scrollHeight || 0,
-          body?.offsetHeight || 0,
-          html?.scrollHeight || 0,
-          html?.offsetHeight || 0
-        ));
+        if (!body) {
+          return 32;
+        }
+
+        const bodyTop = body.getBoundingClientRect().top;
+        let maxBottom = 0;
+        body.querySelectorAll("*").forEach((element) => {
+          if (
+            ["SCRIPT", "STYLE", "TEMPLATE", "LINK", "META", "TITLE"].includes(
+              element.tagName
+            )
+          ) {
+            return;
+          }
+
+          const rect = element.getBoundingClientRect();
+          if (!rect.width && !rect.height) {
+            return;
+          }
+
+          const style = getComputedStyle(element);
+          if (style.display === "none" || style.visibility === "collapse") {
+            return;
+          }
+
+          const marginBottom = Number.parseFloat(style.marginBottom) || 0;
+          maxBottom = Math.max(maxBottom, rect.bottom - bodyTop + marginBottom);
+        });
+
+        const bodyStyle = getComputedStyle(body);
+        const paddingBottom = Number.parseFloat(bodyStyle.paddingBottom) || 0;
+        return Math.max(32, Math.ceil(maxBottom + paddingBottom));
+      };
+      const measure = () => {
+        const height = measureContentHeight();
         if (height && Math.abs(height - lastHeight) > 1) {
           lastHeight = height;
           post("resize", "resize", { height });
@@ -347,7 +375,18 @@ export function buildIframeDocument(
       };
       window.addEventListener("load", scheduleMeasure);
       window.addEventListener("resize", scheduleMeasure);
-      new ResizeObserver(scheduleMeasure).observe(document.documentElement);
+      document.addEventListener("toggle", scheduleMeasure, true);
+      document.addEventListener("transitionend", scheduleMeasure, true);
+      document.addEventListener("animationend", scheduleMeasure, true);
+      const resizeObserver = new ResizeObserver(scheduleMeasure);
+      const observeBody = () => {
+        if (document.body) {
+          resizeObserver.observe(document.body);
+        }
+      };
+      resizeObserver.observe(document.documentElement);
+      observeBody();
+      window.addEventListener("load", observeBody);
       new MutationObserver(scheduleMeasure).observe(document.documentElement, {
         attributes: true,
         childList: true,
