@@ -59,6 +59,7 @@ import {
   createEmptySession,
   createId,
   createInitialSessionState,
+  filterDeletedSessionState,
   hasPersistedMessages,
   initialMessages,
   isSessionEmpty,
@@ -552,7 +553,7 @@ function loadLegacyLocalSessionState(): SessionState | null {
     ) as unknown;
     const sessions = Array.isArray(parsed)
       ? parsed
-          .map(normalizeStoredSession)
+          .map((session) => normalizeStoredSession(session))
           .filter((session): session is ChatSession => session !== null)
       : [];
 
@@ -1148,7 +1149,9 @@ export default function App() {
       })
       .then((data) => {
         if (!cancelled) {
-          const serverState = normalizeStoredSessionState(data);
+          const serverState = normalizeStoredSessionState(data, Date.now(), {
+            rebuildSnapshots: false
+          });
           const legacyState = loadLegacyLocalSessionState();
           const loadedState =
             !hasPersistedMessages(serverState) &&
@@ -1158,6 +1161,12 @@ export default function App() {
               : serverState;
 
           setSessionStateAndRef((current) => {
+            const deletedSessionIds = Array.from(deletedSessionIdsRef.current);
+            const filteredLoadedState = filterDeletedSessionState(
+              loadedState,
+              deletedSessionIds,
+              current
+            );
             const transientId = transientEmptySessionIdRef.current;
             const active = current.sessions.find(
               (session) => session.id === current.activeSessionId
@@ -1166,8 +1175,12 @@ export default function App() {
             return transientId &&
               active?.id === transientId &&
               isSessionEmpty(active)
-              ? mergeSyncedSessionState(current, loadedState)
-              : loadedState;
+              ? mergeSyncedSessionState(
+                  current,
+                  filteredLoadedState,
+                  deletedSessionIds
+                )
+              : filteredLoadedState;
           });
         }
       })
@@ -1219,14 +1232,22 @@ export default function App() {
           throw new Error(`Session sync failed with HTTP ${response.status}.`);
         }
 
-        const serverState = normalizeStoredSessionState(await response.json());
+        const serverState = normalizeStoredSessionState(
+          await response.json(),
+          Date.now(),
+          { rebuildSnapshots: false }
+        );
         if (cancelled) {
           return;
         }
 
         setSessionStateAndRef((current) => {
-          const next = mergeSyncedSessionState(current, serverState);
           const deletedSessionIds = Array.from(deletedSessionIdsRef.current);
+          const next = mergeSyncedSessionState(
+            current,
+            serverState,
+            deletedSessionIds
+          );
           const currentPayload = serializeSessionStateForSave(
             current,
             sessionClientIdRef.current,
@@ -1302,6 +1323,37 @@ export default function App() {
       controller.abort();
     };
   }, [sessionState, sessionsLoaded]);
+
+  const saveCurrentSessionStateNow = useCallback(() => {
+    if (typeof window === "undefined" || !sessionsLoadedRef.current) {
+      return;
+    }
+
+    const serializedState = serializeSessionStateForSave(
+      sessionStateRef.current,
+      sessionClientIdRef.current,
+      Array.from(deletedSessionIdsRef.current)
+    );
+    if (serializedState === lastSavedSessionPayloadRef.current) {
+      return;
+    }
+
+    void saveSerializedSessionState(
+      serializedState,
+      sessionClientIdRef.current
+    )
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Session save failed with HTTP ${response.status}.`);
+        }
+
+        lastSavedSessionPayloadRef.current = serializedState;
+        clearLegacyLocalSessions();
+      })
+      .catch((error) => {
+        console.warn("Could not save StreamUI sessions.", error);
+      });
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1607,7 +1659,8 @@ export default function App() {
         }
       );
     });
-  }, [apiSettings.model, setSessionStateAndRef]);
+    saveCurrentSessionStateNow();
+  }, [apiSettings.model, saveCurrentSessionStateNow, setSessionStateAndRef]);
 
   const handleApiSettingsChange = useCallback((next: ApiSettings) => {
     setApiSettings(normalizeApiSettings(next));
@@ -1805,7 +1858,11 @@ export default function App() {
             throw new Error(`Session sync failed with HTTP ${response.status}.`);
           }
 
-          const serverState = normalizeStoredSessionState(await response.json());
+          const serverState = normalizeStoredSessionState(
+            await response.json(),
+            Date.now(),
+            { rebuildSnapshots: false }
+          );
           const serverMessage = findSessionMessage(serverState, assistantId);
           if (serverMessage) {
             applyServerAssistantMessage(serverMessage);
@@ -2217,7 +2274,11 @@ export default function App() {
                 throw new Error(`Session sync failed with HTTP ${response.status}.`);
               }
 
-              const serverState = normalizeStoredSessionState(await response.json());
+              const serverState = normalizeStoredSessionState(
+                await response.json(),
+                Date.now(),
+                { rebuildSnapshots: false }
+              );
               const serverMessage = findSessionMessage(serverState, message.id);
               if (serverMessage) {
                 applyServerAssistantMessage(serverMessage);

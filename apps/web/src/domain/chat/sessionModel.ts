@@ -66,6 +66,10 @@ export type SessionState = {
   activeSessionId: string;
 };
 
+type NormalizeStoredSessionOptions = {
+  rebuildSnapshots?: boolean;
+};
+
 export const initialMessages: ClientMessage[] = [];
 export const UNTITLED_SESSION = "New Session";
 export const STREAM_INTERRUPTED_ERROR =
@@ -154,6 +158,70 @@ export function compactEmptySessions(
   };
 }
 
+function normalizedDeletedSessionIdSet(
+  deletedSessionIds: Iterable<string> = []
+): Set<string> {
+  const ids = new Set<string>();
+  for (const id of deletedSessionIds) {
+    const value = id.trim();
+    if (value) {
+      ids.add(value);
+    }
+  }
+  return ids;
+}
+
+export function filterDeletedSessionState(
+  state: SessionState,
+  deletedSessionIds: Iterable<string> = [],
+  fallbackState?: SessionState
+): SessionState {
+  const deleted = normalizedDeletedSessionIdSet(deletedSessionIds);
+  if (!deleted.size) {
+    return state;
+  }
+
+  const filterState = (candidate: SessionState): SessionState | null => {
+    const sessions = candidate.sessions.filter(
+      (session) => !deleted.has(session.id)
+    );
+    if (!sessions.length) {
+      return null;
+    }
+
+    const activeSessionId = sessions.some(
+      (session) => session.id === candidate.activeSessionId
+    )
+      ? candidate.activeSessionId
+      : sessions[0].id;
+    const activeSession = sessions.find(
+      (session) => session.id === activeSessionId
+    );
+
+    return compactEmptySessions(
+      {
+        sessions,
+        activeSessionId
+      },
+      { preserveActiveEmpty: Boolean(activeSession && isSessionEmpty(activeSession)) }
+    );
+  };
+
+  const filtered = filterState(state);
+  if (filtered) {
+    return filtered;
+  }
+
+  if (fallbackState) {
+    const fallback = filterState(fallbackState);
+    if (fallback) {
+      return fallback;
+    }
+  }
+
+  return createInitialSessionState();
+}
+
 function latestStreamingAssistant(
   session: ChatSession | undefined
 ): ClientMessage | undefined {
@@ -202,8 +270,16 @@ function shouldPreserveLocalStreamingSession(
 
 export function mergeSyncedSessionState(
   current: SessionState,
-  serverState: SessionState
+  serverState: SessionState,
+  deletedSessionIds: Iterable<string> = []
 ): SessionState {
+  current = filterDeletedSessionState(current, deletedSessionIds);
+  serverState = filterDeletedSessionState(
+    serverState,
+    deletedSessionIds,
+    current
+  );
+
   const currentActive = current.sessions.find(
     (session) => session.id === current.activeSessionId
   );
@@ -595,7 +671,7 @@ function assistantArtifactToSessionFile(
     return null;
   }
 
-  const context = message.artifactContext ?? buildArtifactContext(message.rawStream);
+  const context = message.artifactContext;
   return normalizeSessionFile(
     {
       id: `file-artifact-${message.id}`,
@@ -711,7 +787,10 @@ export function rebuildAssistantSnapshot(message: ClientMessage): ClientMessage 
   };
 }
 
-export function normalizeStoredMessage(message: unknown): ClientMessage | null {
+export function normalizeStoredMessage(
+  message: unknown,
+  options: NormalizeStoredSessionOptions = {}
+): ClientMessage | null {
   if (!message || typeof message !== "object") {
     return null;
   }
@@ -724,7 +803,12 @@ export function normalizeStoredMessage(message: unknown): ClientMessage | null {
     return null;
   }
 
-  return rebuildAssistantSnapshot({
+  const rawStream = typeof input.rawStream === "string" ? input.rawStream : undefined;
+  const streamParts =
+    rawStream && options.rebuildSnapshots === false
+      ? extractStreamUiParts(rawStream)
+      : null;
+  const normalized: ClientMessage = {
     id: input.id,
     role: input.role,
     content:
@@ -738,9 +822,9 @@ export function normalizeStoredMessage(message: unknown): ClientMessage | null {
     reasoning: typeof input.reasoning === "string" ? input.reasoning : undefined,
     sessionTitle:
       typeof input.sessionTitle === "string" ? input.sessionTitle : undefined,
-    rawStream: typeof input.rawStream === "string" ? input.rawStream : undefined,
-    hasStreamUi: Boolean(input.hasStreamUi),
-    streamUiComplete: Boolean(input.streamUiComplete),
+    rawStream,
+    hasStreamUi: Boolean(input.hasStreamUi || streamParts?.hasStreamUi),
+    streamUiComplete: Boolean(input.streamUiComplete || streamParts?.streamUiComplete),
     artifactContext: normalizeArtifactContext(input.artifactContext),
     runtimeErrors: normalizeRenderErrors(input.runtimeErrors),
     repairOfMessageId:
@@ -768,12 +852,25 @@ export function normalizeStoredMessage(message: unknown): ClientMessage | null {
             ? "complete"
             : undefined,
     error: typeof input.error === "string" ? input.error : undefined
-  });
+  };
+
+  if (
+    normalized.role === "assistant" &&
+    normalized.status === "streaming" &&
+    !normalized.generationRunId
+  ) {
+    normalized.status = "complete";
+  }
+
+  return options.rebuildSnapshots === false
+    ? normalized
+    : rebuildAssistantSnapshot(normalized);
 }
 
 export function normalizeStoredSession(
   session: unknown,
-  now = Date.now()
+  now = Date.now(),
+  options: NormalizeStoredSessionOptions = {}
 ): ChatSession | null {
   if (!session || typeof session !== "object") {
     return null;
@@ -786,7 +883,7 @@ export function normalizeStoredSession(
 
   const messages = Array.isArray(input.messages)
     ? input.messages
-        .map(normalizeStoredMessage)
+        .map((message) => normalizeStoredMessage(message, options))
         .filter((message): message is ClientMessage => message !== null)
     : [];
   const migrated = migrateMessageFiles(
@@ -825,7 +922,8 @@ export function normalizeStoredSession(
 
 export function normalizeStoredSessionState(
   input: unknown,
-  now = Date.now()
+  now = Date.now(),
+  options: NormalizeStoredSessionOptions = {}
 ): SessionState {
   if (!input || typeof input !== "object") {
     return createInitialSessionState(now);
@@ -834,7 +932,7 @@ export function normalizeStoredSessionState(
   const state = input as Partial<SessionState>;
   const sessions = Array.isArray(state.sessions)
     ? state.sessions
-        .map((session) => normalizeStoredSession(session, now))
+        .map((session) => normalizeStoredSession(session, now, options))
         .filter((session): session is ChatSession => session !== null)
     : [];
 

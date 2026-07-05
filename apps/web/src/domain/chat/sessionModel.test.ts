@@ -5,6 +5,7 @@ import {
   countUserPrompts,
   createEmptySession,
   createInitialSessionState,
+  filterDeletedSessionState,
   hasPersistedMessages,
   isSessionEmpty,
   mergeSyncedSessionState,
@@ -73,6 +74,39 @@ describe("sessionModel", () => {
     assert.match(message?.snapshot?.iframeDocument ?? "", /<p>Saved<\/p>/);
     assert.equal(message?.artifactContext?.textSummary, "Saved");
     assert.match(message?.artifactContext?.id ?? "", /^artifact-[a-z0-9]+$/);
+  });
+
+  it("can normalize stored artifacts without rebuilding snapshots", () => {
+    const state = normalizeStoredSessionState(
+      {
+        activeSessionId: "s1",
+        sessions: [
+          {
+            id: "s1",
+            title: "Saved",
+            createdAt: 1,
+            updatedAt: 1,
+            messages: [
+              {
+                id: "a1",
+                role: "assistant",
+                content: "",
+                status: "streaming",
+                rawStream: "<chat></chat><streamui><p>Saved</p></streamui>"
+              }
+            ]
+          }
+        ]
+      },
+      1,
+      { rebuildSnapshots: false }
+    );
+    const message = state.sessions[0].messages[0];
+
+    assert.equal(message.status, "complete");
+    assert.equal(message.hasStreamUi, true);
+    assert.equal(message.streamUiComplete, true);
+    assert.equal(message.snapshot, undefined);
   });
 
   it("preserves resumable stored assistant streams", () => {
@@ -316,6 +350,82 @@ describe("sessionModel", () => {
 
     assert.equal(local.sessions[0].title, "Local");
     assert.equal(local.sessions[0].messages[1].generationRunId, "run-1");
+  });
+
+  it("filters locally deleted sessions during server sync", () => {
+    const merged = mergeSyncedSessionState(
+      {
+        activeSessionId: "kept",
+        sessions: [
+          {
+            id: "kept",
+            title: "Kept",
+            createdAt: 1,
+            updatedAt: 2,
+            files: [],
+            messages: [{ id: "u1", role: "user", content: "hello" }]
+          }
+        ]
+      },
+      {
+        activeSessionId: "deleted",
+        sessions: [
+          {
+            id: "deleted",
+            title: "Deleted",
+            createdAt: 1,
+            updatedAt: 3,
+            files: [],
+            messages: [{ id: "u2", role: "user", content: "gone" }]
+          },
+          {
+            id: "kept",
+            title: "Server kept",
+            createdAt: 1,
+            updatedAt: 2,
+            files: [],
+            messages: [{ id: "u1", role: "user", content: "hello" }]
+          }
+        ]
+      },
+      ["deleted"]
+    );
+
+    assert.deepEqual(
+      merged.sessions.map((session) => session.id),
+      ["kept"]
+    );
+    assert.equal(merged.activeSessionId, "kept");
+  });
+
+  it("uses a current fallback when every server session is locally deleted", () => {
+    const fallback = createEmptySession(4, "new-local");
+    const filtered = filterDeletedSessionState(
+      {
+        activeSessionId: "deleted",
+        sessions: [
+          {
+            id: "deleted",
+            title: "Deleted",
+            createdAt: 1,
+            updatedAt: 3,
+            files: [],
+            messages: [{ id: "u1", role: "user", content: "gone" }]
+          }
+        ]
+      },
+      ["deleted"],
+      {
+        activeSessionId: fallback.id,
+        sessions: [fallback]
+      }
+    );
+
+    assert.deepEqual(
+      filtered.sessions.map((session) => session.id),
+      ["new-local"]
+    );
+    assert.equal(filtered.activeSessionId, "new-local");
   });
 
   it("allows completed server runs to replace local streaming state", () => {
