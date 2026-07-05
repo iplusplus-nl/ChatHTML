@@ -111,13 +111,12 @@ export function AssistantMessage({
       (!rawStream || hasLikelyVisibleStreamUiContent(rawStream))
   );
   const placeholder =
-    status === "streaming" && !visibleContent && !error && !hasVisibleArtifact
-      ? "Generating response..."
-      : !visibleContent &&
-          !error &&
-          !hasVisibleArtifact
-        ? "No visible response was generated."
-        : undefined;
+    status !== "streaming" &&
+    !visibleContent &&
+    !error &&
+    !hasVisibleArtifact
+      ? "No visible response was generated."
+      : undefined;
 
   return (
     <MessagePrimitive.Root className="chat-row assistant">
