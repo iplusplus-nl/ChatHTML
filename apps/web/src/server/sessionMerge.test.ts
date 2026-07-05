@@ -54,4 +54,52 @@ describe("server session merge", () => {
     assert.equal(merged.activeSessionId, "kept");
     assert.deepEqual(merged.deletedSessionIds, ["deleted"]);
   });
+
+  it("allows a missing resumed run to be marked interrupted", () => {
+    const current = {
+      sessions: [
+        {
+          ...session("active", 2),
+          messages: [
+            {
+              id: "a1",
+              role: "assistant" as const,
+              content: "",
+              generationRunId: "run-1",
+              streamSequence: 0,
+              status: "streaming" as const
+            }
+          ]
+        }
+      ],
+      activeSessionId: "active"
+    };
+    const incoming = {
+      sessions: [
+        {
+          ...session("active", 3),
+          messages: [
+            {
+              id: "a1",
+              role: "assistant" as const,
+              content: "I could not complete that request.",
+              generationRunId: "run-1",
+              streamSequence: 0,
+              status: "error" as const,
+              error: "The stream was interrupted before it completed."
+            }
+          ]
+        }
+      ],
+      activeSessionId: "active"
+    };
+
+    const merged = mergeClientSaveState(current, incoming);
+
+    assert.equal(merged.sessions[0].messages[0].status, "error");
+    assert.equal(
+      merged.sessions[0].messages[0].error,
+      "The stream was interrupted before it completed."
+    );
+  });
 });

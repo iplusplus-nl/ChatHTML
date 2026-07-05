@@ -61,6 +61,7 @@ type StoredSession = {
   title: string;
   createdAt: number;
   updatedAt: number;
+  model?: string;
   messages: StoredMessage[];
   files?: StoredSessionFile[];
 };
@@ -389,6 +390,7 @@ function normalizeSession(input: unknown): StoredSession | null {
     title: stringValue(session.title, "New Session").trim() || "New Session",
     createdAt,
     updatedAt,
+    model: stringValue(session.model).trim().slice(0, 180) || undefined,
     messages,
     files: normalizeSessionFiles(session.files)
   };
@@ -689,7 +691,11 @@ function shouldPreserveCurrentRunMessage(
     return true;
   }
 
-  if (current.status === "streaming" && incomingInterrupted) {
+  if (
+    current.status === "streaming" &&
+    incomingInterrupted &&
+    currentSequence > incomingSequence
+  ) {
     return true;
   }
 

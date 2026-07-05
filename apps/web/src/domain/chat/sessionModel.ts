@@ -56,6 +56,7 @@ export type ChatSession = {
   title: string;
   createdAt: number;
   updatedAt: number;
+  model?: string;
   messages: ClientMessage[];
   files: SessionFile[];
 };
@@ -76,13 +77,15 @@ export function createId(prefix: string): string {
 
 export function createEmptySession(
   now = Date.now(),
-  id = createId("session")
+  id = createId("session"),
+  model?: string
 ): ChatSession {
   return {
     id,
     title: UNTITLED_SESSION,
     createdAt: now,
     updatedAt: now,
+    model: model?.trim() || undefined,
     messages: initialMessages,
     files: []
   };
@@ -90,9 +93,10 @@ export function createEmptySession(
 
 export function createInitialSessionState(
   now = Date.now(),
-  id = createId("session")
+  id = createId("session"),
+  model?: string
 ): SessionState {
-  const session = createEmptySession(now, id);
+  const session = createEmptySession(now, id, model);
   return { sessions: [session], activeSessionId: session.id };
 }
 
@@ -644,6 +648,10 @@ export function normalizeStoredSession(
           : UNTITLED_SESSION,
     createdAt,
     updatedAt,
+    model:
+      typeof input.model === "string" && input.model.trim()
+        ? input.model.trim().slice(0, 180)
+        : undefined,
     messages: migrated.messages,
     files: migrated.files
   };

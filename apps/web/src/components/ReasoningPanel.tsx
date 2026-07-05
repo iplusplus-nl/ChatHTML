@@ -5,6 +5,10 @@ type ReasoningPanelProps = {
   isStreaming: boolean;
 };
 
+function stripSyntheticReasoningStatus(value: string): string {
+  return value.replace(/^Generating\.\.\.\s*/i, "");
+}
+
 export function ReasoningPanel({
   reasoning = "",
   isStreaming
@@ -12,7 +16,8 @@ export function ReasoningPanel({
   const [isOpen, setIsOpen] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const hasReasoning = reasoning.trim().length > 0;
+  const visibleReasoning = stripSyntheticReasoningStatus(reasoning);
+  const hasReasoning = visibleReasoning.trim().length > 0;
 
   useEffect(() => {
     if (isStreaming) {
@@ -39,7 +44,7 @@ export function ReasoningPanel({
     setIsOpen(false);
   }, [isStreaming, startedAt]);
 
-  if (!hasReasoning && !isStreaming) {
+  if (!hasReasoning) {
     return null;
   }
 
@@ -64,7 +69,7 @@ export function ReasoningPanel({
       </summary>
       <div className="reasoning-content" aria-busy={isStreaming}>
         <pre className="reasoning-text">
-          {hasReasoning ? reasoning : "Waiting for reasoning..."}
+          {visibleReasoning}
         </pre>
       </div>
     </details>

@@ -16,12 +16,14 @@ import {
 
 describe("sessionModel", () => {
   it("creates deterministic empty sessions when id and time are injected", () => {
-    const session = createEmptySession(123, "session-test");
-    const state = createInitialSessionState(123, "session-test");
+    const session = createEmptySession(123, "session-test", "model-a");
+    const state = createInitialSessionState(123, "session-test", "model-b");
 
     assert.equal(session.id, "session-test");
     assert.equal(session.createdAt, 123);
+    assert.equal(session.model, "model-a");
     assert.equal(state.activeSessionId, "session-test");
+    assert.equal(state.sessions[0].model, "model-b");
   });
 
   it("derives compact titles from user or assistant messages", () => {
@@ -151,6 +153,26 @@ describe("sessionModel", () => {
       ["new", "old"]
     );
     assert.equal(state.activeSessionId, "new");
+  });
+
+  it("normalizes and serializes per-session model choices", () => {
+    const state = normalizeStoredSessionState({
+      activeSessionId: "s1",
+      sessions: [
+        {
+          id: "s1",
+          title: "Model session",
+          createdAt: 1,
+          updatedAt: 2,
+          model: "  z-ai/glm-5.2  ",
+          messages: [],
+          files: []
+        }
+      ]
+    });
+
+    assert.equal(state.sessions[0].model, "z-ai/glm-5.2");
+    assert.equal(serializeSessions(state.sessions)[0].model, "z-ai/glm-5.2");
   });
 
   it("detects persisted messages", () => {

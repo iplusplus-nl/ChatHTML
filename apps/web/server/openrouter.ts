@@ -1108,6 +1108,119 @@ function appendFunctionCallsFromOutput(
   }
 }
 
+function getResponsesTextEventKey(data: Record<string, unknown>): string {
+  const itemId = typeof data.item_id === "string" ? data.item_id : "";
+  const outputIndex =
+    typeof data.output_index === "number" ? String(data.output_index) : "";
+  const contentIndex =
+    typeof data.content_index === "number" ? String(data.content_index) : "";
+
+  return [itemId, outputIndex, contentIndex].filter(Boolean).join(":") || "0";
+}
+
+function responsesContentText(input: unknown): string {
+  if (!input || typeof input !== "object") {
+    return "";
+  }
+
+  const content = input as {
+    type?: unknown;
+    text?: unknown;
+    content?: unknown;
+  };
+  if (
+    (content.type === "output_text" || content.type === "text") &&
+    typeof content.text === "string"
+  ) {
+    return content.text;
+  }
+
+  if (Array.isArray(content.content)) {
+    return content.content.map(responsesContentText).filter(Boolean).join("");
+  }
+
+  return "";
+}
+
+export function extractResponsesOutputText(response: unknown): string {
+  if (!response || typeof response !== "object") {
+    return "";
+  }
+
+  const output = (response as { output?: unknown }).output;
+  if (!Array.isArray(output)) {
+    return "";
+  }
+
+  return output
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+
+      const candidate = item as { type?: unknown; content?: unknown };
+      if (candidate.type !== "message" || !Array.isArray(candidate.content)) {
+        return "";
+      }
+
+      return candidate.content.map(responsesContentText).filter(Boolean).join("");
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function responsesErrorMessage(input: unknown): string {
+  if (!input || typeof input !== "object") {
+    return "";
+  }
+
+  const error = input as {
+    message?: unknown;
+    code?: unknown;
+    type?: unknown;
+    error?: unknown;
+  };
+  if (typeof error.message === "string" && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error.error === "string" && error.error.trim()) {
+    return error.error.trim();
+  }
+  if (error.error && typeof error.error === "object") {
+    return responsesErrorMessage(error.error);
+  }
+
+  const parts = [error.type, error.code]
+    .filter(
+      (part): part is string =>
+        typeof part === "string" && part.trim().length > 0
+    )
+    .map((part) => part.trim());
+  return parts.join(": ");
+}
+
+function getResponsesTerminalError(event: Record<string, unknown>): string {
+  const directError = responsesErrorMessage(event.error);
+  if (directError) {
+    return directError;
+  }
+
+  const response =
+    event.response && typeof event.response === "object"
+      ? (event.response as Record<string, unknown>)
+      : event;
+  const status = typeof response.status === "string" ? response.status : "";
+  const incomplete = responsesErrorMessage(response.incomplete_details);
+  if (status === "failed" || status === "cancelled" || status === "incomplete") {
+    return (
+      incomplete ||
+      `Responses API returned ${status || "an incomplete response"}.`
+    );
+  }
+
+  return incomplete;
+}
+
 async function streamResponsesOnce({
   endpoint,
   apiSettings,
@@ -1164,7 +1277,31 @@ async function streamResponsesOnce({
   const calls = new Map<string, ResponsesFunctionCallItem>();
   const callsByOutputIndex = new Map<number, ResponsesFunctionCallItem>();
   const callsByItemId = new Map<string, ResponsesFunctionCallItem>();
+  const textDeltaCharsByKey = new Map<string, number>();
+  const contentCharsAtStart = state.contentChars;
+  let terminalError = "";
   let buffer = "";
+
+  const writeContent = (text: string, key: string) => {
+    if (!text) {
+      return;
+    }
+
+    textDeltaCharsByKey.set(
+      key,
+      (textDeltaCharsByKey.get(key) ?? 0) + text.length
+    );
+    writeStreamEvent(emit, { type: "content", text }, state);
+  };
+
+  const writeDoneContentIfNeeded = (data: Record<string, unknown>, text: string) => {
+    const key = getResponsesTextEventKey(data);
+    if (!text || (textDeltaCharsByKey.get(key) ?? 0) > 0) {
+      return;
+    }
+
+    writeContent(text, key);
+  };
 
   const handleEvent = (event: unknown) => {
     if (!event || typeof event !== "object") {
@@ -1178,12 +1315,31 @@ async function streamResponsesOnce({
         type === "response.output_text.delta") &&
       typeof data.delta === "string"
     ) {
-      writeStreamEvent(emit, { type: "content", text: data.delta }, state);
+      writeContent(data.delta, getResponsesTextEventKey(data));
+      return;
+    }
+
+    if (type === "response.output_text.done" && typeof data.text === "string") {
+      writeDoneContentIfNeeded(data, data.text);
+      return;
+    }
+
+    if (type === "response.content_part.done") {
+      writeDoneContentIfNeeded(data, responsesContentText(data.part));
       return;
     }
 
     if (type === "response.reasoning.delta" && typeof data.delta === "string") {
       writeStreamEvent(emit, { type: "reasoning", text: data.delta }, state);
+      return;
+    }
+
+    if (
+      type === "response.failed" ||
+      type === "response.incomplete" ||
+      type === "response.cancelled"
+    ) {
+      terminalError = getResponsesTerminalError(data);
       return;
     }
 
@@ -1222,10 +1378,18 @@ async function streamResponsesOnce({
     }
 
     if (type === "response.done" && data.response && typeof data.response === "object") {
+      terminalError = terminalError || getResponsesTerminalError(data);
       appendFunctionCallsFromOutput(
         (data.response as { output?: unknown }).output,
         calls
       );
+      if (state.contentChars === contentCharsAtStart) {
+        writeStreamEvent(
+          emit,
+          { type: "content", text: extractResponsesOutputText(data.response) },
+          state
+        );
+      }
     }
   };
 
@@ -1241,8 +1405,14 @@ async function streamResponsesOnce({
     handleEvent(safeJsonParse(payload));
   };
 
-  for await (const chunk of response.body) {
-    buffer += decoder.decode(chunk, { stream: true });
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
     lines.forEach(flushLine);
@@ -1254,6 +1424,10 @@ async function streamResponsesOnce({
   }
   if (buffer.trim()) {
     buffer.split(/\r?\n/).forEach(flushLine);
+  }
+
+  if (terminalError) {
+    throw new Error(terminalError);
   }
 
   return Array.from(calls.values());
@@ -1422,12 +1596,6 @@ async function runOpenRouterChat(
       }
     };
 
-    writeStreamEvent(
-      emit,
-      { type: "reasoning", text: "Generating..." },
-      toolStreamState
-    );
-
     const instructions = [
         SYSTEM_PROMPT,
         buildMemoryContextPrompt({
@@ -1464,6 +1632,9 @@ async function runOpenRouterChat(
       });
 
       if (!functionCalls.length) {
+        if (toolStreamState.contentChars === 0) {
+          throw new Error("The model completed without producing a visible response.");
+        }
         break;
       }
 

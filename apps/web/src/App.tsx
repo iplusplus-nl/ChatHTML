@@ -58,6 +58,7 @@ import {
   normalizeStoredSessionState,
   serializeSessions,
   sortSessions,
+  STREAM_INTERRUPTED_ERROR,
   summarizeSession,
   type ChatSession,
   type ClientMessage,
@@ -833,9 +834,16 @@ export default function App() {
     ) ?? sessionState.sessions[0];
   const messages = activeSession?.messages ?? initialMessages;
   const activeFiles = activeSession?.files ?? [];
+  const activeSessionModel = activeSession?.model || apiSettings.model;
   const selectableModels = useMemo(
-    () => getSelectableModelOptions(apiSettings),
-    [apiSettings]
+    () =>
+      getSelectableModelOptions(
+        normalizeApiSettings({
+          ...apiSettings,
+          model: activeSessionModel
+        })
+      ),
+    [activeSessionModel, apiSettings]
   );
   const sessionClientIdRef = useRef(loadSessionClientId());
   const sessionStateRef = useRef(sessionState);
@@ -1348,13 +1356,13 @@ export default function App() {
         return current;
       }
 
-      const session = createEmptySession();
+      const session = createEmptySession(undefined, undefined, apiSettings.model);
       return {
         sessions: [session, ...current.sessions],
         activeSessionId: session.id
       };
     });
-  }, [setSessionStateAndRef]);
+  }, [apiSettings.model, setSessionStateAndRef]);
 
   const handleSelectSession = useCallback((id: string) => {
     setSessionStateAndRef((current) =>
@@ -1373,7 +1381,7 @@ export default function App() {
     setSessionStateAndRef((current) => {
       const remaining = current.sessions.filter((session) => session.id !== id);
       if (!remaining.length) {
-        const session = createEmptySession();
+        const session = createEmptySession(undefined, undefined, apiSettings.model);
         return {
           sessions: [session],
           activeSessionId: session.id
@@ -1388,7 +1396,7 @@ export default function App() {
         activeSessionId
       };
     });
-  }, [setSessionStateAndRef]);
+  }, [apiSettings.model, setSessionStateAndRef]);
 
   const handleApiSettingsChange = useCallback((next: ApiSettings) => {
     setApiSettings(normalizeApiSettings(next));
@@ -1399,13 +1407,22 @@ export default function App() {
   }, []);
 
   const handleModelChange = useCallback((model: string) => {
+    const nextModel = model.trim();
+    if (!nextModel) {
+      return;
+    }
+
     setApiSettings((current) =>
       normalizeApiSettings({
         ...current,
-        model
+        model: nextModel
       })
     );
-  }, []);
+    updateActiveSession((session) => ({
+      ...session,
+      model: nextModel
+    }));
+  }, [updateActiveSession]);
 
   const handleReasoningEffortChange = useCallback(
     (reasoningEffort: ReasoningEffort) => {
@@ -1435,6 +1452,18 @@ export default function App() {
       }
 
       const appendUserMessage = options.appendUserMessage ?? true;
+      const requestSessionId = activeSessionIdRef.current;
+      const requestSessionForModel = sessionStateRef.current.sessions.find(
+        (session) => session.id === requestSessionId
+      );
+      const requestModel = (
+        requestSessionForModel?.model ||
+        apiSettings.model
+      ).trim();
+      const requestApiSettings = normalizeApiSettings({
+        ...apiSettings,
+        model: requestModel
+      });
       const userMessageId = createId("user");
       const previousMessages = messagesRef.current;
       const uploadedFiles = attachments
@@ -1483,6 +1512,7 @@ export default function App() {
           ...session,
           title: summarizeSession(nextMessages),
           updatedAt: Date.now(),
+          model: requestModel || session.model,
           messages: nextMessages,
           files: mergeSessionFiles([...session.files, ...uploadedFiles])
         };
@@ -1656,7 +1686,6 @@ export default function App() {
           throw new Error("Image upload is still in progress. Please wait before sending.");
         }
 
-        const requestSessionId = activeSessionIdRef.current;
         const requestHistory = options.requestHistory ?? [...previousMessages, userMessage];
         const requestSession = sessionStateRef.current.sessions.find(
           (session) => session.id === requestSessionId
@@ -1684,7 +1713,7 @@ export default function App() {
             files: requestFiles,
             canvas: getCanvasContext(),
             themeMode,
-            apiSettings: serializeApiSettings(apiSettings),
+            apiSettings: serializeApiSettings(requestApiSettings),
             searchSettings: serializeSearchSettings(searchSettings)
           })
         });
@@ -1835,16 +1864,6 @@ export default function App() {
     if (!sessionsLoaded) {
       return;
     }
-
-    const refreshSessionsFromServer = async () => {
-      const response = await fetch("/api/sessions", {
-        headers: sessionRequestHeaders(sessionClientIdRef.current)
-      });
-      if (!response.ok) {
-        throw new Error(`Session load failed with HTTP ${response.status}.`);
-      }
-      setSessionStateAndRef(normalizeStoredSessionState(await response.json()));
-    };
 
     for (const session of sessionState.sessions) {
       for (const message of session.messages) {
@@ -2046,7 +2065,14 @@ export default function App() {
             );
 
             if (response.status === 404) {
-              await refreshSessionsFromServer();
+              updateAssistant(message.id, {
+                content: "I could not complete that request.",
+                reasoning,
+                rawStream: raw,
+                streamSequence: lastStreamSequence,
+                status: "error",
+                error: STREAM_INTERRUPTED_ERROR
+              });
               return;
             }
 
@@ -2307,7 +2333,7 @@ export default function App() {
           messages={messages}
           files={activeFiles}
           themeMode={themeMode}
-          model={apiSettings.model}
+          model={activeSessionModel}
           modelOptions={selectableModels}
           reasoningEffort={apiSettings.reasoningEffort}
           onRuntimeError={handleRuntimeError}

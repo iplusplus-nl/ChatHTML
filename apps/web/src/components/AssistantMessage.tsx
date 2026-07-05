@@ -1,9 +1,6 @@
 import { MessagePrimitive } from "@assistant-ui/react";
 import { useMemo } from "react";
-import {
-  isInternalArtifactContextText,
-  stripInternalArtifactContextText
-} from "../features/chat/internalArtifactContext";
+import { stripInternalArtifactContextText } from "../features/chat/internalArtifactContext";
 import { extractStreamUiParts } from "../runtime/streamui/protocol";
 import { createStreamingRenderer } from "../runtime/streamui/streamingRenderer";
 import type {
@@ -118,9 +115,7 @@ export function AssistantMessage({
       ? "Generating response..."
       : !visibleContent &&
           !error &&
-          !hasVisibleArtifact &&
-          (isInternalArtifactContextText(content) ||
-            isInternalArtifactContextText(rawStream ?? ""))
+          !hasVisibleArtifact
         ? "No visible response was generated."
         : undefined;
 
