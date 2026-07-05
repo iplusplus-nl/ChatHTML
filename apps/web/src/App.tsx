@@ -112,6 +112,12 @@ type SendStreamUiRequestOptions = {
   assistantPatch?: Partial<ClientMessage>;
   initialReasoning?: string;
   requestHistory?: ClientMessage[];
+  targetSessionId?: string;
+};
+
+type PendingArtifactAction = {
+  messageId: string;
+  action: StreamUiAction;
 };
 
 const LEGACY_SESSION_STORAGE_KEY = "streamui.sessions.v1";
@@ -652,6 +658,19 @@ function findSessionMessage(
   return undefined;
 }
 
+function findSessionIdForMessage(
+  state: SessionState,
+  messageId: string
+): string | undefined {
+  for (const session of state.sessions) {
+    if (session.messages.some((candidate) => candidate.id === messageId)) {
+      return session.id;
+    }
+  }
+
+  return undefined;
+}
+
 function isTerminalAssistantStatus(
   status: ClientMessage["status"] | undefined
 ): status is "complete" | "error" {
@@ -963,6 +982,7 @@ export default function App() {
   const lastSavedSessionPayloadRef = useRef<string | null>(null);
   const renderersRef = useRef<Map<string, StreamingRenderer>>(new Map());
   const runConnectionsRef = useRef<Map<string, AbortController>>(new Map());
+  const pendingArtifactActionRef = useRef<PendingArtifactAction | null>(null);
   const runtimeRepairQueueRef = useRef<
     ((id: string, error: RenderError) => void) | null
   >(null);
@@ -1332,6 +1352,30 @@ export default function App() {
     [setSessionStateAndRef]
   );
 
+  const updateSessionById = useCallback(
+    (sessionId: string, updater: (session: ChatSession) => ChatSession) => {
+      setSessionStateAndRef((current) => {
+        let didUpdate = false;
+        const sessions = current.sessions.map((session) => {
+          if (session.id !== sessionId) {
+            return session;
+          }
+
+          didUpdate = true;
+          return updater(session);
+        });
+
+        return didUpdate
+          ? {
+              ...current,
+              sessions: sortSessions(sessions)
+            }
+          : current;
+      });
+    },
+    [setSessionStateAndRef]
+  );
+
   const updateActiveSessionMessages = useCallback(
     (updater: (messages: ClientMessage[]) => ClientMessage[]) => {
       updateActiveSession((session) => {
@@ -1604,23 +1648,26 @@ export default function App() {
       }
 
       const appendUserMessage = options.appendUserMessage ?? true;
-      const requestSessionId = activeSessionIdRef.current;
+      const requestedSessionId = options.targetSessionId?.trim();
+      const requestSessionId = requestedSessionId || activeSessionIdRef.current;
       if (transientEmptySessionIdRef.current === requestSessionId) {
         transientEmptySessionIdRef.current = null;
       }
       const requestSessionForModel = sessionStateRef.current.sessions.find(
         (session) => session.id === requestSessionId
       );
+      if (!requestSessionForModel) {
+        return;
+      }
       const requestModel = (
-        requestSessionForModel?.model ||
-        apiSettings.model
+        requestSessionForModel.model || apiSettings.model
       ).trim();
       const requestApiSettings = normalizeApiSettings({
         ...apiSettings,
         model: requestModel
       });
       const userMessageId = createId("user");
-      const previousMessages = messagesRef.current;
+      const previousMessages = requestSessionForModel.messages;
       const uploadedFiles = attachments
         .map((attachment) => commitUploadedImageFile(attachment, userMessageId))
         .filter((file): file is SessionFile => file !== null);
@@ -1658,7 +1705,7 @@ export default function App() {
         updateAssistant(assistantId, { snapshot });
       });
 
-      updateActiveSession((session) => {
+      updateSessionById(requestSessionId, (session) => {
         const nextMessages = appendUserMessage
           ? [...session.messages, userMessage, assistantMessage]
           : [...session.messages, assistantMessage];
@@ -2011,27 +2058,54 @@ export default function App() {
       handleMemoryStreamEvent,
       searchSettings,
       themeMode,
-      updateActiveSession,
       updateAssistant,
+      updateSessionById,
       upsertSessionFiles
     ]
   );
 
-  const handleArtifactAction = useCallback(
-    (_messageId: string, action: StreamUiAction) => {
-      if (isSendingRef.current) {
-        return;
-      }
-
+  const runArtifactAction = useCallback(
+    (messageId: string, action: StreamUiAction): boolean => {
       const text = buildArtifactActionMessage(action);
       if (!text) {
-        return;
+        return false;
       }
 
-      void sendStreamUiRequest(text);
+      const targetSessionId =
+        findSessionIdForMessage(sessionStateRef.current, messageId) ||
+        activeSessionIdRef.current;
+
+      void sendStreamUiRequest(text, [], { targetSessionId });
+      return true;
     },
     [sendStreamUiRequest]
   );
+
+  const handleArtifactAction = useCallback(
+    (messageId: string, action: StreamUiAction) => {
+      if (isSendingRef.current) {
+        pendingArtifactActionRef.current = { messageId, action };
+        return;
+      }
+
+      runArtifactAction(messageId, action);
+    },
+    [runArtifactAction]
+  );
+
+  useEffect(() => {
+    if (isSending) {
+      return;
+    }
+
+    const pending = pendingArtifactActionRef.current;
+    if (!pending) {
+      return;
+    }
+
+    pendingArtifactActionRef.current = null;
+    runArtifactAction(pending.messageId, pending.action);
+  }, [isSending, runArtifactAction]);
 
   useEffect(() => {
     if (!sessionsLoaded) {
