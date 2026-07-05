@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  compactEmptySessions,
   countUserPrompts,
   createEmptySession,
   createInitialSessionState,
   hasPersistedMessages,
+  isSessionEmpty,
   normalizeStoredMessage,
   normalizeStoredSessionState,
   serializeSessions,
@@ -141,8 +143,20 @@ describe("sessionModel", () => {
       {
         activeSessionId: "missing",
         sessions: [
-          { id: "old", title: "Old", createdAt: 1, updatedAt: 1, messages: [] },
-          { id: "new", title: "New", createdAt: 2, updatedAt: 10, messages: [] }
+          {
+            id: "old",
+            title: "Old",
+            createdAt: 1,
+            updatedAt: 1,
+            messages: [{ id: "u-old", role: "user", content: "old" }]
+          },
+          {
+            id: "new",
+            title: "New",
+            createdAt: 2,
+            updatedAt: 10,
+            messages: [{ id: "u-new", role: "user", content: "new" }]
+          }
         ]
       },
       100
@@ -153,6 +167,109 @@ describe("sessionModel", () => {
       ["new", "old"]
     );
     assert.equal(state.activeSessionId, "new");
+  });
+
+  it("drops empty stored sessions when persisted history exists", () => {
+    const state = normalizeStoredSessionState(
+      {
+        activeSessionId: "empty-new",
+        sessions: [
+          {
+            id: "empty-new",
+            title: "New Session",
+            createdAt: 3,
+            updatedAt: 30,
+            messages: [],
+            files: []
+          },
+          {
+            id: "saved",
+            title: "Saved",
+            createdAt: 1,
+            updatedAt: 10,
+            messages: [{ id: "u1", role: "user", content: "hello" }],
+            files: []
+          },
+          {
+            id: "empty-old",
+            title: "New Session",
+            createdAt: 2,
+            updatedAt: 20,
+            messages: [],
+            files: []
+          }
+        ]
+      },
+      100
+    );
+
+    assert.deepEqual(
+      state.sessions.map((session) => session.id),
+      ["saved"]
+    );
+    assert.equal(state.activeSessionId, "saved");
+  });
+
+  it("keeps one empty session when no persisted history exists", () => {
+    const state = normalizeStoredSessionState(
+      {
+        activeSessionId: "empty-old",
+        sessions: [
+          {
+            id: "empty-new",
+            title: "New Session",
+            createdAt: 3,
+            updatedAt: 30,
+            messages: [],
+            files: []
+          },
+          {
+            id: "empty-old",
+            title: "New Session",
+            createdAt: 2,
+            updatedAt: 20,
+            messages: [],
+            files: []
+          }
+        ]
+      },
+      100
+    );
+
+    assert.deepEqual(
+      state.sessions.map((session) => session.id),
+      ["empty-old"]
+    );
+    assert.equal(state.activeSessionId, "empty-old");
+  });
+
+  it("can preserve the active empty session as a transient draft", () => {
+    const active = createEmptySession(30, "empty-new");
+    const compacted = compactEmptySessions(
+      {
+        activeSessionId: active.id,
+        sessions: [
+          active,
+          createEmptySession(20, "empty-old"),
+          {
+            id: "saved",
+            title: "Saved",
+            createdAt: 1,
+            updatedAt: 10,
+            messages: [{ id: "u1", role: "user", content: "hello" }],
+            files: []
+          }
+        ]
+      },
+      { preserveActiveEmpty: true }
+    );
+
+    assert.equal(isSessionEmpty(active), true);
+    assert.deepEqual(
+      compacted.sessions.map((session) => session.id),
+      ["empty-new", "saved"]
+    );
+    assert.equal(compacted.activeSessionId, "empty-new");
   });
 
   it("normalizes and serializes per-session model choices", () => {

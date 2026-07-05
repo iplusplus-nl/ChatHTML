@@ -396,6 +396,36 @@ function normalizeSession(input: unknown): StoredSession | null {
   };
 }
 
+function hasCommittedSessionFiles(session: StoredSession): boolean {
+  return Boolean((session.files ?? []).some((file) => !file.draft));
+}
+
+function isStoredSessionEmpty(session: StoredSession): boolean {
+  return session.messages.length === 0 && !hasCommittedSessionFiles(session);
+}
+
+function compactEmptyStoredSessions(
+  sessions: StoredSession[],
+  activeSessionId: string
+): { sessions: StoredSession[]; activeSessionId: string } {
+  const nonEmptySessions = sessions.filter(
+    (session) => !isStoredSessionEmpty(session)
+  );
+  const compactedSessions = nonEmptySessions.length
+    ? nonEmptySessions
+    : sessions.slice(0, 1);
+  const compactedActiveSessionId = compactedSessions.some(
+    (session) => session.id === activeSessionId
+  )
+    ? activeSessionId
+    : compactedSessions[0]?.id ?? activeSessionId;
+
+  return {
+    sessions: compactedSessions,
+    activeSessionId: compactedActiveSessionId
+  };
+}
+
 function normalizeState(input: unknown): StoredSessionState {
   if (!input || typeof input !== "object") {
     return createEmptyState();
@@ -595,9 +625,14 @@ function withFileUrls(req: Request, file: StoredSessionFile): StoredSessionFile 
 }
 
 function presentState(req: Request, state: StoredSessionState): StoredSessionState {
+  const compacted = compactEmptyStoredSessions(
+    state.sessions,
+    state.activeSessionId
+  );
+
   return {
-    activeSessionId: state.activeSessionId,
-    sessions: state.sessions.map((session) => ({
+    activeSessionId: compacted.activeSessionId,
+    sessions: compacted.sessions.map((session) => ({
       ...session,
       files: (session.files ?? [])
         .filter((file) => !file.draft)
@@ -742,7 +777,11 @@ export function mergeClientSaveState(
   const currentSessions = current.sessions.filter(
     (session) => !tombstones.has(session.id)
   );
-  const incomingSessions = incoming.sessions.filter(
+  const compactedIncoming = compactEmptyStoredSessions(
+    incoming.sessions.filter((session) => !tombstones.has(session.id)),
+    incoming.activeSessionId
+  );
+  const incomingSessions = compactedIncoming.sessions.filter(
     (session) => !tombstones.has(session.id)
   );
   const currentById = new Map(
@@ -770,16 +809,16 @@ export function mergeClientSaveState(
     });
 
   for (const session of currentSessions) {
-    if (!incomingIds.has(session.id)) {
+    if (!incomingIds.has(session.id) && !isStoredSessionEmpty(session)) {
       sessions.push(session);
     }
   }
 
   const activeSessionId = sessions.some(
-    (session) => session.id === incoming.activeSessionId
+    (session) => session.id === compactedIncoming.activeSessionId
   )
-    ? incoming.activeSessionId
-    : sessions[0]?.id ?? incoming.activeSessionId;
+    ? compactedIncoming.activeSessionId
+    : sessions[0]?.id ?? compactedIncoming.activeSessionId;
 
   return normalizeState({
     sessions,

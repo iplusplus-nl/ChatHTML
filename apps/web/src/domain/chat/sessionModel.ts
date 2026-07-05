@@ -100,6 +100,60 @@ export function createInitialSessionState(
   return { sessions: [session], activeSessionId: session.id };
 }
 
+export function isSessionEmpty(
+  session: Pick<ChatSession, "messages" | "files">
+): boolean {
+  return session.messages.length === 0 && session.files.length === 0;
+}
+
+export function compactEmptySessions(
+  state: SessionState,
+  options: { preserveActiveEmpty?: boolean } = {}
+): SessionState {
+  const activeSession = state.sessions.find(
+    (session) => session.id === state.activeSessionId
+  );
+  const nonEmptySessions = state.sessions.filter(
+    (session) => !isSessionEmpty(session)
+  );
+  const preservedActiveEmpty =
+    options.preserveActiveEmpty && activeSession && isSessionEmpty(activeSession)
+      ? activeSession
+      : null;
+
+  if (!nonEmptySessions.length) {
+    const fallback = activeSession ?? state.sessions[0];
+    if (!fallback) {
+      return createInitialSessionState();
+    }
+
+    return {
+      sessions: [fallback],
+      activeSessionId: fallback.id
+    };
+  }
+
+  const sessionsById = new Map<string, ChatSession>();
+  if (preservedActiveEmpty) {
+    sessionsById.set(preservedActiveEmpty.id, preservedActiveEmpty);
+  }
+  for (const session of nonEmptySessions) {
+    sessionsById.set(session.id, session);
+  }
+
+  const sessions = sortSessions(Array.from(sessionsById.values()));
+  const activeSessionId = sessions.some(
+    (session) => session.id === state.activeSessionId
+  )
+    ? state.activeSessionId
+    : sessions[0].id;
+
+  return {
+    sessions,
+    activeSessionId
+  };
+}
+
 function compactText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -683,10 +737,10 @@ export function normalizeStoredSessionState(
       ? state.activeSessionId
       : sorted[0].id;
 
-  return {
+  return compactEmptySessions({
     sessions: sorted,
     activeSessionId
-  };
+  });
 }
 
 export function hasPersistedMessages(state: SessionState): boolean {

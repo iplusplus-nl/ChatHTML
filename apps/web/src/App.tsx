@@ -49,11 +49,13 @@ import {
 } from "./core/runtimeSettings";
 import { buildArtifactContext } from "./core/artifactContext";
 import {
+  compactEmptySessions,
   createEmptySession,
   createId,
   createInitialSessionState,
   hasPersistedMessages,
   initialMessages,
+  isSessionEmpty,
   normalizeStoredSession,
   normalizeStoredSessionState,
   serializeSessions,
@@ -291,11 +293,13 @@ function serializeSessionStateForSave(
   clientId: string,
   deletedSessionIds: string[] = []
 ): string {
+  const compactedState = compactEmptySessions(state);
+
   return JSON.stringify({
     clientId,
     deletedSessionIds,
-    sessions: serializeSessions(state.sessions),
-    activeSessionId: state.activeSessionId
+    sessions: serializeSessions(compactedState.sessions),
+    activeSessionId: compactedState.activeSessionId
   });
 }
 
@@ -333,6 +337,48 @@ function saveSessionStateOnPageExit(
     body: serializedState
   }).catch((error) => {
     console.warn("Could not flush StreamUI sessions before page exit.", error);
+  });
+}
+
+function mergeSyncedSessionState(
+  current: SessionState,
+  serverState: SessionState
+): SessionState {
+  const currentActive = current.sessions.find(
+    (session) => session.id === current.activeSessionId
+  );
+  const serverActive = serverState.sessions.find(
+    (session) => session.id === current.activeSessionId
+  );
+
+  if (
+    currentActive &&
+    isSessionEmpty(currentActive) &&
+    (!serverActive || isSessionEmpty(serverActive))
+  ) {
+    return compactEmptySessions(
+      {
+        sessions: [
+          currentActive,
+          ...serverState.sessions.filter(
+            (session) => session.id !== currentActive.id
+          )
+        ],
+        activeSessionId: currentActive.id
+      },
+      { preserveActiveEmpty: true }
+    );
+  }
+
+  const activeSessionId = serverState.sessions.some(
+    (session) => session.id === current.activeSessionId
+  )
+    ? current.activeSessionId
+    : serverState.activeSessionId;
+
+  return compactEmptySessions({
+    ...serverState,
+    activeSessionId
   });
 }
 
@@ -1075,15 +1121,7 @@ export default function App() {
         }
 
         setSessionStateAndRef((current) => {
-          const activeSessionId = serverState.sessions.some(
-            (session) => session.id === current.activeSessionId
-          )
-            ? current.activeSessionId
-            : serverState.activeSessionId;
-          const next = {
-            ...serverState,
-            activeSessionId
-          };
+          const next = mergeSyncedSessionState(current, serverState);
           const deletedSessionIds = Array.from(deletedSessionIdsRef.current);
           const currentPayload = serializeSessionStateForSave(
             current,
@@ -1130,6 +1168,9 @@ export default function App() {
       sessionClientIdRef.current,
       Array.from(deletedSessionIdsRef.current)
     );
+    if (serializedState === lastSavedSessionPayloadRef.current) {
+      return undefined;
+    }
 
     const timeout = window.setTimeout(() => {
       saveSerializedSessionState(
@@ -1364,27 +1405,39 @@ export default function App() {
     }
 
     setSessionStateAndRef((current) => {
-      const active = current.sessions.find(
-        (session) => session.id === current.activeSessionId
+      const compacted = compactEmptySessions(current, {
+        preserveActiveEmpty: true
+      });
+      const active = compacted.sessions.find(
+        (session) => session.id === compacted.activeSessionId
       );
-      if (active && active.messages.length === 0) {
-        return current;
+      if (active && isSessionEmpty(active)) {
+        return compacted;
       }
 
       const session = createEmptySession(undefined, undefined, apiSettings.model);
       return {
-        sessions: [session, ...current.sessions],
+        sessions: [session, ...compacted.sessions],
         activeSessionId: session.id
       };
     });
   }, [apiSettings.model, setSessionStateAndRef]);
 
   const handleSelectSession = useCallback((id: string) => {
-    setSessionStateAndRef((current) =>
-      current.sessions.some((session) => session.id === id)
-        ? { ...current, activeSessionId: id }
-        : current
-    );
+    setSessionStateAndRef((current) => {
+      const target = current.sessions.find((session) => session.id === id);
+      if (!target) {
+        return current;
+      }
+
+      return compactEmptySessions(
+        {
+          ...current,
+          activeSessionId: id
+        },
+        { preserveActiveEmpty: isSessionEmpty(target) }
+      );
+    });
   }, [setSessionStateAndRef]);
 
   const handleDeleteSession = useCallback((id: string) => {
@@ -1406,10 +1459,17 @@ export default function App() {
       const activeSessionId =
         current.activeSessionId === id ? remaining[0].id : current.activeSessionId;
 
-      return {
-        sessions: remaining,
-        activeSessionId
-      };
+      return compactEmptySessions(
+        {
+          sessions: remaining,
+          activeSessionId
+        },
+        {
+          preserveActiveEmpty: remaining.some(
+            (session) => session.id === activeSessionId && isSessionEmpty(session)
+          )
+        }
+      );
     });
   }, [apiSettings.model, setSessionStateAndRef]);
 

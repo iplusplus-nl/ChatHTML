@@ -2,13 +2,25 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mergeClientSaveState } from "../../server/sessions.js";
 
-function session(id: string, updatedAt: number) {
+function userMessage(id: string, content: string) {
+  return {
+    id,
+    role: "user" as const,
+    content
+  };
+}
+
+function session(
+  id: string,
+  updatedAt: number,
+  messages: ReturnType<typeof userMessage>[] = []
+) {
   return {
     id,
     title: id,
     createdAt: updatedAt,
     updatedAt,
-    messages: [],
+    messages,
     files: []
   };
 }
@@ -53,6 +65,71 @@ describe("server session merge", () => {
     );
     assert.equal(merged.activeSessionId, "kept");
     assert.deepEqual(merged.deletedSessionIds, ["deleted"]);
+  });
+
+  it("does not preserve missing empty sessions during client saves", () => {
+    const current = {
+      sessions: [
+        session("empty", 3),
+        session("saved", 2, [userMessage("u1", "hello")])
+      ],
+      activeSessionId: "empty"
+    };
+    const incoming = {
+      sessions: [session("saved", 4, [userMessage("u1", "hello")])],
+      activeSessionId: "saved"
+    };
+
+    const merged = mergeClientSaveState(current, incoming);
+
+    assert.deepEqual(
+      merged.sessions.map((item: { id: string }) => item.id),
+      ["saved"]
+    );
+    assert.equal(merged.activeSessionId, "saved");
+  });
+
+  it("still preserves missing non-empty sessions from other clients", () => {
+    const current = {
+      sessions: [
+        session("other-client", 5, [userMessage("u2", "from another tab")]),
+        session("saved", 2, [userMessage("u1", "hello")])
+      ],
+      activeSessionId: "other-client"
+    };
+    const incoming = {
+      sessions: [session("saved", 4, [userMessage("u1", "hello")])],
+      activeSessionId: "saved"
+    };
+
+    const merged = mergeClientSaveState(current, incoming);
+
+    assert.deepEqual(
+      merged.sessions.map((item: { id: string }) => item.id),
+      ["other-client", "saved"]
+    );
+  });
+
+  it("drops incoming empty sessions when incoming also has history", () => {
+    const current = {
+      sessions: [session("saved", 2, [userMessage("u1", "hello")])],
+      activeSessionId: "saved"
+    };
+    const incoming = {
+      sessions: [
+        session("empty", 5),
+        session("saved", 4, [userMessage("u1", "hello")])
+      ],
+      activeSessionId: "empty"
+    };
+
+    const merged = mergeClientSaveState(current, incoming);
+
+    assert.deepEqual(
+      merged.sessions.map((item: { id: string }) => item.id),
+      ["saved"]
+    );
+    assert.equal(merged.activeSessionId, "saved");
   });
 
   it("allows a missing resumed run to be marked interrupted", () => {
