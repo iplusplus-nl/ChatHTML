@@ -3,6 +3,10 @@ import express from "express";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  handleCreateArtifactShare,
+  handleGetArtifactSharePage
+} from "./artifactShares.js";
 import { handleModelsRequest } from "./models.js";
 import { handleChatRunEvents, handleOpenRouterChat } from "./openrouter.js";
 import { handleExportResourceRequest } from "./exportResources.js";
@@ -44,6 +48,8 @@ app.get("/api/chat/runs/:runId/events", handleChatRunEvents);
 app.post("/api/models", handleModelsRequest);
 app.post("/api/retrieve", handleRetrievalRequest);
 app.get("/api/export-resource", handleExportResourceRequest);
+app.post("/api/experimental/artifact-shares", handleCreateArtifactShare);
+app.get("/experimental/artifacts/:shareId", handleGetArtifactSharePage);
 app.get("/api/settings", handleGetRuntimeSettings);
 app.get("/api/sessions", handleGetSessions);
 app.get("/api/sessions/index", handleGetSessionIndex);

@@ -2163,6 +2163,17 @@ button {
   white-space: nowrap;
 }
 
+.artifact-export-status-link {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .artifact-export-status.is-success {
   color: #276749;
 }

@@ -6,7 +6,8 @@ import {
   Ellipsis,
   FileDown,
   FileText,
-  ImageDown
+  ImageDown,
+  Share2
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -16,13 +17,15 @@ import {
   downloadSnapshotAsHtml,
   downloadSnapshotAsPng,
   downloadSnapshotAsSvg,
-  downloadSnapshotDiagnostics
+  downloadSnapshotDiagnostics,
+  getSnapshotHtmlDocument
 } from "../core/artifactExport";
 import type { PageThemeMode, RenderSnapshot } from "../core/types";
 
 type ArtifactExportAction =
   | "copy-code"
   | "copy-text"
+  | "create-share-link"
   | "download-html"
   | "download-png"
   | "download-svg"
@@ -39,6 +42,7 @@ type ExportStatus = {
   action: ArtifactExportAction;
   kind: "success" | "error";
   message: string;
+  url?: string;
 };
 
 type MenuAction = {
@@ -50,6 +54,11 @@ type MenuAction = {
 const MENU_ACTIONS: MenuAction[] = [
   { action: "copy-code", icon: Code2, label: "Copy Code" },
   { action: "copy-text", icon: Copy, label: "Copy Text" },
+  {
+    action: "create-share-link",
+    icon: Share2,
+    label: "Share Link (Experimental)"
+  },
   { action: "download-html", icon: FileText, label: "Download HTML" },
   { action: "download-png", icon: ImageDown, label: "Download PNG" },
   { action: "download-svg", icon: FileDown, label: "Download SVG" },
@@ -66,6 +75,60 @@ function formatPngStatus(result: { scale: number }): string {
   }
 
   return `PNG downloaded (${Math.round(result.scale * 100)}% scale)`;
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (!navigator.clipboard) {
+    return false;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function createArtifactShareLink({
+  filenameBase,
+  snapshot,
+  themeMode
+}: {
+  filenameBase: string;
+  snapshot: RenderSnapshot;
+  themeMode: PageThemeMode;
+}): Promise<{ copied: boolean; url: string }> {
+  const response = await fetch("/api/experimental/artifact-shares", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      document: getSnapshotHtmlDocument(snapshot, themeMode),
+      sourceMessageId: filenameBase,
+      themeMode,
+      title: filenameBase
+    })
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    error?: unknown;
+    url?: unknown;
+  };
+
+  if (!response.ok || typeof payload.url !== "string") {
+    throw new Error(
+      typeof payload.error === "string"
+        ? payload.error
+        : `Share link failed with HTTP ${response.status}.`
+    );
+  }
+
+  return {
+    copied: await copyTextToClipboard(payload.url),
+    url: payload.url
+  };
 }
 
 export function ArtifactExportMenu({
@@ -167,6 +230,21 @@ export function ArtifactExportMenu({
         return;
       }
 
+      if (action === "create-share-link") {
+        const result = await createArtifactShareLink({
+          filenameBase,
+          snapshot,
+          themeMode
+        });
+        setStatus({
+          action,
+          kind: "success",
+          message: result.copied ? "Share link copied" : "Open share link",
+          url: result.copied ? undefined : result.url
+        });
+        return;
+      }
+
       if (action === "download-html") {
         downloadSnapshotAsHtml(snapshot, {
           filename: filenames.html,
@@ -264,7 +342,18 @@ export function ArtifactExportMenu({
             {status.kind === "success" ? (
               <Check size={12} strokeWidth={2.2} aria-hidden="true" />
             ) : null}
-            <span>{status.message}</span>
+            {status.url ? (
+              <a
+                className="artifact-export-status-link"
+                href={status.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {status.message}
+              </a>
+            ) : (
+              <span>{status.message}</span>
+            )}
           </span>
         ) : null}
       </div>
