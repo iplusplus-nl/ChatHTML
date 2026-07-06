@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleModelsRequest } from "./models.js";
 import { handleChatRunEvents, handleOpenRouterChat } from "./openrouter.js";
+import { handleExportResourceRequest } from "./exportResources.js";
 import { handleRetrievalRequest } from "./retrieval.js";
 import { handleGetRuntimeSettings } from "./runtimeApiSettings.js";
 import {
@@ -42,6 +43,7 @@ app.post("/api/chat", handleOpenRouterChat);
 app.get("/api/chat/runs/:runId/events", handleChatRunEvents);
 app.post("/api/models", handleModelsRequest);
 app.post("/api/retrieve", handleRetrievalRequest);
+app.get("/api/export-resource", handleExportResourceRequest);
 app.get("/api/settings", handleGetRuntimeSettings);
 app.get("/api/sessions", handleGetSessions);
 app.get("/api/sessions/index", handleGetSessionIndex);
