@@ -254,6 +254,10 @@ button {
 .session-actions-button:disabled,
 .session-menu-item:disabled {
   cursor: not-allowed;
+}
+
+.session-select-button:disabled,
+.session-menu-item:disabled {
   opacity: 0.48;
 }
 
@@ -276,11 +280,16 @@ button {
 }
 
 .session-list-item:hover .session-actions-button,
-.session-list-item:focus-within .session-actions-button,
 .session-list-item.is-active .session-actions-button,
 .session-list-item.is-menu-open .session-actions-button {
   opacity: 1;
   pointer-events: auto;
+}
+
+.session-list-item:hover .session-actions-button:disabled,
+.session-list-item.is-active .session-actions-button:disabled,
+.session-list-item.is-menu-open .session-actions-button:disabled {
+  opacity: 0.48;
 }
 
 .session-actions-button:hover:not(:disabled),
@@ -1411,6 +1420,30 @@ button {
   box-shadow: none;
 }
 
+.app-shell[data-theme="night"] .message-action-button {
+  color: #a1a1aa;
+}
+
+.app-shell[data-theme="night"] .message-action-button:hover:not(:disabled) {
+  color: #ffffff;
+  background: #3a3a3a;
+}
+
+.app-shell[data-theme="night"] .regenerate-action.is-error {
+  color: #ffb4a8;
+  background: rgba(180, 35, 24, 0.18);
+}
+
+.app-shell[data-theme="night"] .regenerate-action.is-error:hover:not(:disabled) {
+  color: #ffd1ca;
+  background: rgba(180, 35, 24, 0.26);
+}
+
+.app-shell[data-theme="night"] .branch-count,
+.app-shell[data-theme="night"] .message-branch-controls {
+  color: #a1a1aa;
+}
+
 .app-shell[data-theme="night"] .message-bubble.assistant.is-placeholder {
   color: #a1a1aa;
 }
@@ -1628,6 +1661,18 @@ button {
   max-width: min(680px, 88%);
 }
 
+.user-message-shell {
+  display: flex;
+  max-width: min(680px, 88%);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.chat-row.user .user-message-shell .message-bubble {
+  max-width: 100%;
+}
+
 .avatar {
   display: none;
 }
@@ -1669,8 +1714,109 @@ button {
   box-shadow: none;
 }
 
+.message-bubble.is-editing {
+  width: min(680px, 100%);
+  padding: 10px;
+}
+
 .message-bubble p {
   margin: 0;
+}
+
+.message-edit-input {
+  display: block;
+  width: min(620px, 72vw);
+  min-height: 72px;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: 1.45;
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.message-action-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: #71717a;
+  background: transparent;
+  box-shadow: none;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.message-action-button:hover:not(:disabled) {
+  color: #18181b;
+  background: #f4f4f5;
+}
+
+.message-action-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.message-action-button:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
+.user-edit-button {
+  margin-right: 2px;
+}
+
+.assistant-turn-actions {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.assistant-stack > .assistant-turn-actions {
+  width: min(900px, 100%);
+  margin-top: -4px;
+}
+
+.regenerate-action.is-error {
+  color: #b42318;
+  background: #fff1ed;
+}
+
+.regenerate-action.is-error:hover:not(:disabled) {
+  color: #912018;
+  background: #ffe4df;
+}
+
+.message-branch-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #71717a;
+}
+
+.branch-count {
+  min-width: 30px;
+  color: #71717a;
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .thread-welcome {
@@ -1892,6 +2038,7 @@ button {
   min-height: 24px;
   align-items: center;
   justify-content: flex-end;
+  gap: 6px;
   padding-right: 2px;
 }
 

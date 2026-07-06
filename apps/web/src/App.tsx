@@ -117,14 +117,38 @@ type ChatStreamEvent =
 type SendStreamUiRequestOptions = {
   appendUserMessage?: boolean;
   assistantPatch?: Partial<ClientMessage>;
+  userMessagePatch?: Partial<ClientMessage>;
   initialReasoning?: string;
-  requestHistory?: ClientMessage[];
+  requestHistory?:
+    | ClientMessage[]
+    | ((
+        previousMessages: ClientMessage[],
+        userMessage: ClientMessage,
+        assistantMessage: ClientMessage
+      ) => ClientMessage[]);
   targetSessionId?: string;
+  branchSelection?: {
+    groupId: string;
+    variantId: string;
+  };
+  insertMessages?: (
+    messages: ClientMessage[],
+    userMessage: ClientMessage,
+    assistantMessage: ClientMessage
+  ) => ClientMessage[];
 };
 
 type PendingArtifactAction = {
   messageId: string;
   action: StreamUiAction;
+};
+
+type MessageBranchInfo = {
+  groupId: string;
+  activeIndex: number;
+  total: number;
+  previousVariantId?: string;
+  nextVariantId?: string;
 };
 
 const LEGACY_SESSION_STORAGE_KEY = "streamui.sessions.v1";
@@ -134,10 +158,6 @@ const SESSION_CLIENT_ID_STORAGE_KEY = "streamui.clientId.v1";
 const SESSION_INDEX_CACHE_KEY = "streamui.sessionIndex.v1";
 const SESSION_CLIENT_ID_HEADER = "X-ChatHTML-Client-Id";
 const SESSION_SYNC_INTERVAL_MS = 4_000;
-const MAX_RUNTIME_REPAIR_ATTEMPTS = 2;
-const MAX_RUNTIME_REPAIR_SOURCE_CHARS = 32_000;
-const MAX_RUNTIME_REPAIR_ERROR_CHARS = 4_000;
-
 type SessionListPreview = {
   activeSessionId: string;
   sessions: SessionListItem[];
@@ -574,79 +594,6 @@ function hasRenderError(
   return Boolean(errors?.some((item) => renderErrorKey(item) === key));
 }
 
-function isRepairableRuntimeError(error: RenderError): boolean {
-  return error.kind === "runtime" || error.kind === "console";
-}
-
-function getRepairRootId(message: ClientMessage): string {
-  return message.repairOfMessageId || message.id;
-}
-
-function getRuntimeRepairAttempt(
-  messages: ClientMessage[],
-  rootMessageId: string
-): number {
-  return messages
-    .filter(
-      (message) =>
-        message.role === "assistant" &&
-        (message.id === rootMessageId ||
-          message.repairOfMessageId === rootMessageId)
-    )
-    .reduce((maxAttempt, message) => {
-      return Math.max(maxAttempt, message.repairAttempt ?? 0);
-    }, 0);
-}
-
-function clipMiddle(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
-    return value;
-  }
-
-  const half = Math.floor((maxChars - 120) / 2);
-  return `${value.slice(0, half)}\n\n<!-- ... clipped for repair prompt ... -->\n\n${value.slice(
-    -half
-  )}`;
-}
-
-function formatRuntimeErrors(errors: RenderError[]): string {
-  return errors
-    .map((error, index) => {
-      return `${index + 1}. ${error.kind}: ${error.message}`;
-    })
-    .join("\n")
-    .slice(0, MAX_RUNTIME_REPAIR_ERROR_CHARS);
-}
-
-function buildRuntimeRepairPrompt(
-  message: ClientMessage,
-  errors: RenderError[],
-  attempt: number
-): string {
-  const rawArtifact = message.rawStream || message.snapshot?.raw || "";
-  const completedHtml = message.snapshot?.completedHtml || "";
-  const source = rawArtifact || completedHtml;
-
-  return `A previous ChatHTML artifact rendered with runtime errors. Repair it now.
-
-Requirements:
-- Return a complete ChatHTML response using the normal protocol: <sessiontitle>, empty <chat></chat>, and exactly one <streamui> block.
-- Preserve the user's original intent, visible content, layout, and style as much as possible.
-- Fix the runtime/console errors listed below.
-- Avoid repeating the same failing script pattern.
-- Do not explain the repair process in user-facing text.
-
-Repair attempt: ${attempt}/${MAX_RUNTIME_REPAIR_ATTEMPTS}
-
-Runtime errors:
-${formatRuntimeErrors(errors)}
-
-Previous artifact source:
-\`\`\`html
-${clipMiddle(source, MAX_RUNTIME_REPAIR_SOURCE_CHARS)}
-\`\`\``;
-}
-
 function loadThemeMode(): ThemeMode {
   if (typeof window === "undefined") {
     return "night";
@@ -793,6 +740,114 @@ function findSessionIdForMessage(
   return undefined;
 }
 
+function getMessageBranchGroup(message: ClientMessage): string | undefined {
+  return message.branchGroupId && message.branchVariantId
+    ? message.branchGroupId
+    : undefined;
+}
+
+function getBranchVariantOrder(
+  messages: ClientMessage[],
+  groupId: string,
+  options: { anchorsOnly?: boolean } = {}
+): string[] {
+  const seen = new Set<string>();
+  const variants: string[] = [];
+
+  for (const message of messages) {
+    if (
+      message.branchGroupId !== groupId ||
+      !message.branchVariantId ||
+      (options.anchorsOnly && !(message.role === "assistant" && message.branchAnchor))
+    ) {
+      continue;
+    }
+
+    if (!seen.has(message.branchVariantId)) {
+      seen.add(message.branchVariantId);
+      variants.push(message.branchVariantId);
+    }
+  }
+
+  return variants;
+}
+
+function getSelectedBranchVariant(
+  session: ChatSession,
+  groupId: string
+): string | undefined {
+  const variants = getBranchVariantOrder(session.messages, groupId);
+  if (!variants.length) {
+    return undefined;
+  }
+
+  const selected = session.branchSelections?.[groupId];
+  return selected && variants.includes(selected) ? selected : variants[0];
+}
+
+function isMessageVisibleInSession(
+  session: ChatSession,
+  message: ClientMessage
+): boolean {
+  const groupId = getMessageBranchGroup(message);
+  if (!groupId || !message.branchVariantId) {
+    return true;
+  }
+
+  return getSelectedBranchVariant(session, groupId) === message.branchVariantId;
+}
+
+function getVisibleSessionMessages(session: ChatSession | undefined): ClientMessage[] {
+  if (!session) {
+    return initialMessages;
+  }
+
+  return session.messages.filter((message) =>
+    isMessageVisibleInSession(session, message)
+  );
+}
+
+function getAssistantBranchInfo(
+  session: ChatSession | undefined,
+  messageId: string
+): MessageBranchInfo | undefined {
+  if (!session) {
+    return undefined;
+  }
+
+  const message = session.messages.find((candidate) => candidate.id === messageId);
+  if (
+    !message ||
+    message.role !== "assistant" ||
+    !message.branchAnchor ||
+    !message.branchGroupId ||
+    !message.branchVariantId ||
+    !isMessageVisibleInSession(session, message)
+  ) {
+    return undefined;
+  }
+
+  const variants = getBranchVariantOrder(session.messages, message.branchGroupId, {
+    anchorsOnly: true
+  });
+  if (variants.length <= 1) {
+    return undefined;
+  }
+
+  const activeIndex = variants.indexOf(message.branchVariantId);
+  if (activeIndex < 0) {
+    return undefined;
+  }
+
+  return {
+    groupId: message.branchGroupId,
+    activeIndex,
+    total: variants.length,
+    previousVariantId: variants[activeIndex - 1],
+    nextVariantId: variants[activeIndex + 1]
+  };
+}
+
 function isTerminalAssistantStatus(
   status: ClientMessage["status"] | undefined
 ): status is "complete" | "error" {
@@ -832,6 +887,7 @@ type StreamThreadProps = {
   activeSessionId: string;
   messages: ClientMessage[];
   files: SessionFile[];
+  getBranchInfo(messageId: string): MessageBranchInfo | undefined;
   themeMode: ThemeMode;
   showRawStream: boolean;
   model: string;
@@ -839,6 +895,9 @@ type StreamThreadProps = {
   reasoningEffort: ReasoningEffort;
   onRuntimeError(id: string, error: RenderError): void;
   onArtifactAction(id: string, action: StreamUiAction): void;
+  onRegenerateAssistant(id: string): void;
+  onEditUserMessage(id: string, content: string): void;
+  onSelectBranch(groupId: string, variantId: string): void;
   onModelChange(model: string): void;
   onReasoningEffortChange(reasoningEffort: ReasoningEffort): void;
 };
@@ -889,6 +948,7 @@ function StreamThread({
   activeSessionId,
   messages,
   files,
+  getBranchInfo,
   themeMode,
   showRawStream,
   model,
@@ -896,6 +956,9 @@ function StreamThread({
   reasoningEffort,
   onRuntimeError,
   onArtifactAction,
+  onRegenerateAssistant,
+  onEditUserMessage,
+  onSelectBranch,
   onModelChange,
   onReasoningEffortChange
 }: StreamThreadProps) {
@@ -1013,6 +1076,7 @@ function StreamThread({
             }
 
             if (clientMessage.role === "assistant") {
+              const branchInfo = getBranchInfo(clientMessage.id);
               return (
                 <AssistantMessage
                   id={clientMessage.id}
@@ -1026,18 +1090,23 @@ function StreamThread({
                   showRawStream={showRawStream}
                   status={clientMessage.status}
                   error={clientMessage.error}
+                  branchInfo={branchInfo}
                   onRuntimeError={onRuntimeError}
                   onArtifactAction={onArtifactAction}
+                  onRegenerate={onRegenerateAssistant}
+                  onSelectBranch={onSelectBranch}
                 />
               );
             }
 
             return (
               <ChatMessage
+                id={clientMessage.id}
                 role={clientMessage.role}
                 files={clientMessage.fileIds
                   ?.map((fileId) => fileById.get(fileId))
                   .filter((file): file is SessionFile => Boolean(file))}
+                onEdit={onEditUserMessage}
               >
                 {clientMessage.content}
               </ChatMessage>
@@ -1086,7 +1155,11 @@ export default function App() {
     sessionState.sessions.find(
       (session) => session.id === sessionState.activeSessionId
     ) ?? sessionState.sessions[0];
-  const messages = activeSession?.messages ?? initialMessages;
+  const sessionMessages = activeSession?.messages ?? initialMessages;
+  const messages = useMemo(
+    () => getVisibleSessionMessages(activeSession),
+    [activeSession]
+  );
   const activeFiles = activeSession?.files ?? [];
   const activeSessionModel = activeSession?.model || apiSettings.model;
   const selectableModels = useMemo(
@@ -1103,7 +1176,7 @@ export default function App() {
   const sessionStateRef = useRef(sessionState);
   const deletedSessionIdsRef = useRef<Set<string>>(new Set());
   const transientEmptySessionIdRef = useRef<string | null>(null);
-  const messagesRef = useRef(messages);
+  const messagesRef = useRef(sessionMessages);
   const activeSessionIdRef = useRef(sessionState.activeSessionId);
   const isSendingRef = useRef(isSending);
   const sessionsLoadedRef = useRef(sessionsLoaded);
@@ -1115,10 +1188,6 @@ export default function App() {
   const renderersRef = useRef<Map<string, StreamingRenderer>>(new Map());
   const runConnectionsRef = useRef<Map<string, AbortController>>(new Map());
   const pendingArtifactActionRef = useRef<PendingArtifactAction | null>(null);
-  const runtimeRepairQueueRef = useRef<
-    ((id: string, error: RenderError) => void) | null
-  >(null);
-  const runtimeRepairInFlightRef = useRef<Set<string>>(new Set());
   const attachmentAdapter = useMemo(
     () =>
       new StreamImageAttachmentAdapter({
@@ -1181,9 +1250,9 @@ export default function App() {
 
   useEffect(() => {
     sessionStateRef.current = sessionState;
-    messagesRef.current = messages;
+    messagesRef.current = sessionMessages;
     activeSessionIdRef.current = sessionState.activeSessionId;
-  }, [messages, sessionState]);
+  }, [sessionMessages, sessionState]);
 
   useEffect(() => {
     isSendingRef.current = isSending;
@@ -1686,13 +1755,6 @@ export default function App() {
 
   const handleRuntimeError = useCallback(
     (id: string, error: RenderError) => {
-      const currentMessage = messagesRef.current.find(
-        (message) => message.id === id
-      );
-      const isKnownError =
-        hasRenderError(currentMessage?.runtimeErrors, error) ||
-        hasRenderError(currentMessage?.snapshot?.errors, error);
-
       setSessionStateAndRef((current) => {
         let didUpdate = false;
         const sessions = current.sessions.map((session) => {
@@ -1728,14 +1790,22 @@ export default function App() {
 
         return didUpdate ? { ...current, sessions } : current;
       });
-
-      if (!isKnownError) {
-        window.setTimeout(() => {
-          runtimeRepairQueueRef.current?.(id, error);
-        }, 0);
-      }
     },
     [setSessionStateAndRef]
+  );
+
+  const handleSelectBranch = useCallback(
+    (groupId: string, variantId: string) => {
+      updateActiveSession((session) => ({
+        ...session,
+        branchSelections: {
+          ...(session.branchSelections ?? {}),
+          [groupId]: variantId
+        },
+        updatedAt: Date.now()
+      }));
+    },
+    [updateActiveSession]
   );
 
   const handleNewSession = useCallback(() => {
@@ -1898,23 +1968,25 @@ export default function App() {
         model: requestModel
       });
       const userMessageId = createId("user");
-      const previousMessages = requestSessionForModel.messages;
+      const previousMessages = getVisibleSessionMessages(requestSessionForModel);
       const uploadedFiles = attachments
         .map((attachment) => commitUploadedImageFile(attachment, userMessageId))
         .filter((file): file is SessionFile => file !== null);
       const hasUnuploadedAttachments = uploadedFiles.length !== attachments.length;
       const userMessage: ClientMessage = {
+        ...options.userMessagePatch,
         id: userMessageId,
         role: "user",
         content: trimmed,
         fileIds: uploadedFiles.length
           ? uploadedFiles.map((file) => file.id)
-          : undefined,
+          : options.userMessagePatch?.fileIds,
         status: "complete"
       };
       const assistantId = createId("assistant");
       const generationRunId = createId("run");
       const assistantMessage: ClientMessage = {
+        ...options.assistantPatch,
         id: assistantId,
         role: "assistant",
         content: "",
@@ -1924,8 +1996,7 @@ export default function App() {
         status: "streaming",
         ...(options.initialReasoning
           ? { reasoning: options.initialReasoning }
-          : {}),
-        ...options.assistantPatch
+          : {})
       };
       const renderer = createStreamingRenderer(themeMode);
       renderersRef.current.set(assistantId, renderer);
@@ -1937,15 +2008,24 @@ export default function App() {
       });
 
       updateSessionById(requestSessionId, (session) => {
-        const nextMessages = appendUserMessage
-          ? [...session.messages, userMessage, assistantMessage]
-          : [...session.messages, assistantMessage];
+        const nextMessages = options.insertMessages
+          ? options.insertMessages(session.messages, userMessage, assistantMessage)
+          : appendUserMessage
+            ? [...session.messages, userMessage, assistantMessage]
+            : [...session.messages, assistantMessage];
+        const branchSelections = options.branchSelection
+          ? {
+              ...(session.branchSelections ?? {}),
+              [options.branchSelection.groupId]: options.branchSelection.variantId
+            }
+          : session.branchSelections;
 
         return {
           ...session,
           title: summarizeSession(nextMessages),
           updatedAt: Date.now(),
           model: requestModel || session.model,
+          branchSelections,
           messages: nextMessages,
           files: mergeSessionFiles([...session.files, ...uploadedFiles])
         };
@@ -2123,7 +2203,10 @@ export default function App() {
           throw new Error("Image upload is still in progress. Please wait before sending.");
         }
 
-        const requestHistory = options.requestHistory ?? [...previousMessages, userMessage];
+        const requestHistory =
+          typeof options.requestHistory === "function"
+            ? options.requestHistory(previousMessages, userMessage, assistantMessage)
+            : options.requestHistory ?? [...previousMessages, userMessage];
         const requestSession = sessionStateRef.current.sessions.find(
           (session) => session.id === requestSessionId
         );
@@ -2297,6 +2380,170 @@ export default function App() {
       updateSessionById,
       upsertSessionFiles
     ]
+  );
+
+  const startBranchedTurn = useCallback(
+    ({
+      session,
+      visibleMessages,
+      userIndex,
+      assistantId,
+      nextUserContent
+    }: {
+      session: ChatSession;
+      visibleMessages: ClientMessage[];
+      userIndex: number;
+      assistantId?: string;
+      nextUserContent: string;
+    }) => {
+      if (isSendingRef.current) {
+        return;
+      }
+
+      const activeUser = visibleMessages[userIndex];
+      if (!activeUser || activeUser.role !== "user") {
+        return;
+      }
+
+      const activeAssistant = assistantId
+        ? visibleMessages.find((message) => message.id === assistantId)
+        : visibleMessages
+            .slice(userIndex + 1)
+            .find((message) => message.role === "assistant");
+      const existingGroupId =
+        activeUser.branchGroupId ||
+        (activeAssistant?.branchAnchor ? activeAssistant.branchGroupId : undefined);
+      const groupId = existingGroupId || createId("branch");
+      const originalVariantId =
+        activeUser.branchVariantId ||
+        activeAssistant?.branchVariantId ||
+        createId("variant");
+      const nextVariantId = createId("variant");
+      const isNewGroup = !existingGroupId;
+      const branchStartId = activeUser.id;
+      const branchAnchorId = activeAssistant?.id;
+      const historyBeforeUser = visibleMessages.slice(0, userIndex);
+
+      void sendStreamUiRequest(nextUserContent, [], {
+        targetSessionId: session.id,
+        branchSelection: { groupId, variantId: nextVariantId },
+        userMessagePatch: {
+          fileIds: activeUser.fileIds,
+          branchGroupId: groupId,
+          branchVariantId: nextVariantId
+        },
+        assistantPatch: {
+          branchGroupId: groupId,
+          branchVariantId: nextVariantId,
+          branchAnchor: true
+        },
+        requestHistory: (_previousMessages, userMessage) => [
+          ...historyBeforeUser,
+          userMessage
+        ],
+        insertMessages: (messages, userMessage, assistantMessage) => {
+          if (!isNewGroup) {
+            return [...messages, userMessage, assistantMessage];
+          }
+
+          const startIndex = messages.findIndex(
+            (message) => message.id === branchStartId
+          );
+          const annotatedMessages = messages.map((message, index) => {
+            if (startIndex < 0 || index < startIndex || message.branchGroupId) {
+              return message;
+            }
+
+            return {
+              ...message,
+              branchGroupId: groupId,
+              branchVariantId: originalVariantId,
+              branchAnchor:
+                message.id === branchAnchorId ? true : message.branchAnchor
+            };
+          });
+
+          return [...annotatedMessages, userMessage, assistantMessage];
+        }
+      });
+    },
+    [sendStreamUiRequest]
+  );
+
+  const handleRegenerateAssistant = useCallback(
+    (assistantId: string) => {
+      const session =
+        sessionStateRef.current.sessions.find(
+          (candidate) => candidate.id === activeSessionIdRef.current
+        ) ?? sessionStateRef.current.sessions[0];
+      if (!session) {
+        return;
+      }
+      const visibleMessages = getVisibleSessionMessages(session);
+      const assistantIndex = visibleMessages.findIndex(
+        (message) => message.id === assistantId && message.role === "assistant"
+      );
+      if (assistantIndex < 0) {
+        return;
+      }
+
+      const userIndex = (() => {
+        for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+          if (visibleMessages[index].role === "user") {
+            return index;
+          }
+        }
+        return -1;
+      })();
+      if (userIndex < 0) {
+        return;
+      }
+
+      startBranchedTurn({
+        session,
+        visibleMessages,
+        userIndex,
+        assistantId,
+        nextUserContent: visibleMessages[userIndex].content
+      });
+    },
+    [startBranchedTurn]
+  );
+
+  const handleEditUserMessage = useCallback(
+    (messageId: string, content: string) => {
+      const session =
+        sessionStateRef.current.sessions.find(
+          (candidate) => candidate.id === activeSessionIdRef.current
+        ) ?? sessionStateRef.current.sessions[0];
+      if (!session) {
+        return;
+      }
+      const visibleMessages = getVisibleSessionMessages(session);
+      const userIndex = visibleMessages.findIndex(
+        (message) => message.id === messageId && message.role === "user"
+      );
+      const nextUserContent = content.trim();
+      if (userIndex < 0 || !nextUserContent) {
+        return;
+      }
+
+      if (nextUserContent === visibleMessages[userIndex].content.trim()) {
+        return;
+      }
+
+      const activeAssistant = visibleMessages
+        .slice(userIndex + 1)
+        .find((message) => message.role === "assistant");
+      startBranchedTurn({
+        session,
+        visibleMessages,
+        userIndex,
+        assistantId: activeAssistant?.id,
+        nextUserContent
+      });
+    },
+    [startBranchedTurn]
   );
 
   const runArtifactAction = useCallback(
@@ -2669,87 +2916,6 @@ export default function App() {
     updateAssistant
   ]);
 
-  const requestRuntimeRepair = useCallback(
-    async (id: string, error: RenderError) => {
-      if (!isRepairableRuntimeError(error)) {
-        return;
-      }
-
-      if (isSendingRef.current) {
-        window.setTimeout(() => {
-          void requestRuntimeRepair(id, error);
-        }, 500);
-        return;
-      }
-
-      const messages = messagesRef.current;
-      const target = messages.find((message) => message.id === id);
-      if (
-        !target ||
-        target.role !== "assistant" ||
-        target.status === "streaming" ||
-        !target.hasStreamUi ||
-        (!target.rawStream && !target.snapshot?.raw)
-      ) {
-        return;
-      }
-
-      const rootMessageId = getRepairRootId(target);
-      const attempt = getRuntimeRepairAttempt(messages, rootMessageId) + 1;
-      if (attempt > MAX_RUNTIME_REPAIR_ATTEMPTS) {
-        return;
-      }
-
-      const repairErrors = [
-        ...(target.runtimeErrors ?? target.snapshot?.errors ?? []),
-        error
-      ];
-      const repairKey = `${rootMessageId}:${attempt}:${renderErrorKey(error)}`;
-      if (runtimeRepairInFlightRef.current.has(repairKey)) {
-        return;
-      }
-
-      runtimeRepairInFlightRef.current.add(repairKey);
-      try {
-        const repairPrompt = buildRuntimeRepairPrompt(
-          target,
-          repairErrors,
-          attempt
-        );
-        const repairUserMessage: ClientMessage = {
-          id: createId("runtime-repair"),
-          role: "user",
-          content: repairPrompt,
-          status: "complete"
-        };
-        const initialReasoning = `Auto repair ${attempt}/${MAX_RUNTIME_REPAIR_ATTEMPTS}: ${error.kind} error detected. Retrying artifact generation...\n`;
-
-        await sendStreamUiRequest(repairPrompt, [], {
-          appendUserMessage: false,
-          requestHistory: [...messages, repairUserMessage],
-          initialReasoning,
-          assistantPatch: {
-            repairOfMessageId: rootMessageId,
-            repairAttempt: attempt
-          }
-        });
-      } finally {
-        runtimeRepairInFlightRef.current.delete(repairKey);
-      }
-    },
-    [sendStreamUiRequest]
-  );
-
-  useEffect(() => {
-    runtimeRepairQueueRef.current = (id, error) => {
-      void requestRuntimeRepair(id, error);
-    };
-
-    return () => {
-      runtimeRepairQueueRef.current = null;
-    };
-  }, [requestRuntimeRepair]);
-
   const handleNewMessage = useCallback(
     async (message: AppendMessage) => {
       if (
@@ -2794,6 +2960,10 @@ export default function App() {
   const sidebarSessionItems = sidebarPreview?.sessions ?? sessionItems;
   const sidebarActiveSessionId =
     sidebarPreview?.activeSessionId ?? sessionState.activeSessionId;
+  const getBranchInfo = useCallback(
+    (messageId: string) => getAssistantBranchInfo(activeSession, messageId),
+    [activeSession]
+  );
 
   useEffect(() => {
     if (!sessionsLoaded) {
@@ -2839,6 +3009,7 @@ export default function App() {
           activeSessionId={sessionState.activeSessionId}
           messages={messages}
           files={activeFiles}
+          getBranchInfo={getBranchInfo}
           themeMode={themeMode}
           showRawStream={displaySettings.showRawStream}
           model={activeSessionModel}
@@ -2846,6 +3017,9 @@ export default function App() {
           reasoningEffort={apiSettings.reasoningEffort}
           onRuntimeError={handleRuntimeError}
           onArtifactAction={handleArtifactAction}
+          onRegenerateAssistant={handleRegenerateAssistant}
+          onEditUserMessage={handleEditUserMessage}
+          onSelectBranch={handleSelectBranch}
           onModelChange={handleModelChange}
           onReasoningEffortChange={handleReasoningEffortChange}
         />

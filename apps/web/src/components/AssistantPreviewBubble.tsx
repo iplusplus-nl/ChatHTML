@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import type {
   PageThemeMode,
   RenderError,
@@ -13,6 +13,7 @@ type AssistantPreviewBubbleProps = {
   id: string;
   snapshot: RenderSnapshot;
   themeMode: PageThemeMode;
+  actions?: ReactNode;
   onRuntimeError(id: string, error: RenderError): void;
   onArtifactAction(id: string, action: StreamUiAction): void;
 };
@@ -21,6 +22,7 @@ export function AssistantPreviewBubble({
   id,
   snapshot,
   themeMode,
+  actions,
   onRuntimeError,
   onArtifactAction
 }: AssistantPreviewBubbleProps) {
@@ -42,6 +44,7 @@ export function AssistantPreviewBubble({
         <ErrorPanel errors={snapshot.errors} />
       </section>
       <div className="assistant-artifact-actions" aria-label="Artifact actions">
+        {actions}
         <ArtifactExportMenu
           filenameBase={id}
           getExportWidth={getExportWidth}

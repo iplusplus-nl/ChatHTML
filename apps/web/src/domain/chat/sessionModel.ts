@@ -23,6 +23,9 @@ export type ClientMessage = {
   runtimeErrors?: RenderError[];
   repairOfMessageId?: string;
   repairAttempt?: number;
+  branchGroupId?: string;
+  branchVariantId?: string;
+  branchAnchor?: boolean;
   generationRunId?: string;
   streamSequence?: number;
   status?: "streaming" | "complete" | "error";
@@ -57,6 +60,7 @@ export type ChatSession = {
   createdAt: number;
   updatedAt: number;
   model?: string;
+  branchSelections?: Record<string, string>;
   messages: ClientMessage[];
   files: SessionFile[];
 };
@@ -527,6 +531,23 @@ function normalizeStringArray(input: unknown): string[] | undefined {
   return values.length ? values : undefined;
 }
 
+function normalizeBranchSelections(input: unknown): Record<string, string> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const selections: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(input)) {
+    const key = rawKey.trim().slice(0, 160);
+    const value = typeof rawValue === "string" ? rawValue.trim().slice(0, 160) : "";
+    if (key && value) {
+      selections[key] = value;
+    }
+  }
+
+  return Object.keys(selections).length ? selections : undefined;
+}
+
 function normalizeSessionFile(input: unknown, now = Date.now()): SessionFile | null {
   if (!input || typeof input !== "object") {
     return null;
@@ -835,6 +856,15 @@ export function normalizeStoredMessage(
       typeof input.repairAttempt === "number" && Number.isFinite(input.repairAttempt)
         ? Math.max(1, Math.round(input.repairAttempt))
         : undefined,
+    branchGroupId:
+      typeof input.branchGroupId === "string" && input.branchGroupId.trim()
+        ? input.branchGroupId.trim().slice(0, 160)
+        : undefined,
+    branchVariantId:
+      typeof input.branchVariantId === "string" && input.branchVariantId.trim()
+        ? input.branchVariantId.trim().slice(0, 160)
+        : undefined,
+    branchAnchor: input.branchAnchor ? true : undefined,
     generationRunId:
       typeof input.generationRunId === "string" && input.generationRunId.trim()
         ? input.generationRunId.trim()
@@ -915,6 +945,7 @@ export function normalizeStoredSession(
       typeof input.model === "string" && input.model.trim()
         ? input.model.trim().slice(0, 180)
         : undefined,
+    branchSelections: normalizeBranchSelections(input.branchSelections),
     messages: migrated.messages,
     files: migrated.files
   };

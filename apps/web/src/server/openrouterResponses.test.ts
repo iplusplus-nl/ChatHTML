@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  extractResponsesReasoningDelta,
+  extractResponsesReasoningDoneText,
   extractResponsesOutputText,
   summarizeHttpErrorBody
 } from "../../server/openrouter.js";
@@ -56,6 +58,26 @@ describe("openrouter response stream helpers", () => {
         JSON.stringify({ error: { message: "Provider overloaded" } })
       ),
       "Provider overloaded"
+    );
+  });
+
+  it("extracts reasoning summary deltas from Responses stream events", () => {
+    assert.equal(
+      extractResponsesReasoningDelta({
+        type: "response.reasoning_summary_text.delta",
+        delta: "Thinking"
+      }),
+      "Thinking"
+    );
+  });
+
+  it("extracts reasoning done text when a provider sends only completed summaries", () => {
+    assert.equal(
+      extractResponsesReasoningDoneText({
+        type: "response.reasoning_text.done",
+        text: "Finished thinking"
+      }),
+      "Finished thinking"
     );
   });
 });

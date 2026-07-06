@@ -1,4 +1,5 @@
 import { MessagePrimitive } from "@assistant-ui/react";
+import { ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 import { useMemo } from "react";
 import { stripInternalArtifactContextText } from "../features/chat/internalArtifactContext";
 import { extractStreamUiParts } from "../runtime/streamui/protocol";
@@ -26,8 +27,17 @@ type AssistantMessageProps = {
   showRawStream: boolean;
   status?: "streaming" | "complete" | "error";
   error?: string;
+  branchInfo?: {
+    groupId: string;
+    activeIndex: number;
+    total: number;
+    previousVariantId?: string;
+    nextVariantId?: string;
+  };
   onRuntimeError(id: string, error: RenderError): void;
   onArtifactAction(id: string, action: StreamUiAction): void;
+  onRegenerate(id: string): void;
+  onSelectBranch(groupId: string, variantId: string): void;
 };
 
 function hasLikelyVisibleStreamUiContent(rawStream?: string): boolean {
@@ -63,8 +73,11 @@ export function AssistantMessage({
   showRawStream,
   status,
   error,
+  branchInfo,
   onRuntimeError,
-  onArtifactAction
+  onArtifactAction,
+  onRegenerate,
+  onSelectBranch
 }: AssistantMessageProps) {
   const resolvedSnapshot = useMemo(() => {
     const withRuntimeErrors = (
@@ -122,6 +135,60 @@ export function AssistantMessage({
     !hasVisibleArtifact
       ? "No visible response was generated."
       : undefined;
+  const hasDisplayError = Boolean(
+    error || runtimeErrors?.length || resolvedSnapshot?.errors.length
+  );
+  const turnActions = (
+    <div className="assistant-turn-actions" aria-label="Response actions">
+      <button
+        className={`message-action-button regenerate-action ${
+          hasDisplayError ? "is-error" : ""
+        }`}
+        type="button"
+        title="Regenerate response"
+        aria-label="Regenerate response"
+        disabled={status === "streaming"}
+        onClick={() => onRegenerate(id)}
+      >
+        <RotateCcw size={15} strokeWidth={2.15} aria-hidden="true" />
+      </button>
+      {branchInfo ? (
+        <div className="message-branch-controls" aria-label="Response branches">
+          <button
+            className="message-action-button"
+            type="button"
+            title="Previous response"
+            aria-label="Previous response"
+            disabled={!branchInfo.previousVariantId || status === "streaming"}
+            onClick={() => {
+              if (branchInfo.previousVariantId) {
+                onSelectBranch(branchInfo.groupId, branchInfo.previousVariantId);
+              }
+            }}
+          >
+            <ChevronLeft size={15} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <span className="branch-count">
+            {branchInfo.activeIndex + 1}/{branchInfo.total}
+          </span>
+          <button
+            className="message-action-button"
+            type="button"
+            title="Next response"
+            aria-label="Next response"
+            disabled={!branchInfo.nextVariantId || status === "streaming"}
+            onClick={() => {
+              if (branchInfo.nextVariantId) {
+                onSelectBranch(branchInfo.groupId, branchInfo.nextVariantId);
+              }
+            }}
+          >
+            <ChevronRight size={15} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
     <MessagePrimitive.Root className="chat-row assistant">
@@ -143,10 +210,13 @@ export function AssistantMessage({
             id={id}
             snapshot={resolvedSnapshot}
             themeMode={themeMode}
+            actions={turnActions}
             onRuntimeError={onRuntimeError}
             onArtifactAction={onArtifactAction}
           />
-        ) : null}
+        ) : (
+          turnActions
+        )}
         {showRawStream ? <RawStreamPanel raw={rawStream} /> : null}
       </div>
     </MessagePrimitive.Root>

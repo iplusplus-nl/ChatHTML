@@ -517,6 +517,15 @@ function normalizeSessionMessageInput(input: unknown): SessionMessageInput | und
       Number.isFinite(message.repairAttempt)
         ? Math.max(1, Math.round(message.repairAttempt))
         : undefined,
+    branchGroupId:
+      typeof message.branchGroupId === "string"
+        ? message.branchGroupId
+        : undefined,
+    branchVariantId:
+      typeof message.branchVariantId === "string"
+        ? message.branchVariantId
+        : undefined,
+    branchAnchor: message.branchAnchor ? true : undefined,
     generationRunId:
       typeof message.generationRunId === "string"
         ? message.generationRunId
@@ -652,7 +661,8 @@ function attachChatRun(
     }
   };
 
-  req.on("close", close);
+  // Express may emit request "close" once the POST body has been consumed.
+  // Keep the stream subscription alive until the response itself closes.
   res.on("close", close);
 
   for (const event of run.events) {
@@ -1122,6 +1132,64 @@ function getResponsesTextEventKey(data: Record<string, unknown>): string {
   return [itemId, outputIndex, contentIndex].filter(Boolean).join(":") || "0";
 }
 
+function getStringProperty(
+  input: Record<string, unknown>,
+  names: string[]
+): string {
+  for (const name of names) {
+    const value = input[name];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function isResponsesReasoningEvent(type: unknown): type is string {
+  return typeof type === "string" && type.toLowerCase().includes("reasoning");
+}
+
+export function extractResponsesReasoningDelta(event: unknown): string {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+
+  const data = event as Record<string, unknown>;
+  const type = data.type;
+  if (!isResponsesReasoningEvent(type) || !type.endsWith(".delta")) {
+    return "";
+  }
+
+  const delta = data.delta;
+  if (typeof delta === "string") {
+    return delta;
+  }
+  if (delta && typeof delta === "object") {
+    return getStringProperty(delta as Record<string, unknown>, [
+      "text",
+      "summary_text",
+      "content"
+    ]);
+  }
+
+  return getStringProperty(data, ["text", "summary_text", "content"]);
+}
+
+export function extractResponsesReasoningDoneText(event: unknown): string {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+
+  const data = event as Record<string, unknown>;
+  const type = data.type;
+  if (!isResponsesReasoningEvent(type) || !type.endsWith(".done")) {
+    return "";
+  }
+
+  return getStringProperty(data, ["text", "summary_text", "content"]);
+}
+
 function responsesContentText(input: unknown): string {
   if (!input || typeof input !== "object") {
     return "";
@@ -1352,6 +1420,7 @@ async function streamResponsesOnce({
   const callsByOutputIndex = new Map<number, ResponsesFunctionCallItem>();
   const callsByItemId = new Map<string, ResponsesFunctionCallItem>();
   const textDeltaCharsByKey = new Map<string, number>();
+  const reasoningDeltaCharsByKey = new Map<string, number>();
   const contentCharsAtStart = state.contentChars;
   let terminalError = "";
   let buffer = "";
@@ -1375,6 +1444,30 @@ async function streamResponsesOnce({
     }
 
     writeContent(text, key);
+  };
+
+  const writeReasoning = (text: string, key: string) => {
+    if (!text) {
+      return;
+    }
+
+    reasoningDeltaCharsByKey.set(
+      key,
+      (reasoningDeltaCharsByKey.get(key) ?? 0) + text.length
+    );
+    writeStreamEvent(emit, { type: "reasoning", text }, state);
+  };
+
+  const writeDoneReasoningIfNeeded = (
+    data: Record<string, unknown>,
+    text: string
+  ) => {
+    const key = getResponsesTextEventKey(data);
+    if (!text || (reasoningDeltaCharsByKey.get(key) ?? 0) > 0) {
+      return;
+    }
+
+    writeReasoning(text, key);
   };
 
   const handleEvent = (event: unknown) => {
@@ -1403,8 +1496,15 @@ async function streamResponsesOnce({
       return;
     }
 
-    if (type === "response.reasoning.delta" && typeof data.delta === "string") {
-      writeStreamEvent(emit, { type: "reasoning", text: data.delta }, state);
+    const reasoningDelta = extractResponsesReasoningDelta(data);
+    if (reasoningDelta) {
+      writeReasoning(reasoningDelta, getResponsesTextEventKey(data));
+      return;
+    }
+
+    const reasoningDoneText = extractResponsesReasoningDoneText(data);
+    if (reasoningDoneText) {
+      writeDoneReasoningIfNeeded(data, reasoningDoneText);
       return;
     }
 

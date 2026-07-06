@@ -29,6 +29,9 @@ type StoredMessage = {
   runtimeErrors?: unknown[];
   repairOfMessageId?: string;
   repairAttempt?: number;
+  branchGroupId?: string;
+  branchVariantId?: string;
+  branchAnchor?: boolean;
   generationRunId?: string;
   streamSequence?: number;
   status?: "streaming" | "complete" | "error";
@@ -62,6 +65,7 @@ type StoredSession = {
   createdAt: number;
   updatedAt: number;
   model?: string;
+  branchSelections?: Record<string, string>;
   messages: StoredMessage[];
   files?: StoredSessionFile[];
 };
@@ -86,6 +90,9 @@ export type SessionMessageInput = {
   runtimeErrors?: unknown[];
   repairOfMessageId?: string;
   repairAttempt?: number;
+  branchGroupId?: string;
+  branchVariantId?: string;
+  branchAnchor?: boolean;
   generationRunId?: string;
   streamSequence?: number;
   status?: "streaming" | "complete" | "error";
@@ -204,6 +211,23 @@ function normalizeStringArray(input: unknown): string[] | undefined {
   }
 
   return values.length ? values : undefined;
+}
+
+function normalizeBranchSelections(input: unknown): Record<string, string> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const selections: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(input)) {
+    const key = rawKey.trim().slice(0, 160);
+    const value = typeof rawValue === "string" ? rawValue.trim().slice(0, 160) : "";
+    if (key && value) {
+      selections[key] = value;
+    }
+  }
+
+  return Object.keys(selections).length ? selections : undefined;
 }
 
 function normalizeDeletedSessionIdList(input: unknown): string[] {
@@ -358,6 +382,9 @@ function normalizeMessage(input: unknown): StoredMessage | null {
       Number.isFinite(message.repairAttempt)
         ? Math.max(1, Math.round(message.repairAttempt))
         : undefined,
+    branchGroupId: stringValue(message.branchGroupId) || undefined,
+    branchVariantId: stringValue(message.branchVariantId) || undefined,
+    branchAnchor: message.branchAnchor ? true : undefined,
     generationRunId: stringValue(message.generationRunId) || undefined,
     streamSequence:
       typeof message.streamSequence === "number" &&
@@ -394,6 +421,7 @@ function normalizeSession(input: unknown): StoredSession | null {
     createdAt,
     updatedAt,
     model: stringValue(session.model).trim().slice(0, 180) || undefined,
+    branchSelections: normalizeBranchSelections(session.branchSelections),
     messages,
     files: normalizeSessionFiles(session.files)
   };
