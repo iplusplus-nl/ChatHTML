@@ -18,6 +18,8 @@ test("artifact share page marks the feature experimental and embeds the document
   assert.match(html, /Experimental/);
   assert.match(html, /Demo &lt;Artifact&gt;/);
   assert.doesNotMatch(html, /<script>window\.__ok = true;<\/script>/);
+  assert.doesNotMatch(html, /\|\| """"/);
+  assert.match(html, /JSON\.parse\(documentPayload\.textContent \|\| '""'\)/);
   assert.match(html, /\\u003cscript>window\.__ok = true;\\u003c\/script>/);
   assert.match(html, /sandbox="allow-scripts allow-same-origin/);
 });

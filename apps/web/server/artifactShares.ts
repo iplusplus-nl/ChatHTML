@@ -310,7 +310,7 @@ export function createArtifactSharePageHtml(record: ArtifactShareRecord): string
       if (doc.body) observer.observe(doc.body);
       window.addEventListener("beforeunload", () => observer.disconnect(), { once: true });
     });
-    frame.srcdoc = JSON.parse(documentPayload.textContent || "\"\"");
+    frame.srcdoc = JSON.parse(documentPayload.textContent || '""');
   </script>
 </body>
 </html>
