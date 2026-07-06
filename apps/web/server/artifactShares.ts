@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +10,7 @@ export type ArtifactShareRecord = {
   id: string;
   title: string;
   createdAt: string;
+  updatedAt?: string;
   themeMode: ArtifactShareThemeMode;
   document: string;
   sourceMessageId?: string;
@@ -106,6 +107,69 @@ function createRecord(input: unknown): ArtifactShareRecord {
     themeMode: normalizeThemeMode(body.themeMode),
     document,
     sourceMessageId: normalizeSourceMessageId(body.sourceMessageId)
+  };
+}
+
+async function findShareRecordBySourceMessageId(
+  sourceMessageId: string
+): Promise<ArtifactShareRecord | null> {
+  let entries: string[];
+  try {
+    entries = await readdir(artifactSharesDir);
+  } catch {
+    return null;
+  }
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) {
+      continue;
+    }
+
+    try {
+      const record = JSON.parse(
+        await readFile(path.join(artifactSharesDir, entry), "utf8")
+      ) as ArtifactShareRecord;
+      if (
+        ARTIFACT_SHARE_ID_PATTERN.test(record.id) &&
+        record.sourceMessageId === sourceMessageId
+      ) {
+        return record;
+      }
+    } catch {
+      // Ignore stale or malformed experimental share records.
+    }
+  }
+
+  return null;
+}
+
+export async function createOrUpdateArtifactShareRecord(
+  input: unknown
+): Promise<{ record: ArtifactShareRecord; reused: boolean }> {
+  const nextRecord = createRecord(input);
+  const existingRecord = nextRecord.sourceMessageId
+    ? await findShareRecordBySourceMessageId(nextRecord.sourceMessageId)
+    : null;
+
+  if (!existingRecord) {
+    return { record: nextRecord, reused: false };
+  }
+
+  return {
+    record: reuseArtifactShareRecord(nextRecord, existingRecord),
+    reused: true
+  };
+}
+
+export function reuseArtifactShareRecord(
+  nextRecord: ArtifactShareRecord,
+  existingRecord: ArtifactShareRecord
+): ArtifactShareRecord {
+  return {
+    ...nextRecord,
+    id: existingRecord.id,
+    createdAt: existingRecord.createdAt,
+    updatedAt: nextRecord.createdAt
   };
 }
 
@@ -285,13 +349,14 @@ export async function handleCreateArtifactShare(
   res: Response
 ): Promise<void> {
   try {
-    const record = createRecord(req.body);
+    const { record, reused } = await createOrUpdateArtifactShareRecord(req.body);
     await writeShareRecord(record);
     const path = `/experimental/artifacts/${encodeURIComponent(record.id)}`;
-    res.status(201).json({
+    res.status(reused ? 200 : 201).json({
       experimental: true,
       id: record.id,
       path,
+      reused,
       url: `${getRequestOrigin(req)}${path}`
     });
   } catch (error) {
