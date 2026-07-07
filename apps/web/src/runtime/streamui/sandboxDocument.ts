@@ -357,16 +357,6 @@ export function buildIframeDocument(
       let pendingShrinkHeight = 0;
       let pendingShrinkStartedAt = 0;
       const getLayoutBottom = (element, body) => {
-        if (element instanceof HTMLElement && element.offsetParent) {
-          let top = 0;
-          let node = element;
-          while (node && node !== body && node instanceof HTMLElement) {
-            top += node.offsetTop;
-            node = node.offsetParent;
-          }
-          return top + element.offsetHeight;
-        }
-
         const bodyTop = body.getBoundingClientRect().top;
         const rect = element.getBoundingClientRect();
         return rect.bottom - bodyTop;

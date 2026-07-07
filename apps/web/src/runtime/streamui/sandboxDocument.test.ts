@@ -75,5 +75,7 @@ describe("sandboxDocument", () => {
     assert.match(document, /data\.kind === "measure"/);
     assert.doesNotMatch(document, /scrollHeight \|\| 0/);
     assert.doesNotMatch(document, /offsetHeight \|\| 0/);
+    assert.doesNotMatch(document, /offsetParent/);
+    assert.doesNotMatch(document, /offsetTop/);
   });
 });
