@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  describeApiCredentialMismatch,
   extractResponsesReasoningDelta,
   extractResponsesReasoningDoneText,
   extractResponsesOutputText,
+  formatResponsesHttpError,
   summarizeHttpErrorBody
 } from "../../server/openrouter.js";
 
@@ -59,6 +61,39 @@ describe("openrouter response stream helpers", () => {
       ),
       "Provider overloaded"
     );
+  });
+
+  it("flags OpenAI-looking keys used with the OpenRouter endpoint", () => {
+    const message = describeApiCredentialMismatch({
+      providerName: "OpenRouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKeySource: "environment",
+      apiKeyEnvironmentName: "OPENROUTER_API_KEY",
+      apiKey: "sk-proj-example"
+    });
+
+    assert.match(message, /OPENROUTER_API_KEY/);
+    assert.match(message, /OpenAI key/);
+    assert.match(message, /OpenRouter key/);
+  });
+
+  it("adds an actionable OpenRouter key hint to 401 user-not-found errors", () => {
+    const message = formatResponsesHttpError(
+      { status: 401, statusText: "Unauthorized" },
+      JSON.stringify({ error: { message: "User not found." } }),
+      {
+        providerName: "OpenRouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKeySource: "environment",
+        apiKeyEnvironmentName: "OPENROUTER_API_KEY",
+        apiKey: "sk-or-example"
+      }
+    );
+
+    assert.match(message, /HTTP 401 Unauthorized/);
+    assert.match(message, /User not found/);
+    assert.match(message, /OPENROUTER_API_KEY/);
+    assert.match(message, /sk-or-/);
   });
 
   it("extracts reasoning summary deltas from Responses stream events", () => {

@@ -60,6 +60,14 @@ type RuntimeApiSettings = {
   memoryItems: MemoryItem[];
 };
 
+export type ResponsesHttpErrorContext = {
+  providerName: string;
+  baseUrl: string;
+  apiKeySource: ApiKeySource;
+  apiKeyEnvironmentName: string;
+  apiKey: string;
+};
+
 type ClientChatMessage = {
   role: ChatRole;
   content: string;
@@ -907,6 +915,11 @@ function readRuntimeApiSettings(input: unknown): RuntimeApiSettings {
     throw new Error(`API settings missing: ${missing.join(", ")}.`);
   }
 
+  const credentialMismatch = describeApiCredentialMismatch(credentials);
+  if (credentialMismatch) {
+    throw new Error(credentialMismatch);
+  }
+
   const memorySettings = normalizeMemorySettings(object);
 
   return {
@@ -920,11 +933,91 @@ function readRuntimeApiSettings(input: unknown): RuntimeApiSettings {
   };
 }
 
-function isOpenRouterRuntime(settings: RuntimeApiSettings): boolean {
+function isOpenRouterRuntime(
+  settings: Pick<RuntimeApiSettings, "providerName" | "baseUrl">
+): boolean {
   return (
     /openrouter/i.test(settings.providerName) ||
     settings.baseUrl.toLowerCase().includes("openrouter.ai")
   );
+}
+
+function isOpenAiRuntime(
+  settings: Pick<RuntimeApiSettings, "providerName" | "baseUrl">
+): boolean {
+  return (
+    /openai/i.test(settings.providerName) ||
+    settings.baseUrl.toLowerCase().includes("api.openai.com")
+  );
+}
+
+function getApiKeyDisplayName(
+  settings: Pick<
+    ResponsesHttpErrorContext,
+    "apiKeySource" | "apiKeyEnvironmentName"
+  >
+): string {
+  return settings.apiKeySource === "manual"
+    ? "manual API key"
+    : settings.apiKeyEnvironmentName || "configured API key";
+}
+
+function getApiKeyUpdateAction(
+  settings: Pick<
+    ResponsesHttpErrorContext,
+    "apiKeySource" | "apiKeyEnvironmentName"
+  >
+): string {
+  const label = getApiKeyDisplayName(settings);
+  return settings.apiKeySource === "manual"
+    ? "Update it in Settings."
+    : `Update ${label} and restart the server.`;
+}
+
+function looksLikeOpenRouterKey(apiKey: string): boolean {
+  return /^sk-or-/i.test(apiKey.trim());
+}
+
+function looksLikeOpenAiKey(apiKey: string): boolean {
+  return /^sk-(?!or-)/i.test(apiKey.trim());
+}
+
+export function describeApiCredentialMismatch(
+  settings: ResponsesHttpErrorContext
+): string {
+  const label = getApiKeyDisplayName(settings);
+
+  if (isOpenRouterRuntime(settings) && looksLikeOpenAiKey(settings.apiKey)) {
+    return `API credential mismatch: ${label} looks like an OpenAI key, but the Base URL points to OpenRouter (${settings.baseUrl}). Use an OpenRouter key from https://openrouter.ai/keys (usually starts with sk-or-) or switch the provider/base URL to OpenAI.`;
+  }
+
+  if (isOpenAiRuntime(settings) && looksLikeOpenRouterKey(settings.apiKey)) {
+    return `API credential mismatch: ${label} looks like an OpenRouter key, but the Base URL points to OpenAI (${settings.baseUrl}). Use an OpenAI API key or switch the provider/base URL to OpenRouter.`;
+  }
+
+  return "";
+}
+
+function getUnauthorizedCredentialHint(
+  status: number,
+  settings: ResponsesHttpErrorContext
+): string {
+  if (status !== 401) {
+    return "";
+  }
+
+  const label = getApiKeyDisplayName(settings);
+  const action = getApiKeyUpdateAction(settings);
+
+  if (isOpenRouterRuntime(settings)) {
+    return `Check ${label}: OpenRouter returns 401 for invalid or wrong-platform keys. Use an OpenRouter key from https://openrouter.ai/keys (usually starts with sk-or-). ${action}`;
+  }
+
+  if (isOpenAiRuntime(settings)) {
+    return `Check ${label}: the OpenAI endpoint requires an OpenAI API key, not an OpenRouter key. ${action}`;
+  }
+
+  return `Check ${label}: the provider rejected the configured API key. ${action}`;
 }
 
 function readNativeToolMaxSteps(): number | null {
@@ -1295,20 +1388,24 @@ export function summarizeHttpErrorBody(
   return compactErrorText(trimmed).slice(0, 500);
 }
 
-function formatResponsesHttpError(
+export function formatResponsesHttpError(
   response: { status: number; statusText?: string },
-  bodyText: string
+  bodyText: string,
+  settings?: ResponsesHttpErrorContext
 ): string {
   const statusText = compactErrorText(response.statusText || "");
   const status = `HTTP ${response.status}${statusText ? ` ${statusText}` : ""}`;
   const detail = summarizeHttpErrorBody(bodyText, "");
   const prefix = `Responses API request failed with ${status}.`;
+  const hint = settings
+    ? getUnauthorizedCredentialHint(response.status, settings)
+    : "";
+  const visibleDetail =
+    detail && !detail.toLowerCase().includes(String(response.status))
+      ? detail
+      : "";
 
-  if (!detail || detail.toLowerCase().includes(String(response.status))) {
-    return prefix;
-  }
-
-  return `${prefix} ${detail}`;
+  return [prefix, visibleDetail, hint].filter(Boolean).join(" ");
 }
 
 function responsesErrorMessage(input: unknown): string {
@@ -1412,7 +1509,7 @@ async function streamResponsesOnce({
 
   if (!response.ok || !response.body) {
     const text = await response.text();
-    throw new Error(formatResponsesHttpError(response, text));
+    throw new Error(formatResponsesHttpError(response, text, apiSettings));
   }
 
   const decoder = new TextDecoder();
