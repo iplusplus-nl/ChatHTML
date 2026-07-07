@@ -1006,6 +1006,10 @@ function StreamThread({
   const isNewChat = useAuiState((state) => state.thread.messages.length === 0);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowBottomRef = useRef(true);
+  const lastAutoScrollTargetRef = useRef<{
+    count: number;
+    lastMessageId: string;
+  }>({ count: 0, lastMessageId: "" });
   const messageById = useMemo(
     () => new Map(messages.map((message) => [message.id, message])),
     [messages]
@@ -1079,8 +1083,24 @@ function StreamThread({
 
   useEffect(() => {
     const viewport = viewportRef.current;
+    const lastMessage = messages[messages.length - 1];
+    const isNewMessageTarget =
+      lastAutoScrollTargetRef.current.count !== messages.length ||
+      lastAutoScrollTargetRef.current.lastMessageId !== (lastMessage?.id ?? "");
+    const hasStreamingMessage = messages.some(
+      (message) => message.status === "streaming"
+    );
 
-    if (!viewport || !shouldFollowBottomRef.current) {
+    lastAutoScrollTargetRef.current = {
+      count: messages.length,
+      lastMessageId: lastMessage?.id ?? ""
+    };
+
+    if (
+      !viewport ||
+      !shouldFollowBottomRef.current ||
+      (!hasStreamingMessage && !isNewMessageTarget)
+    ) {
       return undefined;
     }
 
@@ -1100,8 +1120,6 @@ function StreamThread({
       <ThreadPrimitive.Viewport
         ref={viewportRef}
         className={`message-list ${isNewChat ? "is-new" : "has-messages"}`}
-        scrollToBottomOnRunStart
-        scrollToBottomOnInitialize
       >
         <AuiIf condition={(state) => state.thread.messages.length === 0}>
           <section className="thread-welcome">

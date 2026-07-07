@@ -7,6 +7,7 @@ export type RenderErrorKind = "html" | "runtime" | "security" | "console";
 export type RenderError = {
   kind: RenderErrorKind;
   message: string;
+  filename?: string;
   timestamp: number;
 };
 

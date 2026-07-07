@@ -6,6 +6,7 @@ import {
 import { extractStreamUiParts } from "../../runtime/streamui/protocol";
 import { createStreamingRenderer } from "../../runtime/streamui/streamingRenderer";
 import type { RenderError, RenderSnapshot } from "../../runtime/streamui/types";
+import { isIgnoredRuntimeError } from "../../core/ignoredRuntimeErrors";
 
 export type ClientMessage = {
   id: string;
@@ -439,6 +440,9 @@ function normalizeRenderError(input: unknown): RenderError | null {
   return {
     kind,
     message: error.message,
+    ...(typeof error.filename === "string" && error.filename.trim()
+      ? { filename: error.filename.trim().slice(0, 500) }
+      : {}),
     timestamp:
       typeof error.timestamp === "number" && Number.isFinite(error.timestamp)
         ? error.timestamp
@@ -456,7 +460,7 @@ function normalizeRenderErrors(input: unknown): RenderError[] | undefined {
 
   for (const item of input) {
     const error = normalizeRenderError(item);
-    if (!error) {
+    if (!error || isIgnoredRuntimeError(error)) {
       continue;
     }
 

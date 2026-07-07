@@ -23,4 +23,25 @@ describe("ignoredRuntimeErrors", () => {
       false
     );
   });
+
+  it("hides generic browser script errors without a source", () => {
+    assert.equal(
+      isIgnoredRuntimeError({
+        kind: "runtime",
+        message: "Script error."
+      }),
+      true
+    );
+  });
+
+  it("keeps sourced script errors visible", () => {
+    assert.equal(
+      isIgnoredRuntimeError({
+        kind: "runtime",
+        message: "Script error.",
+        filename: "https://example.test/app.js"
+      }),
+      false
+    );
+  });
 });

@@ -20,6 +20,7 @@ export function ErrorPanel({ errors }: ErrorPanelProps) {
           <li key={`${error.kind}-${error.timestamp}-${error.message}`}>
             <span>{error.kind}</span>
             {error.message}
+            {error.filename ? <small>{error.filename}</small> : null}
           </li>
         ))}
       </ul>

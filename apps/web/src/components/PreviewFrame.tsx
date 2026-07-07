@@ -34,6 +34,10 @@ type CapabilityStatus = {
 };
 
 const MAX_CAPABILITY_TEXT_CHARS = 1_000_000;
+const MIN_PREVIEW_HEIGHT = 32;
+const HEIGHT_EPSILON = 6;
+const SMALL_SHRINK_PX = 12;
+const SHRINK_SETTLE_MS = 700;
 
 function normalizeCapabilityText(value: unknown): string {
   return String(value ?? "").slice(0, MAX_CAPABILITY_TEXT_CHARS);
@@ -111,6 +115,9 @@ export function PreviewFrame({
   const initialSrcDocRef = useRef<string | null>(null);
   const lastLoadedFullDocumentRef = useRef("");
   const lastAppliedBodyHtmlRef = useRef("");
+  const pendingShrinkRef = useRef<{ height: number; startedAt: number } | null>(
+    null
+  );
   const [height, setHeight] = useState(96);
   const [capabilityAction, setCapabilityAction] =
     useState<CapabilityAction | null>(null);
@@ -121,11 +128,51 @@ export function PreviewFrame({
     initialSrcDocRef.current = buildIframeDocument("", themeMode);
   }
 
-  const measureFrameHeight = useCallback((document: Document) => {
+  const applyMeasuredHeight = useCallback((value: number) => {
+    const nextHeight = Math.max(MIN_PREVIEW_HEIGHT, Math.ceil(value));
+    const now = performance.now();
+    setHeight((currentHeight) => {
+      if (
+        nextHeight >= currentHeight ||
+        currentHeight - nextHeight <= SMALL_SHRINK_PX
+      ) {
+        pendingShrinkRef.current = null;
+        return Math.abs(nextHeight - currentHeight) > HEIGHT_EPSILON
+          ? nextHeight
+          : currentHeight;
+      }
+
+      const pending = pendingShrinkRef.current;
+      if (
+        !pending ||
+        Math.abs(pending.height - nextHeight) > HEIGHT_EPSILON
+      ) {
+        pendingShrinkRef.current = {
+          height: nextHeight,
+          startedAt: now
+        };
+        return currentHeight;
+      }
+
+      if (now - pending.startedAt < SHRINK_SETTLE_MS) {
+        return currentHeight;
+      }
+
+      pendingShrinkRef.current = null;
+      return Math.abs(nextHeight - currentHeight) > HEIGHT_EPSILON
+        ? nextHeight
+        : currentHeight;
+    });
+  }, []);
+
+  const requestFrameMeasure = useCallback(() => {
     window.requestAnimationFrame(() => {
-      const nextHeight = Math.max(32, Math.ceil(document.body.scrollHeight));
-      setHeight((currentHeight) =>
-        Math.abs(nextHeight - currentHeight) > 1 ? nextHeight : currentHeight
+      frameRef.current?.contentWindow?.postMessage(
+        {
+          source: "streamui-host",
+          kind: "measure"
+        },
+        "*"
       );
     });
   }, []);
@@ -146,7 +193,7 @@ export function PreviewFrame({
         return;
       }
 
-      measureFrameHeight(document);
+      requestFrameMeasure();
       return;
     }
 
@@ -159,8 +206,8 @@ export function PreviewFrame({
       lastAppliedBodyHtmlRef.current = bodyHtml;
     }
 
-    measureFrameHeight(document);
-  }, [measureFrameHeight, snapshot.completedHtml, snapshot.status, themeMode]);
+    requestFrameMeasure();
+  }, [requestFrameMeasure, snapshot.completedHtml, snapshot.status, themeMode]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -255,13 +302,7 @@ export function PreviewFrame({
       }
 
       if (data.kind === "resize" && typeof data.height === "number") {
-        setHeight((currentHeight) => {
-          const nextHeight = Math.max(32, Math.ceil(data.height ?? 0));
-
-          return Math.abs(nextHeight - currentHeight) > 1
-            ? nextHeight
-            : currentHeight;
-        });
+        applyMeasuredHeight(data.height);
         return;
       }
 
@@ -283,7 +324,7 @@ export function PreviewFrame({
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [onArtifactAction, onRuntimeError]);
+  }, [applyMeasuredHeight, onArtifactAction, onRuntimeError]);
 
   useEffect(() => {
     applySnapshotToFrame();

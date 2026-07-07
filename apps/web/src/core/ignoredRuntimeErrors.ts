@@ -18,6 +18,10 @@ export function isIgnoredRuntimeError(error: RuntimeEventLike): boolean {
     return true;
   }
 
+  if (message === "script error." && !filename) {
+    return true;
+  }
+
   if (
     error.kind === "security" &&
     (message === "browser permission apis are not allowed in chathtml artifacts." ||

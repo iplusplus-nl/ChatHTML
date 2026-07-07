@@ -111,7 +111,7 @@ export function buildIframeDocument(
     html, body { margin: 0; min-height: 0; background: transparent; }
     body {
       width: 100%;
-      overflow: hidden;
+      overflow: visible;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--streamui-text);
       background: transparent;
@@ -240,8 +240,25 @@ export function buildIframeDocument(
         });
         return request;
       };
+      let scheduledMeasureFrame = 0;
+      const scheduleMeasure = () => {
+        if (scheduledMeasureFrame) {
+          return;
+        }
+
+        scheduledMeasureFrame = requestAnimationFrame(() => {
+          scheduledMeasureFrame = 0;
+          normalizeExternalLinks();
+          measure();
+        });
+      };
       window.addEventListener("message", (event) => {
         const data = event.data || {};
+        if (data.source === "streamui-host" && data.kind === "measure") {
+          scheduleMeasure();
+          return;
+        }
+
         if (
           data.source !== "streamui-host" ||
           data.kind !== "capability-result" ||
@@ -332,15 +349,37 @@ export function buildIframeDocument(
 
         return false;
       };
+      const HEIGHT_SAFETY_PADDING = 28;
+      const HEIGHT_EPSILON = 6;
+      const SHRINK_SETTLE_MS = 700;
+      const SMALL_SHRINK_PX = 12;
       let lastHeight = 0;
+      let pendingShrinkHeight = 0;
+      let pendingShrinkStartedAt = 0;
+      const getLayoutBottom = (element, body) => {
+        if (element instanceof HTMLElement && element.offsetParent) {
+          let top = 0;
+          let node = element;
+          while (node && node !== body && node instanceof HTMLElement) {
+            top += node.offsetTop;
+            node = node.offsetParent;
+          }
+          return top + element.offsetHeight;
+        }
+
+        const bodyTop = body.getBoundingClientRect().top;
+        const rect = element.getBoundingClientRect();
+        return rect.bottom - bodyTop;
+      };
       const measureContentHeight = () => {
         const body = document.body;
         if (!body) {
           return 32;
         }
 
-        const bodyTop = body.getBoundingClientRect().top;
-        let maxBottom = 0;
+        let maxBottom = body.firstElementChild
+          ? 0
+          : body.getBoundingClientRect().height;
         body.querySelectorAll("*").forEach((element) => {
           if (
             ["SCRIPT", "STYLE", "TEMPLATE", "LINK", "META", "TITLE"].includes(
@@ -361,17 +400,47 @@ export function buildIframeDocument(
           }
 
           const marginBottom = Number.parseFloat(style.marginBottom) || 0;
-          maxBottom = Math.max(maxBottom, rect.bottom - bodyTop + marginBottom);
+          maxBottom = Math.max(
+            maxBottom,
+            getLayoutBottom(element, body) + marginBottom
+          );
         });
 
         const bodyStyle = getComputedStyle(body);
         const paddingBottom = Number.parseFloat(bodyStyle.paddingBottom) || 0;
-        return Math.max(32, Math.ceil(maxBottom + paddingBottom));
+        return Math.max(
+          32,
+          Math.ceil(maxBottom + paddingBottom + HEIGHT_SAFETY_PADDING)
+        );
+      };
+      const shouldPostHeight = (height) => {
+        if (!lastHeight) {
+          return true;
+        }
+        if (height >= lastHeight || lastHeight - height <= SMALL_SHRINK_PX) {
+          pendingShrinkHeight = 0;
+          pendingShrinkStartedAt = 0;
+          return Math.abs(height - lastHeight) > HEIGHT_EPSILON;
+        }
+
+        const now = performance.now();
+        if (
+          !pendingShrinkHeight ||
+          Math.abs(height - pendingShrinkHeight) > HEIGHT_EPSILON
+        ) {
+          pendingShrinkHeight = height;
+          pendingShrinkStartedAt = now;
+          return false;
+        }
+
+        return now - pendingShrinkStartedAt >= SHRINK_SETTLE_MS;
       };
       const measure = () => {
         const height = measureContentHeight();
-        if (height && Math.abs(height - lastHeight) > 1) {
+        if (height && shouldPostHeight(height)) {
           lastHeight = height;
+          pendingShrinkHeight = 0;
+          pendingShrinkStartedAt = 0;
           post("resize", "resize", { height });
         }
       };
@@ -541,18 +610,25 @@ export function buildIframeDocument(
           label: label.slice(0, 200)
         });
       }, true);
-      const scheduleMeasure = () => requestAnimationFrame(() => {
-        normalizeExternalLinks();
-        measure();
-      });
       window.addEventListener("error", (event) => {
         if (isExtensionNoise(event.message, event.filename)) {
           return;
         }
-        post("runtime", event.message, { filename: event.filename || "" });
+        const detail =
+          event.error && (event.error.stack || event.error.message)
+            ? String(event.error.stack || event.error.message)
+            : "";
+        const message =
+          detail && (!event.message || event.message === "Script error.")
+            ? detail
+            : event.message;
+        post("runtime", message, { filename: event.filename || "" });
       });
       window.addEventListener("unhandledrejection", (event) => {
-        const reason = event.reason && event.reason.message ? event.reason.message : event.reason;
+        const reason =
+          event.reason && (event.reason.stack || event.reason.message)
+            ? event.reason.stack || event.reason.message
+            : event.reason;
         if (isExtensionNoise(reason || "")) {
           return;
         }

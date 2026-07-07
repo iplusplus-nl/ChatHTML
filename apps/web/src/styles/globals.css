@@ -2378,10 +2378,6 @@ button {
   border: 0;
   border-radius: 8px;
   background: transparent;
-  transition: height 160ms ease;
-}
-
-.assistant-canvas.streaming .preview-frame {
   transition: none;
 }
 
@@ -2495,6 +2491,7 @@ button {
 
 .error-panel li {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: baseline;
 }
@@ -2503,6 +2500,15 @@ button {
   min-width: 58px;
   color: #b42318;
   font-weight: 760;
+}
+
+.error-panel small {
+  width: 100%;
+  padding-left: 66px;
+  color: #9f6b61;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .raw-stream-panel {

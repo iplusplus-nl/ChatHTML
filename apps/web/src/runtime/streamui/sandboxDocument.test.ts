@@ -70,6 +70,9 @@ describe("sandboxDocument", () => {
     );
 
     assert.match(document, /getBoundingClientRect/);
+    assert.match(document, /HEIGHT_SAFETY_PADDING/);
+    assert.match(document, /SHRINK_SETTLE_MS/);
+    assert.match(document, /data\.kind === "measure"/);
     assert.doesNotMatch(document, /scrollHeight \|\| 0/);
     assert.doesNotMatch(document, /offsetHeight \|\| 0/);
   });
