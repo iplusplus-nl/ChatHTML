@@ -29,10 +29,10 @@ function session(
 }
 
 describe("server session merge", () => {
-  it("scopes anonymous state by browser client id", () => {
+  it("uses one shared anonymous state during early product development", () => {
     assert.equal(
       getSessionStateKeyFromClientId("client-test-12345678"),
-      "client:client-test-12345678"
+      "global"
     );
     assert.equal(getSessionStateKeyFromClientId("short"), "global");
   });

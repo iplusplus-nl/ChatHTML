@@ -43,22 +43,19 @@ The browser calls the local backend at `POST /api/chat`; the backend reads `OPEN
 
 ## Open Source and Hosted Cloud
 
-This repository is the single public source tree for ChatHTML. The web UI, login
-screens, managed-provider settings, and HTTP API contracts are open. A hosted
-ChatHTML Cloud deployment can serve the same frontend and implement the
-additional `/api/auth/*`, `/api/billing/*`, and managed-provider `/api/chat`
-behavior in a private backend.
+This repository is the single public source tree for ChatHTML. The current
+product deployment is open: no account gate, no billing gate, and one shared
+conversation history while the product is still early.
 
-The local open-source Express server does not implement hosted accounts,
-prepaid billing, or managed API-key custody. It supports bring-your-own-provider
-usage through environment or manual API keys. When a backend reports
-`cloud.enabled: true` from `GET /api/settings`, the frontend shows the Cloud
-login and billing surfaces and can use the public managed-provider API contract.
-See `docs/cloud-api.md` for the hosted-backend contract.
+The optional hosted-backend contract is documented for later. A future backend
+can report `cloud.enabled: true` from `GET /api/settings` to expose account,
+billing, and managed-provider surfaces, but the local open-source Express server
+keeps those disabled by default. See `docs/cloud-api.md` for that parked
+contract.
 
 ## Session Storage
 
-Chat sessions are stored persistently in SQLite under a browser client id, so browsers connected to the same deployment do not share one global chat history. The client periodically syncs from the backend while the page is open, and session saves are merged so an older tab from the same browser profile is less likely to overwrite chats created elsewhere.
+Chat sessions are stored persistently in SQLite as one shared early-product state, so every browser connected to the same deployment can see the same chat history. The client periodically syncs from the backend while the page is open, and session saves are merged so an older tab is less likely to overwrite chats created elsewhere.
 
 By default the backend writes to `sessions/state.sqlite`. Existing `sessions/state.json` data is migrated into SQLite the first time the shared state is empty.
 
