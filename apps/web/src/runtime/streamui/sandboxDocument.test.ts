@@ -72,10 +72,22 @@ describe("sandboxDocument", () => {
     assert.match(document, /getBoundingClientRect/);
     assert.match(document, /HEIGHT_SAFETY_PADDING/);
     assert.match(document, /SHRINK_SETTLE_MS/);
+    assert.match(document, /isViewportOverlay/);
+    assert.match(document, /hasPositionedAncestor/);
     assert.match(document, /data\.kind === "measure"/);
     assert.doesNotMatch(document, /scrollHeight \|\| 0/);
     assert.doesNotMatch(document, /offsetHeight \|\| 0/);
     assert.doesNotMatch(document, /offsetParent/);
     assert.doesNotMatch(document, /offsetTop/);
+  });
+
+  it("ignores top-level absolute viewport overlays when measuring", () => {
+    const document = buildIframeDocument(
+      '<section><div class="scan"></div><p>Body</p></section><style>.scan{position:absolute;inset:0;pointer-events:none}</style>'
+    );
+
+    assert.match(document, /style\.position === "fixed"/);
+    assert.match(document, /style\.position !== "absolute"/);
+    assert.match(document, /!hasPositionedAncestor\(element, body\)/);
   });
 });

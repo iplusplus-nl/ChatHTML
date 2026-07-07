@@ -356,6 +356,27 @@ export function buildIframeDocument(
       let lastHeight = 0;
       let pendingShrinkHeight = 0;
       let pendingShrinkStartedAt = 0;
+      const hasPositionedAncestor = (element, body) => {
+        let parent = element.parentElement;
+        while (parent && parent !== body && parent !== document.documentElement) {
+          if (getComputedStyle(parent).position !== "static") {
+            return true;
+          }
+          parent = parent.parentElement;
+        }
+
+        return false;
+      };
+      const isViewportOverlay = (element, body, style) => {
+        if (style.position === "fixed") {
+          return true;
+        }
+        if (style.position !== "absolute") {
+          return false;
+        }
+
+        return !hasPositionedAncestor(element, body);
+      };
       const getLayoutBottom = (element, body) => {
         const bodyTop = body.getBoundingClientRect().top;
         const rect = element.getBoundingClientRect();
@@ -386,6 +407,9 @@ export function buildIframeDocument(
 
           const style = getComputedStyle(element);
           if (style.display === "none" || style.visibility === "collapse") {
+            return;
+          }
+          if (isViewportOverlay(element, body, style)) {
             return;
           }
 
