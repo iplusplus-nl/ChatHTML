@@ -2,20 +2,25 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   DEFAULT_API_SETTINGS,
+  DEFAULT_UI_COMPLEXITY,
   MAX_MEMORY_ITEM_TEXT_LENGTH,
   MAX_USER_PREFERENCE_PROMPT_LENGTH,
+  REQUIRED_MODEL_OPTIONS,
   createMemoryItemId,
   getDefaultModelsEndpoint,
   getSelectableModelOptions,
   normalizeApiSettings,
   normalizeMemoryItems,
+  normalizeUiComplexity,
   serializeApiSettings
 } from "./apiSettings";
 
 describe("apiSettings", () => {
   it("defaults user memory settings to an empty prompt and table", () => {
     assert.equal(DEFAULT_API_SETTINGS.userPreferencePrompt, "");
+    assert.equal(DEFAULT_API_SETTINGS.uiComplexity, DEFAULT_UI_COMPLEXITY);
     assert.equal(normalizeApiSettings(null).userPreferencePrompt, "");
+    assert.equal(normalizeApiSettings(null).uiComplexity, DEFAULT_UI_COMPLEXITY);
     assert.deepEqual(normalizeApiSettings(null).memoryItems, []);
   });
 
@@ -29,6 +34,14 @@ describe("apiSettings", () => {
   it("keeps OpenRouter as the open-source default provider", () => {
     assert.equal(DEFAULT_API_SETTINGS.providerId, "openrouter");
     assert.equal(DEFAULT_API_SETTINGS.apiKeySource, "environment");
+  });
+
+  it("keeps the required default models selected", () => {
+    assert.deepEqual(DEFAULT_API_SETTINGS.modelOptions, REQUIRED_MODEL_OPTIONS);
+    assert.deepEqual(
+      normalizeApiSettings({ modelOptions: [] }).modelOptions,
+      REQUIRED_MODEL_OPTIONS
+    );
   });
 
   it("supports ChatHTML Cloud as a managed provider preset", () => {
@@ -52,6 +65,7 @@ describe("apiSettings", () => {
     });
 
     assert.deepEqual(getSelectableModelOptions(normalized), [
+      ...REQUIRED_MODEL_OPTIONS,
       "anthropic/claude-sonnet-4",
       "openai/gpt-4.1"
     ]);
@@ -60,14 +74,22 @@ describe("apiSettings", () => {
   it("deduplicates model options case-insensitively", () => {
     const normalized = normalizeApiSettings({
       providerId: "openrouter",
-      model: "openai/gpt-4.1",
-      modelOptions: ["OpenAI/GPT-4.1", "google/gemini-pro"]
+      model: "openai/gpt-5.5",
+      modelOptions: ["OpenAI/GPT-5.5", "google/gemini-pro"]
     });
 
     assert.deepEqual(getSelectableModelOptions(normalized), [
-      "openai/gpt-4.1",
+      ...REQUIRED_MODEL_OPTIONS,
       "google/gemini-pro"
     ]);
+  });
+
+  it("normalizes UI complexity as a clamped integer", () => {
+    assert.equal(normalizeUiComplexity("73.8"), 74);
+    assert.equal(normalizeUiComplexity(-20), 0);
+    assert.equal(normalizeUiComplexity(120), 100);
+    assert.equal(normalizeUiComplexity("nope", 35), 35);
+    assert.equal(normalizeApiSettings({ uiComplexity: "88" }).uiComplexity, 88);
   });
 
   it("preserves the new user preference prompt while normalizing settings", () => {

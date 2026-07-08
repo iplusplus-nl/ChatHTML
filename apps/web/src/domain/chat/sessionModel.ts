@@ -1,5 +1,9 @@
 import type { ImageAttachment } from "../../core/imageAttachments";
 import {
+  normalizeUiComplexity,
+  type ReasoningEffort
+} from "../../core/apiSettings";
+import {
   buildArtifactContext,
   type ArtifactContext
 } from "../../core/artifactContext";
@@ -97,6 +101,8 @@ export type ChatSession = {
   createdAt: number;
   updatedAt: number;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
+  uiComplexity?: number;
   branchSelections?: Record<string, string>;
   messages: ClientMessage[];
   files: SessionFile[];
@@ -127,7 +133,9 @@ export function createId(prefix: string): string {
 export function createEmptySession(
   now = Date.now(),
   id = createId("session"),
-  model?: string
+  model?: string,
+  reasoningEffort?: ReasoningEffort,
+  uiComplexity?: number
 ): ChatSession {
   return {
     id,
@@ -135,6 +143,11 @@ export function createEmptySession(
     createdAt: now,
     updatedAt: now,
     model: model?.trim() || undefined,
+    reasoningEffort,
+    uiComplexity:
+      typeof uiComplexity === "number"
+        ? normalizeUiComplexity(uiComplexity)
+        : undefined,
     messages: initialMessages,
     files: []
   };
@@ -143,9 +156,17 @@ export function createEmptySession(
 export function createInitialSessionState(
   now = Date.now(),
   id = createId("session"),
-  model?: string
+  model?: string,
+  reasoningEffort?: ReasoningEffort,
+  uiComplexity?: number
 ): SessionState {
-  const session = createEmptySession(now, id, model);
+  const session = createEmptySession(
+    now,
+    id,
+    model,
+    reasoningEffort,
+    uiComplexity
+  );
   return { sessions: [session], activeSessionId: session.id };
 }
 
@@ -903,6 +924,19 @@ function normalizeBranchSelections(input: unknown): Record<string, string> | und
   return Object.keys(selections).length ? selections : undefined;
 }
 
+function normalizeSessionReasoningEffort(
+  input: unknown
+): ReasoningEffort | undefined {
+  return input === "none" ||
+    input === "minimal" ||
+    input === "low" ||
+    input === "medium" ||
+    input === "high" ||
+    input === "xhigh"
+    ? input
+    : undefined;
+}
+
 function normalizeSessionFile(input: unknown, now = Date.now()): SessionFile | null {
   if (!input || typeof input !== "object") {
     return null;
@@ -1313,6 +1347,10 @@ export function normalizeStoredSession(
       typeof input.model === "string" && input.model.trim()
         ? input.model.trim().slice(0, 180)
         : undefined,
+    reasoningEffort: normalizeSessionReasoningEffort(input.reasoningEffort),
+    uiComplexity: Object.prototype.hasOwnProperty.call(input, "uiComplexity")
+      ? normalizeUiComplexity(input.uiComplexity)
+      : undefined,
     branchSelections: normalizeBranchSelections(input.branchSelections),
     messages: migrated.messages,
     files: migrated.files

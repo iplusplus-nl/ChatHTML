@@ -9,7 +9,9 @@ describe("modelLikelySupportsImageInput", () => {
       true
     );
     assert.equal(modelLikelySupportsImageInput("openai/gpt-4.1"), true);
+    assert.equal(modelLikelySupportsImageInput("openai/gpt-5.5"), true);
     assert.equal(modelLikelySupportsImageInput("anthropic/claude-3.5-sonnet"), true);
+    assert.equal(modelLikelySupportsImageInput("anthropic/claude-sonnet-5"), true);
     assert.equal(modelLikelySupportsImageInput("qwen/qwen2.5-vl-72b-instruct"), true);
   });
 

@@ -25,6 +25,7 @@ export type ApiSettings = {
   modelOptions: string[];
   modelsEndpoint: string;
   reasoningEffort: ReasoningEffort;
+  uiComplexity: number;
   userPreferencePrompt: string;
   memoryItems: MemoryItem[];
 };
@@ -57,6 +58,16 @@ export const MAX_USER_PREFERENCE_PROMPT_LENGTH = 4_000;
 export const MAX_MEMORY_ITEMS = 80;
 export const MAX_MEMORY_ITEM_ID_LENGTH = 80;
 export const MAX_MEMORY_ITEM_TEXT_LENGTH = 800;
+export const UI_COMPLEXITY_MIN = 0;
+export const UI_COMPLEXITY_MAX = 100;
+export const DEFAULT_UI_COMPLEXITY = 50;
+
+export const REQUIRED_MODEL_OPTIONS = [
+  "openai/gpt-5.5",
+  "google/gemini-3.1-pro-preview",
+  "anthropic/claude-sonnet-5",
+  "z-ai/glm-5.2"
+] as const;
 
 const DEFAULT_LEGACY_USER_PREFERENCES: LegacyUserPreferences = {
   responseTone: "",
@@ -133,12 +144,17 @@ export const DEFAULT_API_SETTINGS: ApiSettings = {
   apiKeySource: "environment",
   apiKey: "",
   model: DEFAULT_PRESET.model,
-  modelOptions: [DEFAULT_PRESET.model],
+  modelOptions: [...REQUIRED_MODEL_OPTIONS],
   modelsEndpoint: getDefaultModelsEndpoint(DEFAULT_PRESET.baseUrl),
   reasoningEffort: DEFAULT_PRESET.reasoningEffort,
+  uiComplexity: DEFAULT_UI_COMPLEXITY,
   userPreferencePrompt: "",
   memoryItems: []
 };
+
+const REQUIRED_MODEL_OPTION_KEYS = new Set(
+  REQUIRED_MODEL_OPTIONS.map((model) => model.toLowerCase())
+);
 
 function isProviderId(value: unknown): value is ApiProviderId {
   return API_PROVIDER_PRESETS.some((preset) => preset.id === value);
@@ -146,6 +162,27 @@ function isProviderId(value: unknown): value is ApiProviderId {
 
 function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return REASONING_EFFORT_OPTIONS.some((option) => option.value === value);
+}
+
+export function normalizeUiComplexity(
+  value: unknown,
+  fallback = DEFAULT_UI_COMPLEXITY
+): number {
+  const numericValue =
+    typeof value === "string" && value.trim()
+      ? Number(value)
+      : typeof value === "number"
+        ? value
+        : fallback;
+
+  if (!Number.isFinite(numericValue)) {
+    return fallback;
+  }
+
+  return Math.min(
+    UI_COMPLEXITY_MAX,
+    Math.max(UI_COMPLEXITY_MIN, Math.round(numericValue))
+  );
 }
 
 function isApiKeySource(value: unknown): value is ApiKeySource {
@@ -193,6 +230,11 @@ export function normalizeModelOptions(input: unknown): string[] {
   const options: string[] = [];
   const candidates = Array.isArray(input) ? input : [];
 
+  for (const modelId of REQUIRED_MODEL_OPTIONS) {
+    seen.add(modelId.toLowerCase());
+    options.push(modelId);
+  }
+
   for (const candidate of candidates) {
     const modelId = normalizeModelId(candidate);
     if (!modelId) {
@@ -213,6 +255,10 @@ export function normalizeModelOptions(input: unknown): string[] {
   }
 
   return options;
+}
+
+export function isRequiredModelOption(modelId: string): boolean {
+  return REQUIRED_MODEL_OPTION_KEYS.has(modelId.trim().toLowerCase());
 }
 
 export function getSelectableModelOptions(settings: ApiSettings): string[] {
@@ -452,6 +498,7 @@ export function normalizeApiSettings(input: unknown): ApiSettings {
     reasoningEffort: isReasoningEffort(object.reasoningEffort)
       ? object.reasoningEffort
       : preset.reasoningEffort,
+    uiComplexity: normalizeUiComplexity(object.uiComplexity),
     userPreferencePrompt,
     memoryItems
   };

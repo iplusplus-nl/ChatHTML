@@ -22,14 +22,30 @@ import {
 
 describe("sessionModel", () => {
   it("creates deterministic empty sessions when id and time are injected", () => {
-    const session = createEmptySession(123, "session-test", "model-a");
-    const state = createInitialSessionState(123, "session-test", "model-b");
+    const session = createEmptySession(
+      123,
+      "session-test",
+      "model-a",
+      "high",
+      72
+    );
+    const state = createInitialSessionState(
+      123,
+      "session-test",
+      "model-b",
+      "medium",
+      34
+    );
 
     assert.equal(session.id, "session-test");
     assert.equal(session.createdAt, 123);
     assert.equal(session.model, "model-a");
+    assert.equal(session.reasoningEffort, "high");
+    assert.equal(session.uiComplexity, 72);
     assert.equal(state.activeSessionId, "session-test");
     assert.equal(state.sessions[0].model, "model-b");
+    assert.equal(state.sessions[0].reasoningEffort, "medium");
+    assert.equal(state.sessions[0].uiComplexity, 34);
   });
 
   it("derives compact titles from user or assistant messages", () => {
@@ -587,7 +603,7 @@ describe("sessionModel", () => {
     assert.equal(merged.sessions[0].messages[0].content, "done");
   });
 
-  it("normalizes and serializes per-session model choices", () => {
+  it("normalizes and serializes per-session model and generation settings", () => {
     const state = normalizeStoredSessionState({
       activeSessionId: "s1",
       sessions: [
@@ -597,6 +613,8 @@ describe("sessionModel", () => {
           createdAt: 1,
           updatedAt: 2,
           model: "  z-ai/glm-5.2  ",
+          reasoningEffort: "xhigh",
+          uiComplexity: 101,
           messages: [],
           files: []
         }
@@ -604,7 +622,11 @@ describe("sessionModel", () => {
     });
 
     assert.equal(state.sessions[0].model, "z-ai/glm-5.2");
+    assert.equal(state.sessions[0].reasoningEffort, "xhigh");
+    assert.equal(state.sessions[0].uiComplexity, 100);
     assert.equal(serializeSessions(state.sessions)[0].model, "z-ai/glm-5.2");
+    assert.equal(serializeSessions(state.sessions)[0].reasoningEffort, "xhigh");
+    assert.equal(serializeSessions(state.sessions)[0].uiComplexity, 100);
   });
 
   it("detects persisted messages", () => {

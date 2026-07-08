@@ -34,6 +34,7 @@ export type RuntimeApiDefaults = {
   modelOptions: string[];
   modelsEndpoint: string;
   reasoningEffort: RuntimeReasoningEffort;
+  uiComplexity: number;
   userPreferencePrompt: "";
   memoryItems: RuntimeMemoryItem[];
 };
@@ -86,6 +87,13 @@ const require = createRequire(import.meta.url);
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_OPENROUTER_MODEL = "google/gemini-3.1-pro-preview";
 const DEFAULT_OPENROUTER_REASONING: RuntimeReasoningEffort = "low";
+const DEFAULT_UI_COMPLEXITY = 50;
+const REQUIRED_OPENROUTER_MODEL_OPTIONS = [
+  "openai/gpt-5.5",
+  "google/gemini-3.1-pro-preview",
+  "anthropic/claude-sonnet-5",
+  "z-ai/glm-5.2"
+] as const;
 
 const API_ENV_KEYS = [
   "OPENROUTER_API_KEY",
@@ -242,6 +250,24 @@ function getDefaultModelsEndpoint(baseUrl: string): string {
   return normalized ? `${normalized}/models` : "";
 }
 
+function getDefaultModelOptions(model: string): string[] {
+  const seen = new Set<string>();
+  const options: string[] = [];
+
+  for (const candidate of [...REQUIRED_OPENROUTER_MODEL_OPTIONS, model]) {
+    const normalized = candidate.trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    options.push(normalized);
+  }
+
+  return options;
+}
+
 export function normalizeRuntimeReasoningEffort(
   value: unknown,
   fallback: RuntimeReasoningEffort = DEFAULT_OPENROUTER_REASONING
@@ -273,12 +299,13 @@ export function getRuntimeApiDefaults(): RuntimeApiDefaults {
     apiKeySource: "environment",
     apiKey: "",
     model,
-    modelOptions: [model],
+    modelOptions: getDefaultModelOptions(model),
     modelsEndpoint:
       envString("OPENROUTER_MODELS_ENDPOINT") || getDefaultModelsEndpoint(baseUrl),
     reasoningEffort: normalizeRuntimeReasoningEffort(
       envString("OPENROUTER_REASONING_EFFORT")
     ),
+    uiComplexity: DEFAULT_UI_COMPLEXITY,
     userPreferencePrompt: "",
     memoryItems: []
   };

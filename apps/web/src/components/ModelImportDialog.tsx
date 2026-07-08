@@ -3,6 +3,7 @@ import { Check, Search, X } from "lucide-react";
 type ModelImportDialogProps = {
   models: string[];
   selectedModels: string[];
+  requiredModels: string[];
   query: string;
   isLoading: boolean;
   error: string | null;
@@ -15,6 +16,7 @@ type ModelImportDialogProps = {
 export function ModelImportDialog({
   models,
   selectedModels,
+  requiredModels,
   query,
   isLoading,
   error,
@@ -24,7 +26,10 @@ export function ModelImportDialog({
   onAddSelected
 }: ModelImportDialogProps) {
   const normalizedQuery = query.trim().toLowerCase();
-  const selectedSet = new Set(selectedModels.map((model) => model.toLowerCase()));
+  const requiredSet = new Set(requiredModels.map((model) => model.toLowerCase()));
+  const selectedSet = new Set(
+    [...selectedModels, ...requiredModels].map((model) => model.toLowerCase())
+  );
   const filteredModels = normalizedQuery
     ? models.filter((model) => model.toLowerCase().includes(normalizedQuery))
     : models;
@@ -71,14 +76,20 @@ export function ModelImportDialog({
           ) : filteredModels.length ? (
             filteredModels.map((model) => {
               const isSelected = selectedSet.has(model.toLowerCase());
+              const isRequired = requiredSet.has(model.toLowerCase());
 
               return (
                 <button
                   key={model}
-                  className={`model-import-row ${isSelected ? "is-selected" : ""}`}
+                  className={`model-import-row ${
+                    isSelected ? "is-selected" : ""
+                  } ${isRequired ? "is-locked" : ""}`}
                   type="button"
                   role="option"
                   aria-selected={isSelected}
+                  aria-disabled={isRequired}
+                  disabled={isRequired}
+                  title={isRequired ? "Always included" : undefined}
                   onClick={() => onToggleModel(model)}
                 >
                   <span>{model}</span>

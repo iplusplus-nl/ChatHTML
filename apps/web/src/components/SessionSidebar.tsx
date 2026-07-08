@@ -25,18 +25,23 @@ import {
 import {
   API_KEY_SOURCE_OPTIONS,
   API_PROVIDER_PRESETS,
+  UI_COMPLEXITY_MAX,
+  UI_COMPLEXITY_MIN,
   MAX_MEMORY_ITEMS,
   MAX_MEMORY_ITEM_TEXT_LENGTH,
   MAX_USER_PREFERENCE_PROMPT_LENGTH,
   REASONING_EFFORT_OPTIONS,
+  REQUIRED_MODEL_OPTIONS,
   createMemoryItemId,
   getDefaultModelsEndpoint,
   getProviderPreset,
   getApiKeyEnvironmentName,
   getSelectableModelOptions,
   hasCompleteApiSettings,
+  isRequiredModelOption,
   normalizeApiSettings,
   normalizeMemoryItems,
+  normalizeUiComplexity,
   type ApiKeySource,
   type ApiProviderId,
   type ApiSettings,
@@ -435,6 +440,10 @@ export function SessionSidebar({
   };
 
   const toggleFetchedModel = (modelId: string) => {
+    if (isRequiredModelOption(modelId)) {
+      return;
+    }
+
     setSelectedFetchedModels((current) => {
       const normalizedModelId = modelId.toLowerCase();
       const exists = current.some(
@@ -465,6 +474,10 @@ export function SessionSidebar({
   };
 
   const handleRemoveModelOption = (modelId: string) => {
+    if (isRequiredModelOption(modelId)) {
+      return;
+    }
+
     setDraftApiSettings((current) => {
       const modelOptions = current.modelOptions.filter(
         (modelOption) => modelOption !== modelId
@@ -1034,28 +1047,44 @@ export function SessionSidebar({
                       <span>Model List</span>
                       <div className="settings-model-list">
                         {draftApiSettings.modelOptions.length ? (
-                          draftApiSettings.modelOptions.map((model) => (
-                            <span
-                              key={model}
-                              className={`settings-model-chip ${
-                                model === draftApiSettings.model ? "is-active" : ""
-                              }`}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => updateApiDraft({ model })}
+                          draftApiSettings.modelOptions.map((model) => {
+                            const isRequiredModel = isRequiredModelOption(model);
+
+                            return (
+                              <span
+                                key={model}
+                                className={`settings-model-chip ${
+                                  model === draftApiSettings.model
+                                    ? "is-active"
+                                    : ""
+                                } ${isRequiredModel ? "is-locked" : ""}`}
                               >
-                                {model}
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={`Remove ${model}`}
-                                onClick={() => handleRemoveModelOption(model)}
-                              >
-                                <X size={13} strokeWidth={2.1} aria-hidden="true" />
-                              </button>
-                            </span>
-                          ))
+                                <button
+                                  type="button"
+                                  onClick={() => updateApiDraft({ model })}
+                                >
+                                  {model}
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={
+                                    isRequiredModel
+                                      ? `${model} is always included`
+                                      : `Remove ${model}`
+                                  }
+                                  disabled={isRequiredModel}
+                                  title={isRequiredModel ? "Always included" : undefined}
+                                  onClick={() => handleRemoveModelOption(model)}
+                                >
+                                  <X
+                                    size={13}
+                                    strokeWidth={2.1}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                              </span>
+                            );
+                          })
                         ) : (
                           <span className="settings-empty-state">
                             No saved models
@@ -1080,6 +1109,27 @@ export function SessionSidebar({
                           </option>
                         ))}
                       </select>
+                    </label>
+
+                    <label className="settings-row">
+                      <span>UI complexity</span>
+                      <div className="settings-slider-control">
+                        <input
+                          type="range"
+                          min={UI_COMPLEXITY_MIN}
+                          max={UI_COMPLEXITY_MAX}
+                          step={1}
+                          value={draftApiSettings.uiComplexity}
+                          onChange={(event) =>
+                            updateApiDraft({
+                              uiComplexity: normalizeUiComplexity(
+                                event.target.value
+                              )
+                            })
+                          }
+                        />
+                        <output>{draftApiSettings.uiComplexity}</output>
+                      </div>
                     </label>
                   </>
                 ) : settingsSection === "billing" ? (
@@ -1552,6 +1602,7 @@ export function SessionSidebar({
             <ModelImportDialog
               models={fetchedModels}
               selectedModels={selectedFetchedModels}
+              requiredModels={[...REQUIRED_MODEL_OPTIONS]}
               query={modelImportQuery}
               isLoading={isModelImportLoading}
               error={modelImportError}

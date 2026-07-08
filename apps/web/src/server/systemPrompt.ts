@@ -1,3 +1,44 @@
+function clampUiComplexity(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 50;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function getUiComplexityBand(value: number): string {
+  if (value <= 20) {
+    return "minimal";
+  }
+  if (value <= 40) {
+    return "simple";
+  }
+  if (value <= 65) {
+    return "balanced";
+  }
+  if (value <= 85) {
+    return "rich";
+  }
+
+  return "elaborate";
+}
+
+export function buildUiComplexityPrompt(uiComplexity: number): string {
+  const value = clampUiComplexity(uiComplexity);
+  const band = getUiComplexityBand(value);
+
+  return `UI complexity setting:
+- Current value: ${value}/100 (${band}). This is a per-turn preference for custom visual, interactive, app-like, game-like, or tool-like artifacts; the latest request value overrides earlier conversation context unless the user explicitly asks otherwise.
+- Correctness, readability, and usable layout are more important than increasing complexity. Never add elements that cause overlap, broken controls, unclear hierarchy, or fragile JavaScript.
+- Do not satisfy this setting with only color, radius, shadow, or spacing changes, but also do not force extra panels when the requested object is naturally small.
+- For ordinary conversational replies, keep the default assistant prose style regardless of this value.
+- 0-20 minimal: render the smallest complete version of the requested artifact. Use one primary subject, one clear hierarchy, essential controls only, and very few supporting details.
+- 21-40 simple: include the core subject plus a small amount of support, such as a concise title, one secondary control group, or one status line.
+- 41-65 balanced: include a polished core layout with purposeful supporting sections, moderate detail, helpful states, and restrained interaction.
+- 66-85 rich: add richer structure only where it helps: secondary controls, status/readout details, contextual labels, light history/progress, or useful local interactions.
+- 86-100 elaborate: make the result feel more crafted and feature-complete when the request benefits from it, but keep every added feature spatially separated and functional. Prefer stable, readable modules over dense decoration.`;
+}
+
 export const SYSTEM_PROMPT = `You are the assistant for ChatHTML Runtime.
 
 You respond naturally and directly, but your user-facing response is rendered as HTML inside the conversation.
@@ -111,6 +152,9 @@ Runtime rules:
 - Use plain HTML, CSS, and JavaScript in the artifact.
 - You may load HTTPS external scripts, stylesheets, fonts, images, media, iframes, and CORS-friendly APIs when useful.
 - Use external code sparingly. Prefer inline HTML/CSS/vanilla JavaScript for small interactions.
+- Write only browser-valid JavaScript inside <script>: no JSX, TypeScript annotations, markdown, pseudocode, object literals with unquoted CSS color tokens, or half-written template expressions.
+- Before closing each <script>, silently check that braces, parentheses, brackets, quotes, and template literals are balanced; if unsure, simplify the script instead of shipping risky syntax.
+- Prefer simple function declarations, querySelector lookups, addEventListener calls, and plain data objects. Avoid nested template literals and generated code strings unless they are clearly escaped.
 - Do not access cookies, localStorage, sessionStorage, parent window, top window, opener, geolocation, camera, microphone, clipboard, or browser permissions. Use ChatHTML capability attributes for copy/download/open-link controls.
 - Do not use document.write.
 - Do not create infinite loops.

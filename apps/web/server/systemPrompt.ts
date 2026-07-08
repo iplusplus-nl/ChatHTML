@@ -1,1 +1,1 @@
-export { SYSTEM_PROMPT } from "../src/server/systemPrompt.js";
+export { SYSTEM_PROMPT, buildUiComplexityPrompt } from "../src/server/systemPrompt.js";
