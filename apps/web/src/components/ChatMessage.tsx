@@ -59,6 +59,15 @@ function getArtifactEditActiveVariant(edit: ArtifactEdit) {
   );
 }
 
+function getArtifactEditErrorText(edit: ArtifactEdit): string {
+  return (
+    edit.error ||
+    getArtifactEditActiveVariant(edit)?.error ||
+    edit.variants.find((variant) => Boolean(variant.error))?.error ||
+    "The artifact edit did not complete."
+  );
+}
+
 function getArtifactReferenceText(reference: ArtifactEditReference): string {
   return reference.preview || reference.label;
 }
@@ -390,23 +399,30 @@ function ArtifactEditTimelineView({
         </button>
       ))}
       {failedEdits.map((edit) => (
-        <div className="artifact-edit-status-row is-error" key={edit.id}>
-          <ArtifactEditReferenceChip references={edit.references} />
-          <span className="artifact-edit-status-text">{edit.prompt}</span>
-          <button
-            className="artifact-edit-discard-button"
-            type="button"
-            disabled={timeline.disabled || !onDiscardArtifactEditTail}
-            onClick={() =>
-              onDiscardArtifactEditTail?.(
-                timeline.assistantId,
-                timeline.activeEditId
-              )
-            }
+        <div className="artifact-edit-failed-item" key={edit.id}>
+          <div
+            className="message-bubble user artifact-edit-bubble is-error"
+            role="status"
           >
-            <X size={13} strokeWidth={2.25} aria-hidden="true" />
-            <span>Dismiss</span>
-          </button>
+            <ArtifactEditReferenceChip references={edit.references} />
+            <p>{edit.prompt}</p>
+          </div>
+          <div className="artifact-edit-status-row is-error">
+            <span className="artifact-edit-error-message">
+              {getArtifactEditErrorText(edit)}
+            </span>
+            <button
+              className="artifact-edit-discard-button"
+              type="button"
+              disabled={timeline.disabled || !onDiscardArtifactEditTail}
+              onClick={() =>
+                onDiscardArtifactEditTail?.(timeline.assistantId, edit.id)
+              }
+            >
+              <X size={13} strokeWidth={2.25} aria-hidden="true" />
+              <span>Dismiss</span>
+            </button>
+          </div>
         </div>
       ))}
       {confirmPromptEdit ? (

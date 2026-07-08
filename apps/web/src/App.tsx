@@ -1027,6 +1027,33 @@ function getArtifactEditKeepCount(
   return index >= 0 ? index + 1 : edits.length;
 }
 
+function getArtifactEditDiscardAnchorId(
+  message: ClientMessage,
+  editId: string | undefined
+): string | undefined {
+  if (!editId) {
+    return undefined;
+  }
+
+  const edits = message.artifactEdits ?? [];
+  const index = edits.findIndex((edit) => edit.id === editId);
+  if (index < 0) {
+    return editId;
+  }
+
+  if (hasUsableArtifactEditVariant(edits[index])) {
+    return editId;
+  }
+
+  for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
+    if (hasUsableArtifactEditVariant(edits[previousIndex])) {
+      return edits[previousIndex].id;
+    }
+  }
+
+  return undefined;
+}
+
 function hasLaterArtifactEdits(message: ClientMessage): boolean {
   const edits = message.artifactEdits ?? [];
   const editId = getResolvedArtifactEditId(message);
@@ -5164,13 +5191,23 @@ export default function App() {
         return false;
       }
 
-      const keepCount = getArtifactEditKeepCount(currentMessage, editId);
+      const discardAnchorId = getArtifactEditDiscardAnchorId(
+        currentMessage,
+        editId
+      );
+      const keepCount = getArtifactEditKeepCount(
+        currentMessage,
+        discardAnchorId
+      );
       const discardCount = currentMessage.artifactEdits.length - keepCount;
       if (discardCount <= 0) {
         return false;
       }
 
-      const rawStream = getArtifactEditRawStream(currentMessage, editId);
+      const rawStream = getArtifactEditRawStream(
+        currentMessage,
+        discardAnchorId
+      );
       if (!rawStream) {
         return false;
       }
@@ -5184,12 +5221,22 @@ export default function App() {
           return message;
         }
 
-        const nextKeepCount = getArtifactEditKeepCount(message, editId);
+        const nextDiscardAnchorId = getArtifactEditDiscardAnchorId(
+          message,
+          editId
+        );
+        const nextKeepCount = getArtifactEditKeepCount(
+          message,
+          nextDiscardAnchorId
+        );
         if (nextKeepCount >= message.artifactEdits.length) {
           return message;
         }
 
-        const rawStream = getArtifactEditRawStream(message, editId);
+        const rawStream = getArtifactEditRawStream(
+          message,
+          nextDiscardAnchorId
+        );
         if (!rawStream) {
           return message;
         }
@@ -5203,7 +5250,9 @@ export default function App() {
             : undefined,
           artifactEdits: artifactEdits.length ? artifactEdits : undefined,
           activeArtifactEditId:
-            editId && nextKeepCount > 0 ? editId : undefined
+            nextDiscardAnchorId && nextKeepCount > 0
+              ? nextDiscardAnchorId
+              : undefined
         };
       });
       focusComposerInput();

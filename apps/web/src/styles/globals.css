@@ -1924,6 +1924,12 @@ button {
   box-shadow: inset 0 0 0 1px rgba(147, 197, 253, 0.55);
 }
 
+.app-shell[data-theme="night"] .artifact-edit-bubble.is-error {
+  border-color: rgba(253, 162, 155, 0.34);
+  color: #fee4e2;
+  background: rgba(127, 29, 29, 0.26);
+}
+
 .app-shell[data-theme="night"] .artifact-edit-loading-spinner {
   border-color: rgba(147, 197, 253, 0.24);
   border-top-color: #93c5fd;
@@ -2335,6 +2341,12 @@ button {
   min-width: 0;
 }
 
+.artifact-edit-bubble.is-error {
+  border: 1px solid rgba(217, 45, 32, 0.28);
+  color: #912018;
+  background: rgba(254, 243, 242, 0.92);
+}
+
 .artifact-edit-bubble.is-editing {
   width: min(680px, 100%);
   align-items: flex-start;
@@ -2427,6 +2439,25 @@ button {
   color: #667085;
   font-size: 12px;
   font-weight: 560;
+}
+
+.artifact-edit-failed-item {
+  display: flex;
+  max-width: min(680px, 100%);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.artifact-edit-failed-item .artifact-edit-status-row {
+  max-width: 100%;
+}
+
+.artifact-edit-error-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .artifact-edit-status-text {
