@@ -2004,8 +2004,15 @@ function normalizeArtifactSourceEdits(input: unknown): ArtifactSourceEdit[] {
     return [];
   }
 
-  const editsInput = (input as { edits?: unknown }).edits;
-  if (!Array.isArray(editsInput)) {
+  const objectInput = input as Partial<ArtifactSourceEdit> & { edits?: unknown };
+  const editsInput = Array.isArray(input)
+    ? input
+    : Array.isArray(objectInput.edits)
+      ? objectInput.edits
+      : typeof objectInput.replace === "string"
+        ? [objectInput]
+        : [];
+  if (!editsInput.length) {
     return [];
   }
 
@@ -2039,6 +2046,44 @@ function normalizeArtifactSourceEdits(input: unknown): ArtifactSourceEdit[] {
   }
 
   return edits;
+}
+
+function extractStreamUiBlockText(value: string): string {
+  const match = /<streamui\b[^>]*>[\s\S]*?<\/streamui>/i.exec(value);
+  return match ? match[0] : "";
+}
+
+function logTextPreview(value: string, maxLength = 600): string {
+  return JSON.stringify(value.replace(/\s+/g, " ").trim().slice(0, maxLength));
+}
+
+export function recoverArtifactSourceEditsFromModelText(
+  rawModelText: string,
+  parsed: unknown
+): {
+  edits: ArtifactSourceEdit[];
+  recovery: "none" | "raw_streamui";
+} {
+  const edits = normalizeArtifactSourceEdits(parsed);
+  if (edits.length) {
+    return { edits, recovery: "none" };
+  }
+
+  const replacement = extractStreamUiBlockText(rawModelText);
+  if (!replacement) {
+    return { edits: [], recovery: "none" };
+  }
+
+  return {
+    edits: [
+      {
+        target: "streamui",
+        replace: replacement,
+        note: "Recovered complete streamui replacement from model output."
+      }
+    ],
+    recovery: "raw_streamui"
+  };
 }
 
 function countOccurrences(source: string, needle: string): number {
@@ -2230,6 +2275,7 @@ async function runArtifactEditModel({
   summary: string;
   edits: ArtifactSourceEdit[];
   rawModelText: string;
+  recovery: "none" | "raw_streamui";
 }> {
   const endpoint = getResponsesEndpoint(apiSettings.baseUrl);
   const state: ToolStreamState = {
@@ -2277,7 +2323,7 @@ async function runArtifactEditModel({
   });
 
   const parsed = safeJsonParse(extractJsonObjectText(rawModelText));
-  const edits = normalizeArtifactSourceEdits(parsed);
+  const recovered = recoverArtifactSourceEditsFromModelText(rawModelText, parsed);
   const summary =
     parsed && typeof parsed === "object"
       ? stringValue((parsed as { summary?: unknown }).summary, 500)
@@ -2285,8 +2331,9 @@ async function runArtifactEditModel({
 
   return {
     summary,
-    edits,
-    rawModelText
+    edits: recovered.edits,
+    rawModelText,
+    recovery: recovered.recovery
   };
 }
 
@@ -2342,6 +2389,15 @@ export async function handleArtifactEdit(
       references,
       signal: abortController.signal
     });
+    if (result.recovery !== "none") {
+      console.warn(
+        `[artifact-edit:${requestId}] recovered_${result.recovery} raw_model_chars=${result.rawModelText.length} raw_model_preview=${logTextPreview(result.rawModelText)}`
+      );
+    } else if (!result.edits.length) {
+      console.warn(
+        `[artifact-edit:${requestId}] empty_edits raw_model_chars=${result.rawModelText.length} raw_model_preview=${logTextPreview(result.rawModelText)}`
+      );
+    }
     const applied = applyArtifactSourceEdits(source, result.edits);
     completed = true;
     console.info(

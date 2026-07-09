@@ -7,6 +7,7 @@ import {
   extractResponsesReasoningDoneText,
   extractResponsesOutputText,
   formatResponsesHttpError,
+  recoverArtifactSourceEditsFromModelText,
   summarizeHttpErrorBody
 } from "../../server/openrouter.js";
 
@@ -158,6 +159,39 @@ describe("openrouter response stream helpers", () => {
       "<chat><assistant>Old note</assistant></chat><streamui><section>New</section></streamui>"
     );
     assert.equal(result.applied[0].findLength, "<streamui><section>Old</section></streamui>".length);
+  });
+
+  it("recovers a streamui replacement from non-json artifact edit output", () => {
+    const recovered = recoverArtifactSourceEditsFromModelText(
+      "Here is the update:\n<streamui><section>New</section></streamui>",
+      {}
+    );
+
+    assert.equal(recovered.recovery, "raw_streamui");
+    const result = applyArtifactSourceEdits(
+      "<chat><assistant>Old note</assistant></chat><streamui><section>Old</section></streamui>",
+      recovered.edits
+    );
+
+    assert.equal(
+      result.rawStream,
+      "<chat><assistant>Old note</assistant></chat><streamui><section>New</section></streamui>"
+    );
+  });
+
+  it("accepts a single artifact source edit object from the model", () => {
+    const recovered = recoverArtifactSourceEditsFromModelText("", {
+      find: "<p>Old</p>",
+      replace: "<p>New</p>"
+    });
+
+    assert.equal(recovered.recovery, "none");
+    const result = applyArtifactSourceEdits(
+      "<streamui><p>Old</p></streamui>",
+      recovered.edits
+    );
+
+    assert.equal(result.rawStream, "<streamui><p>New</p></streamui>");
   });
 
   it("rejects ambiguous artifact source edits", () => {
