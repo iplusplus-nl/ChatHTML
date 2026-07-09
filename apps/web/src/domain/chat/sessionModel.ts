@@ -39,6 +39,7 @@ export type ArtifactEdit = {
   createdAt: number;
   prompt: string;
   references: ArtifactEditReference[];
+  promptBubble?: boolean;
   activeVariantId?: string;
   variants: ArtifactEditVariant[];
   status: "pending" | "complete" | "error";
@@ -125,6 +126,7 @@ export const STREAM_INTERRUPTED_ERROR =
 const LOCAL_ARTIFACT_EDIT_INTERRUPTED_ERROR =
   "The local edit was interrupted.";
 const LOCAL_ARTIFACT_EDIT_INTERRUPTION_GRACE_MS = 15 * 60 * 1000;
+export const STALE_ARTIFACT_EDIT_SWEEP_INTERVAL_MS = 30 * 1000;
 
 export function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -880,17 +882,26 @@ function normalizeArtifactEdit(
           ? "error"
           : "complete";
   const hasPendingVariant = variants.some((variant) => variant.status === "pending");
+  const pendingActivityAt = Math.max(
+    rawStatus === "pending" ? createdAt : Number.NEGATIVE_INFINITY,
+    ...variants
+      .filter((variant) => variant.status === "pending")
+      .map((variant) => variant.createdAt)
+  );
+  const latestPendingActivityAt = Number.isFinite(pendingActivityAt)
+    ? pendingActivityAt
+    : createdAt;
   const isRecentInterruptedError =
     rawStatus === "error" &&
     ((error === LOCAL_ARTIFACT_EDIT_INTERRUPTED_ERROR &&
-      now - createdAt < LOCAL_ARTIFACT_EDIT_INTERRUPTION_GRACE_MS) ||
+      now - latestPendingActivityAt < LOCAL_ARTIFACT_EDIT_INTERRUPTION_GRACE_MS) ||
       ((!error || error === LOCAL_ARTIFACT_EDIT_INTERRUPTED_ERROR) &&
         hasPendingVariant));
   const status = isRecentInterruptedError ? "pending" : rawStatus;
   const shouldInterrupt =
     interruptPending &&
     status === "pending" &&
-    now - createdAt >= LOCAL_ARTIFACT_EDIT_INTERRUPTION_GRACE_MS;
+    now - latestPendingActivityAt >= LOCAL_ARTIFACT_EDIT_INTERRUPTION_GRACE_MS;
   const restoredStatus = shouldInterrupt ? "error" : status;
   const activeVariantId = normalizeBoundedString(edit.activeVariantId, 160);
   const normalizedError =
@@ -905,6 +916,7 @@ function normalizeArtifactEdit(
     createdAt,
     prompt,
     references: normalizeArtifactEditReferences(edit.references),
+    promptBubble: edit.promptBubble === false ? false : undefined,
     activeVariantId:
       activeVariantId && variants.some((variant) => variant.id === activeVariantId)
         ? activeVariantId
@@ -938,6 +950,127 @@ function normalizeArtifactEdits(
   }
 
   return edits.length ? edits : undefined;
+}
+
+function interruptStaleArtifactEditVariant(
+  variant: ArtifactEditVariant,
+  now = Date.now()
+): ArtifactEditVariant {
+  if (
+    variant.status !== "pending" ||
+    now - variant.createdAt < LOCAL_ARTIFACT_EDIT_INTERRUPTION_GRACE_MS
+  ) {
+    return variant;
+  }
+
+  return {
+    ...variant,
+    status: "error",
+    error: variant.error ?? LOCAL_ARTIFACT_EDIT_INTERRUPTED_ERROR
+  };
+}
+
+function latestPendingArtifactEditActivityAt(
+  edit: ArtifactEdit
+): number | undefined {
+  const pendingTimes = edit.variants
+    .filter((variant) => variant.status === "pending")
+    .map((variant) => variant.createdAt);
+  if (edit.status === "pending") {
+    pendingTimes.push(edit.createdAt);
+  }
+  return pendingTimes.length ? Math.max(...pendingTimes) : undefined;
+}
+
+function interruptStaleArtifactEdit(
+  edit: ArtifactEdit,
+  now = Date.now()
+): ArtifactEdit {
+  const variants = edit.variants.map((variant) =>
+    interruptStaleArtifactEditVariant(variant, now)
+  );
+  const didVariantChange = variants.some(
+    (variant, index) => variant !== edit.variants[index]
+  );
+  const latestPendingAt = latestPendingArtifactEditActivityAt({
+    ...edit,
+    variants
+  });
+  const shouldInterruptEdit =
+    edit.status === "pending" &&
+    latestPendingAt !== undefined &&
+    now - latestPendingAt >= LOCAL_ARTIFACT_EDIT_INTERRUPTION_GRACE_MS;
+
+  if (!didVariantChange && !shouldInterruptEdit) {
+    return edit;
+  }
+
+  return {
+    ...edit,
+    variants,
+    status: shouldInterruptEdit ? "error" : edit.status,
+    error: shouldInterruptEdit
+      ? edit.error ?? LOCAL_ARTIFACT_EDIT_INTERRUPTED_ERROR
+      : edit.error
+  };
+}
+
+function interruptStaleArtifactEditsInMessage(
+  message: ClientMessage,
+  now = Date.now()
+): ClientMessage {
+  if (message.role !== "assistant" || !message.artifactEdits?.length) {
+    return message;
+  }
+
+  const artifactEdits = message.artifactEdits.map((edit) =>
+    interruptStaleArtifactEdit(edit, now)
+  );
+  const didChange = artifactEdits.some(
+    (edit, index) => edit !== message.artifactEdits?.[index]
+  );
+
+  return didChange
+    ? {
+        ...message,
+        artifactEdits
+      }
+    : message;
+}
+
+export function interruptStaleArtifactEditsInSessionState(
+  state: SessionState,
+  now = Date.now()
+): SessionState {
+  let didChange = false;
+  const sessions = state.sessions.map((session) => {
+    let didChangeSession = false;
+    const messages = session.messages.map((message) => {
+      const nextMessage = interruptStaleArtifactEditsInMessage(message, now);
+      if (nextMessage !== message) {
+        didChangeSession = true;
+      }
+      return nextMessage;
+    });
+
+    if (!didChangeSession) {
+      return session;
+    }
+
+    didChange = true;
+    return {
+      ...session,
+      updatedAt: Math.max(session.updatedAt, now),
+      messages
+    };
+  });
+
+  return didChange
+    ? {
+        ...state,
+        sessions: sortSessions(sessions)
+      }
+    : state;
 }
 
 function normalizeStringArray(input: unknown): string[] | undefined {

@@ -8,6 +8,7 @@ import {
   filterDeletedSessionState,
   getSessionStreamingRunIds,
   hasPersistedMessages,
+  interruptStaleArtifactEditsInSessionState,
   isSessionEmpty,
   mergeSyncedSessionState,
   normalizeStoredMessage,
@@ -953,6 +954,45 @@ describe("sessionModel", () => {
     assert.equal(message?.artifactEdits?.[0]?.variants[0]?.status, "pending");
   });
 
+  it("does not interrupt a retry variant on an older failed artifact edit", () => {
+    const now = Date.now();
+    const stale = now - 60 * 60 * 1000;
+    const message = normalizeStoredMessage(
+      {
+        id: "a1",
+        role: "assistant",
+        content: "Artifact",
+        artifactEdits: [
+          {
+            id: "edit-1",
+            createdAt: stale,
+            prompt: "Retry me",
+            references: [],
+            activeVariantId: "variant-2",
+            variants: [
+              {
+                id: "variant-1",
+                createdAt: stale,
+                status: "error",
+                error: "Previous failure"
+              },
+              {
+                id: "variant-2",
+                createdAt: now,
+                status: "pending"
+              }
+            ],
+            status: "pending"
+          }
+        ]
+      },
+      { interruptPendingArtifactEdits: true }
+    );
+
+    assert.equal(message?.artifactEdits?.[0]?.status, "pending");
+    assert.equal(message?.artifactEdits?.[0]?.variants[1]?.status, "pending");
+  });
+
   it("recovers recently misclassified interrupted artifact edits", () => {
     const now = Date.now();
     const message = normalizeStoredMessage(
@@ -1057,5 +1097,56 @@ describe("sessionModel", () => {
       /interrupted/i
     );
     assert.equal(message?.artifactEdits?.[0]?.variants[0]?.status, "error");
+  });
+
+  it("interrupts stale pending artifact edits in an active session state", () => {
+    const now = Date.now();
+    const stale = now - 60 * 60 * 1000;
+    const state = interruptStaleArtifactEditsInSessionState(
+      {
+        activeSessionId: "s1",
+        sessions: [
+          {
+            id: "s1",
+            title: "Artifact",
+            createdAt: stale,
+            updatedAt: stale,
+            files: [],
+            messages: [
+              {
+                id: "a1",
+                role: "assistant",
+                content: "Artifact",
+                artifactEdits: [
+                  {
+                    id: "edit-1",
+                    createdAt: stale,
+                    prompt: "Still pending",
+                    references: [],
+                    activeVariantId: "variant-1",
+                    variants: [
+                      {
+                        id: "variant-1",
+                        createdAt: stale,
+                        status: "pending"
+                      }
+                    ],
+                    status: "pending"
+                  }
+                ],
+                activeArtifactEditId: "edit-1"
+              }
+            ]
+          }
+        ]
+      },
+      now
+    );
+    const message = state.sessions[0].messages[0];
+
+    assert.equal(state.sessions[0].updatedAt, now);
+    assert.equal(message.artifactEdits?.[0]?.status, "error");
+    assert.match(message.artifactEdits?.[0]?.error ?? "", /interrupted/i);
+    assert.equal(message.artifactEdits?.[0]?.variants[0]?.status, "error");
   });
 });
