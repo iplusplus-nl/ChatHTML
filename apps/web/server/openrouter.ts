@@ -208,6 +208,16 @@ type ArtifactSourceEdit = {
   note?: string;
 };
 
+export type OpenRouterActivitySnapshot = {
+  runningChatRuns: number;
+  activeChatFinalizations: number;
+  activeArtifactEdits: number;
+  activeTasks: number;
+  idleForMs: number;
+  idleSince: string;
+  draining: boolean;
+};
+
 type ChatRunInput = {
   requestId: string;
   startedAt: number;
@@ -249,6 +259,80 @@ const STREAM_PERSIST_INTERVAL_MS = 500;
 const CHAT_CANCELLED_MESSAGE = "Generation stopped.";
 const RESPONSES_MAX_OUTPUT_TOKENS = 16_000;
 const ARTIFACT_EDIT_MAX_OUTPUT_TOKENS = 32_000;
+let activeChatFinalizations = 0;
+let activeArtifactEdits = 0;
+let openRouterIdleSinceMs = Date.now();
+let openRouterDraining = false;
+
+function getRunningChatRunCount(): number {
+  let count = 0;
+  for (const run of chatRuns.values()) {
+    if (run.status === "running") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function getOpenRouterActiveTaskCount(): number {
+  return getRunningChatRunCount() + activeChatFinalizations + activeArtifactEdits;
+}
+
+function refreshOpenRouterIdleState(): void {
+  if (getOpenRouterActiveTaskCount() === 0) {
+    openRouterIdleSinceMs = Date.now();
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function getOpenRouterActivitySnapshot(
+  nowMs = Date.now()
+): OpenRouterActivitySnapshot {
+  const runningChatRuns = getRunningChatRunCount();
+  const activeTasks = runningChatRuns + activeChatFinalizations + activeArtifactEdits;
+  return {
+    runningChatRuns,
+    activeChatFinalizations,
+    activeArtifactEdits,
+    activeTasks,
+    idleForMs: activeTasks > 0 ? 0 : Math.max(0, nowMs - openRouterIdleSinceMs),
+    idleSince: new Date(openRouterIdleSinceMs).toISOString(),
+    draining: openRouterDraining
+  };
+}
+
+export function setOpenRouterDraining(draining: boolean): OpenRouterActivitySnapshot {
+  openRouterDraining = draining;
+  return getOpenRouterActivitySnapshot();
+}
+
+export async function waitForOpenRouterIdle({
+  idleMs,
+  timeoutMs,
+  pollMs = 500
+}: {
+  idleMs: number;
+  timeoutMs: number;
+  pollMs?: number;
+}): Promise<OpenRouterActivitySnapshot> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  const requiredIdleMs = Math.max(0, idleMs);
+
+  while (true) {
+    const snapshot = getOpenRouterActivitySnapshot();
+    if (snapshot.activeTasks === 0 && snapshot.idleForMs >= requiredIdleMs) {
+      return snapshot;
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      return snapshot;
+    }
+    await sleep(Math.min(Math.max(50, pollMs), remainingMs));
+  }
+}
 
 function flushResponse(res: Response): void {
   const flush = (res as Response & { flush?: () => void }).flush;
@@ -926,8 +1010,11 @@ function finishChatRun(
     status,
     ...(status === "error" && error ? { error } : {})
   });
+  activeChatFinalizations += 1;
   void flushRunPersistence(run, status, error).finally(() => {
+    activeChatFinalizations = Math.max(0, activeChatFinalizations - 1);
     scheduleRunCleanup(run);
+    refreshOpenRouterIdleState();
   });
 }
 
@@ -2345,6 +2432,7 @@ export async function handleArtifactEdit(
   const requestId = Math.random().toString(36).slice(2, 9);
   const abortController = new AbortController();
   let completed = false;
+  let countedAsActiveTask = false;
 
   res.on("close", () => {
     if (!completed) {
@@ -2376,8 +2464,18 @@ export async function handleArtifactEdit(
       completed = true;
       return;
     }
+    if (openRouterDraining) {
+      res.status(503).json({
+        error: "Server is draining for deployment. Try again shortly.",
+        activity: getOpenRouterActivitySnapshot()
+      });
+      completed = true;
+      return;
+    }
 
     const apiSettings = readRuntimeApiSettings(body.apiSettings);
+    activeArtifactEdits += 1;
+    countedAsActiveTask = true;
     console.info(
       `[artifact-edit:${requestId}] start provider=${apiSettings.providerName} base_url=${apiSettings.baseUrl} model=${apiSettings.model} source_chars=${source.length} references=${references.length}`
     );
@@ -2426,6 +2524,11 @@ export async function handleArtifactEdit(
     console.error(stats.join(" "));
     if (!res.headersSent) {
       res.status(responsesFailure ? 502 : 500).json({ error: message });
+    }
+  } finally {
+    if (countedAsActiveTask) {
+      activeArtifactEdits = Math.max(0, activeArtifactEdits - 1);
+      refreshOpenRouterIdleState();
     }
   }
 }
@@ -2697,6 +2800,13 @@ export async function handleOpenRouterChat(
 
     const input = createChatRunInput(body, requestId);
     const existingRun = chatRuns.get(input.runId);
+    if (!existingRun && openRouterDraining) {
+      res.status(503).json({
+        error: "Server is draining for deployment. Try again shortly.",
+        activity: getOpenRouterActivitySnapshot()
+      });
+      return;
+    }
     const run = existingRun ?? startChatRun(input);
     attachChatRun(req, res, run, getAfterSequence(req.query.after));
   } catch (error) {
