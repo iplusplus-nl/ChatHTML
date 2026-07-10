@@ -1,5 +1,12 @@
 import { MousePointer2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from "react";
 import type {
   ArtifactSelection,
   ArtifactSelectionPayload
@@ -38,14 +45,40 @@ const FLOATING_EDIT_BUTTON_SIZE = 34;
 const FLOATING_EDIT_SIDE_GAP = 20;
 const FLOATING_EDIT_VIEWPORT_MARGIN = 12;
 const FLOATING_EDIT_VERTICAL_OFFSET_PX = 200;
+const FLOATING_ACTION_SIDE_GAP = 18;
+const FLOATING_ACTION_SAFE_GAP = 32;
+const FLOATING_ACTION_COLUMN_GAP = 8;
 
 type FloatingEditPosition = {
   left: number;
   top: number;
 };
 
+type SideActionsPosition = {
+  left: number;
+  top: number;
+};
+
 function clampValue(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function getFloatingActionItems(actionsNode: HTMLElement): HTMLElement[] {
+  const turnActions = actionsNode.querySelector<HTMLElement>(
+    ":scope > .assistant-turn-actions"
+  );
+  const turnItems = turnActions
+    ? Array.from(turnActions.children).filter(
+        (child): child is HTMLElement => child instanceof HTMLElement
+      )
+    : [];
+  const exportMenu = actionsNode.querySelector<HTMLElement>(
+    ":scope > .artifact-export-menu"
+  );
+
+  return [...turnItems, ...(exportMenu ? [exportMenu] : [])].filter(
+    (item) => item.getClientRects().length > 0
+  );
 }
 
 export function AssistantPreviewBubble({
@@ -63,10 +96,16 @@ export function AssistantPreviewBubble({
   onArtifactSelection,
   onSelectionModeChange
 }: AssistantPreviewBubbleProps) {
+  const artifactBlockRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
   const previewShellRef = useRef<HTMLDivElement | null>(null);
+  const actionsSlotRef = useRef<HTMLDivElement | null>(null);
+  const sideActionsRef = useRef<HTMLDivElement | null>(null);
   const [floatingEditPosition, setFloatingEditPosition] =
     useState<FloatingEditPosition | null>(null);
+  const [bottomActionsSuppressed, setBottomActionsSuppressed] = useState(false);
+  const [sideActionsPosition, setSideActionsPosition] =
+    useState<SideActionsPosition | null>(null);
   const getExportWidth = () => containerRef.current?.clientWidth ?? 900;
   const canEditSelection =
     editingEnabled && !selectionDisabled && snapshot.status === "complete";
@@ -129,6 +168,98 @@ export function AssistantPreviewBubble({
         : nextPosition
     );
   }, [canEditSelection]);
+  const updateSideActions = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const artifactBlock = artifactBlockRef.current;
+    const actionsSlot = actionsSlotRef.current;
+    const sideActionsNode = sideActionsRef.current;
+
+    if (!artifactBlock || !actionsSlot || !sideActionsNode) {
+      setBottomActionsSuppressed(false);
+      setSideActionsPosition(null);
+      return;
+    }
+
+    const actionItems = getFloatingActionItems(sideActionsNode);
+    if (!actionItems.length) {
+      setBottomActionsSuppressed(false);
+      setSideActionsPosition(null);
+      return;
+    }
+
+    const viewportHeight =
+      window.innerHeight || document.documentElement.clientHeight;
+    const viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth;
+    const blockRect = artifactBlock.getBoundingClientRect();
+    const slotRect = actionsSlot.getBoundingClientRect();
+    const itemMetrics = actionItems.map((item) => {
+      const itemRect = item.getBoundingClientRect();
+      return {
+        width: itemRect.width || item.offsetWidth || 24,
+        height: itemRect.height || item.offsetHeight || 24
+      };
+    });
+    const columnWidth = Math.max(...itemMetrics.map((metric) => metric.width));
+    const columnHeight =
+      itemMetrics.reduce((sum, metric) => sum + metric.height, 0) +
+      Math.max(0, itemMetrics.length - 1) * FLOATING_ACTION_COLUMN_GAP;
+    const inputRect =
+      document
+        .querySelector<HTMLElement>(".chat-input-bar")
+        ?.getBoundingClientRect() ?? null;
+    const composerRect =
+      document
+        .querySelector<HTMLElement>(".composer-footer.has-messages")
+        ?.getBoundingClientRect() ?? null;
+    const safeTop =
+      (inputRect?.top ?? composerRect?.top ?? viewportHeight) -
+      FLOATING_ACTION_SAFE_GAP;
+    const bottomOverlapsSafeArea = slotRect.bottom > safeTop;
+    const blockVisible =
+      blockRect.bottom > FLOATING_EDIT_VIEWPORT_MARGIN &&
+      blockRect.top < viewportHeight - FLOATING_EDIT_VIEWPORT_MARGIN;
+    const railFitsWithinBlock = blockRect.bottom - blockRect.top >= columnHeight;
+    const hasRightSideRoom =
+      viewportWidth - blockRect.right >=
+      columnWidth +
+        FLOATING_ACTION_SIDE_GAP +
+        FLOATING_EDIT_VIEWPORT_MARGIN;
+    const sideTop = safeTop - columnHeight;
+    const topHasReachedSideThreshold = blockRect.top > sideTop;
+
+    setBottomActionsSuppressed(bottomOverlapsSafeArea);
+
+    if (
+      !bottomOverlapsSafeArea ||
+      !blockVisible ||
+      !railFitsWithinBlock ||
+      !hasRightSideRoom ||
+      topHasReachedSideThreshold
+    ) {
+      setSideActionsPosition(null);
+      return;
+    }
+
+    const nextPosition = {
+      left: Math.round(blockRect.right + FLOATING_ACTION_SIDE_GAP),
+      top: Math.round(sideTop)
+    };
+    setSideActionsPosition((current) => {
+      if (
+        current &&
+        current.left === nextPosition.left &&
+        current.top === nextPosition.top
+      ) {
+        return current;
+      }
+
+      return nextPosition;
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -144,10 +275,12 @@ export function AssistantPreviewBubble({
       animationFrameId = window.requestAnimationFrame(() => {
         animationFrameId = 0;
         updateFloatingEditAction();
+        updateSideActions();
       });
     };
 
     updateFloatingEditAction();
+    updateSideActions();
     document.addEventListener("scroll", scheduleUpdate, true);
     window.addEventListener("resize", scheduleUpdate);
 
@@ -159,6 +292,12 @@ export function AssistantPreviewBubble({
       if (previewShellRef.current) {
         resizeObserver.observe(previewShellRef.current);
       }
+      if (artifactBlockRef.current) {
+        resizeObserver.observe(artifactBlockRef.current);
+      }
+      if (actionsSlotRef.current) {
+        resizeObserver.observe(actionsSlotRef.current);
+      }
     }
 
     return () => {
@@ -169,10 +308,15 @@ export function AssistantPreviewBubble({
       window.removeEventListener("resize", scheduleUpdate);
       resizeObserver?.disconnect();
     };
-  }, [updateFloatingEditAction]);
+  }, [updateSideActions, updateFloatingEditAction]);
+
+  useEffect(() => {
+    updateSideActions();
+  }, [actions, selectionModeActive, snapshot.status, updateSideActions]);
 
   return (
     <div
+      ref={artifactBlockRef}
       className={`assistant-artifact-block ${
         canEditSelection ? "has-floating-edit-action" : ""
       }`}
@@ -230,8 +374,40 @@ export function AssistantPreviewBubble({
         <ErrorPanel errors={snapshot.errors} />
       </section>
       <div
-        className="assistant-artifact-actions"
+        ref={actionsSlotRef}
+        className="assistant-artifact-actions-slot"
+      >
+        <div
+          className={`assistant-artifact-actions ${
+            bottomActionsSuppressed ? "is-suppressed" : ""
+          }`}
+          aria-label="Artifact actions"
+          aria-hidden={bottomActionsSuppressed}
+        >
+          {actions}
+          <ArtifactExportMenu
+            filenameBase={id}
+            getExportWidth={getExportWidth}
+            snapshot={snapshot}
+            themeMode={themeMode}
+          />
+        </div>
+      </div>
+      <div
+        ref={sideActionsRef}
+        className={`assistant-artifact-side-actions ${
+          sideActionsPosition ? "is-visible" : ""
+        }`}
         aria-label="Artifact actions"
+        aria-hidden={!sideActionsPosition}
+        style={
+          sideActionsPosition
+            ? ({
+                left: sideActionsPosition.left,
+                top: sideActionsPosition.top
+              } satisfies CSSProperties)
+            : undefined
+        }
       >
         {actions}
         <ArtifactExportMenu

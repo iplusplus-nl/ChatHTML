@@ -4096,6 +4096,12 @@ button {
   background: #dbeafe;
 }
 
+.assistant-artifact-actions-slot {
+  display: flex;
+  min-height: 26px;
+  justify-content: flex-end;
+}
+
 .assistant-artifact-actions {
   display: flex;
   min-height: 24px;
@@ -4103,6 +4109,50 @@ button {
   justify-content: flex-end;
   gap: 6px;
   padding-right: 2px;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 280ms ease,
+    visibility 280ms ease;
+}
+
+.assistant-artifact-actions.is-suppressed {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.assistant-artifact-side-actions {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 280ms ease,
+    visibility 280ms ease;
+}
+
+.assistant-artifact-side-actions.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.assistant-artifact-side-actions .assistant-turn-actions {
+  display: contents;
+}
+
+.assistant-artifact-side-actions .artifact-export-popover {
+  top: 0;
+  right: calc(100% + 8px);
+  transform-origin: right top;
 }
 
 .artifact-export-menu {
@@ -5607,7 +5657,9 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .artifact-floating-edit-action {
+  .artifact-floating-edit-action,
+  .assistant-artifact-actions,
+  .assistant-artifact-side-actions {
     transition: none;
   }
 
