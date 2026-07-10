@@ -357,6 +357,26 @@ describe("chat run execution controller", () => {
     assert.equal(fixture.applied.at(-1)?.patch.error, "Provider failed");
   });
 
+  it("rolls an explicit cancelled done event through the cancelled phase", async () => {
+    const fixture = createFixture();
+    fixture.controller.handleLine(
+      JSON.stringify({ type: "content", text: "partial", seq: 1 })
+    );
+    fixture.controller.handleLine(
+      JSON.stringify({ type: "done", status: "cancelled", seq: 2 })
+    );
+
+    const outcome = await fixture.controller.finishTransport();
+
+    assert.equal(outcome.kind, "local-terminal");
+    assert.equal(
+      outcome.kind === "local-terminal" ? outcome.presentation.phase : undefined,
+      "cancelled"
+    );
+    assert.equal(fixture.applied.at(-1)?.phase, "cancelled");
+    assert.equal(fixture.applied.at(-1)?.patch.status, "complete");
+  });
+
   it("maps aborts to cancellation and leaves ordinary failures unhandled", async () => {
     const cancelled = createFixture();
     cancelled.abortController.abort();

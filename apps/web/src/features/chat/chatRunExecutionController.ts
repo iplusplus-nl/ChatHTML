@@ -14,6 +14,7 @@ import {
 } from "./chatRunStateMachine";
 import {
   createChatStreamLineHandler,
+  type ChatStreamTerminalStatus,
   type SequencedMemoryStreamEvent
 } from "./chatStreamEvents";
 
@@ -282,7 +283,7 @@ export function createChatRunExecutionController(
   };
 
   const handleDone = (
-    status: "complete" | "error",
+    status: ChatStreamTerminalStatus,
     error: string,
     sequence?: number
   ) => {

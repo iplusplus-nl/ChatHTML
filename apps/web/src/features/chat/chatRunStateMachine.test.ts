@@ -134,7 +134,7 @@ describe("chat run state machine", () => {
     assert.equal(repeated.state, first.state);
   });
 
-  it("recognizes stream complete and error only after explicit done", () => {
+  it("recognizes complete, error, and cancelled only after explicit done", () => {
     const initial = createChatRunState({ runId: "run-1" });
     const complete = reduceChatRunState(initial, {
       type: "done",
@@ -149,11 +149,18 @@ describe("chat run state machine", () => {
       error: "Provider failed",
       sequence: 1
     });
+    const cancelled = reduceChatRunState(initial, {
+      type: "done",
+      status: "cancelled",
+      error: "",
+      sequence: 1
+    });
 
     assert.equal(complete.state.terminal?.phase, "complete");
     assert.equal(completeEof.eofDisposition, "terminal");
     assert.equal(error.state.terminal?.phase, "error");
     assert.equal(error.state.terminal?.error, "Provider failed");
+    assert.equal(cancelled.state.terminal?.phase, "cancelled");
   });
 
   it("rejects duplicate and older done events", () => {

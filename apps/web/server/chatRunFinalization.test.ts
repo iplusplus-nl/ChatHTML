@@ -1,11 +1,53 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  createChatRunTerminalTransition,
   finalizeChatRunTerminal,
   type ChatRunTerminalOutcome
 } from "./chatRunFinalization.js";
 
 describe("chat run terminal resource finalization", () => {
+  it("keeps cancellation explicit on the wire while preserving its storage marker", () => {
+    assert.deepEqual(
+      createChatRunTerminalTransition(
+        "complete",
+        "Generation stopped.",
+        true
+      ),
+      {
+        outcome: "cancelled",
+        streamEvent: { type: "done", status: "cancelled" },
+        persistence: {
+          status: "complete",
+          error: "Generation stopped."
+        }
+      }
+    );
+  });
+
+  it("preserves ordinary complete and error terminal transitions", () => {
+    assert.deepEqual(
+      createChatRunTerminalTransition("complete", undefined, false),
+      {
+        outcome: "complete",
+        streamEvent: { type: "done", status: "complete" },
+        persistence: { status: "complete", error: undefined }
+      }
+    );
+    assert.deepEqual(
+      createChatRunTerminalTransition("error", "Provider failed", false),
+      {
+        outcome: "error",
+        streamEvent: {
+          type: "done",
+          status: "error",
+          error: "Provider failed"
+        },
+        persistence: { status: "error", error: "Provider failed" }
+      }
+    );
+  });
+
   for (const outcome of [
     "complete",
     "error",

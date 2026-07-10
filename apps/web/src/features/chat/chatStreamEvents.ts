@@ -13,7 +13,7 @@ type TextStreamEvent = {
 
 type DoneStreamEvent = {
   type: "done";
-  status?: "complete" | "error";
+  status?: ChatStreamTerminalStatus;
   error?: string;
   runId?: string;
   seq?: number;
@@ -28,6 +28,11 @@ type ChatStreamEvent =
   | TextStreamEvent
   | DoneStreamEvent
   | SequencedMemoryStreamEvent;
+
+export type ChatStreamTerminalStatus =
+  | "complete"
+  | "error"
+  | "cancelled";
 
 export type ParsedChatStreamEvent =
   | {
@@ -50,7 +55,7 @@ export type ParsedChatStreamEvent =
     }
   | {
       kind: "done";
-      status: "complete" | "error";
+      status: ChatStreamTerminalStatus;
       error: string;
       runId?: string;
       sequence?: number;
@@ -64,7 +69,7 @@ export type ChatStreamLineHandlers = {
   onReasoning(text: string, sequence?: number): void;
   onMemory(event: SequencedMemoryStreamEvent, sequence?: number): void;
   onDone(
-    status: "complete" | "error",
+    status: ChatStreamTerminalStatus,
     error: string,
     sequence?: number
   ): void;
@@ -89,10 +94,13 @@ export function parseChatStreamLine(
     const runId = typeof event.runId === "string" ? event.runId : undefined;
 
     if (event.type === "done") {
+      const cancelled =
+        event.status === "cancelled" || isChatCancelledMessage(event.error);
       return {
         kind: "done",
-        status:
-          event.status === "error" && !isChatCancelledMessage(event.error)
+        status: cancelled
+          ? "cancelled"
+          : event.status === "error"
             ? "error"
             : "complete",
         error: sanitizeChatErrorMessage(event.error, ""),

@@ -25,6 +25,8 @@ import {
   originalRaw,
   regeneratedRaw
 } from "./artifactEditOperationTestFixtures";
+import { createChatRunExecutionController } from "../chat/chatRunExecutionController";
+import { createStreamingRenderer } from "../../runtime/streamui/streamingRenderer";
 
 function originalAssistant(
   overrides: Partial<ClientMessage> = {}
@@ -86,6 +88,58 @@ function pendingMessage(message: ClientMessage, suffix = "a") {
 }
 
 describe("generated artifact batch model", () => {
+  it("rolls a partial streamed batch back when the run emits cancelled", async () => {
+    const { message, operation } = pendingMessage(originalAssistant());
+    const abortController = new AbortController();
+    let current: ClientMessage = message;
+    let completionEffects = 0;
+    const controller = createChatRunExecutionController({
+      runId: operation.runId,
+      renderer: createStreamingRenderer("night"),
+      signal: abortController.signal,
+      isConnectionCurrent: () => true,
+      abortConnection: () => abortController.abort(),
+      applyAssistant: (patch, phase) => {
+        const next = reduceGeneratedArtifactBatchPatch(
+          current,
+          operation,
+          patch,
+          phase,
+          "night"
+        );
+        const changed = next !== current;
+        current = next;
+        return changed;
+      },
+      onMemory: () => undefined,
+      loadServerMessage: async () => undefined,
+      afterLocalComplete: () => {
+        completionEffects += 1;
+      }
+    });
+
+    controller.handleLine(
+      JSON.stringify({
+        type: "content",
+        text: "<streamui><main>Partial",
+        seq: 1
+      })
+    );
+    controller.handleLine(
+      JSON.stringify({ type: "done", status: "cancelled", seq: 2 })
+    );
+    const outcome = await controller.finishTransport();
+
+    assert.equal(outcome.kind, "local-terminal");
+    assert.equal(current.rawStream, originalRaw);
+    assert.equal(current.content, "Original");
+    assert.equal(current.reasoning, "Original reasoning");
+    assert.equal(current.activeArtifactEditId, undefined);
+    assert.equal(current.artifactEdits, undefined);
+    assert.equal(current.status, "complete");
+    assert.equal(completionEffects, 0);
+  });
+
   it("prepares a tokenized hidden edit without mutating the source", () => {
     const current = originalAssistant();
     const before = structuredClone(current);

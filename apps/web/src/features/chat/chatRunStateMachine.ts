@@ -1,5 +1,6 @@
 import type { ClientMessage } from "../../domain/chat/sessionModel";
 import type { ChatRunAssistantPhase } from "./chatRunRequest";
+import type { ChatStreamTerminalStatus } from "./chatStreamEvents";
 
 export type ChatRunTerminal = {
   source: "stream" | "server" | "cancel";
@@ -22,7 +23,7 @@ export type ChatRunStateEvent =
   | { type: "memory"; sequence?: number }
   | {
       type: "done";
-      status: "complete" | "error";
+      status: ChatStreamTerminalStatus;
       error: string;
       sequence?: number;
     }

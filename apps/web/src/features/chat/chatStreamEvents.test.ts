@@ -50,7 +50,19 @@ describe("chat stream events", () => {
     assert.equal(parseChatStreamLine(JSON.stringify({ type: "unknown", seq: 5 })), null);
   });
 
-  it("maps a cancelled done event to a successful completion", () => {
+  it("keeps explicit and legacy cancelled done events distinct from completion", () => {
+    assert.deepEqual(
+      parseChatStreamLine(
+        JSON.stringify({ type: "done", status: "cancelled", seq: 7 })
+      ),
+      {
+        kind: "done",
+        status: "cancelled",
+        error: "",
+        runId: undefined,
+        sequence: 7
+      }
+    );
     assert.deepEqual(
       parseChatStreamLine(
         JSON.stringify({
@@ -62,7 +74,7 @@ describe("chat stream events", () => {
       ),
       {
         kind: "done",
-        status: "complete",
+        status: "cancelled",
         error: "Generation stopped.",
         runId: undefined,
         sequence: 8

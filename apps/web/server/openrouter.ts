@@ -4,7 +4,11 @@ import {
   finalizeGeneratedArtifactBatchPatch,
   getGeneratedArtifactBatchIdentity
 } from "./generatedArtifactBatchPersistence.js";
-import { finalizeChatRunTerminal } from "./chatRunFinalization.js";
+import {
+  createChatRunTerminalTransition,
+  finalizeChatRunTerminal,
+  type ChatRunTerminalOutcome
+} from "./chatRunFinalization.js";
 import {
   ActiveEphemeralFileDeletionError,
   activeEphemeralFileRegistry,
@@ -146,7 +150,7 @@ type StreamEvent =
 
 type ChatDoneEvent = {
   type: "done";
-  status: "complete" | "error";
+  status: ChatRunTerminalOutcome;
   error?: string;
 };
 
@@ -1151,15 +1155,22 @@ function finishChatRun(
 
   run.status = status;
   run.error = error;
-  appendRunEvent(run, {
-    type: "done",
+  const transition = createChatRunTerminalTransition(
     status,
-    ...(status === "error" && error ? { error } : {})
-  });
+    error,
+    Boolean(run.cancelRequested) ||
+      (status === "complete" && error === CHAT_CANCELLED_MESSAGE)
+  );
+  appendRunEvent(run, transition.streamEvent);
   activeChatFinalizations += 1;
   void finalizeChatRunTerminal({
-    outcome: run.cancelRequested ? "cancelled" : status,
-    persistTerminalState: () => flushRunPersistence(run, status, error),
+    outcome: transition.outcome,
+    persistTerminalState: () =>
+      flushRunPersistence(
+        run,
+        transition.persistence.status,
+        transition.persistence.error
+      ),
     waitForExecution: () => run.executionSettled,
     cleanupEphemeralFiles: () =>
       cleanupReleasedEphemeralFiles(

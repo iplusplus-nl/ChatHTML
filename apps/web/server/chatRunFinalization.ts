@@ -1,5 +1,39 @@
 export type ChatRunTerminalOutcome = "complete" | "error" | "cancelled";
 
+export type ChatRunPersistenceTerminalStatus = "complete" | "error";
+
+export type ChatRunTerminalTransition = {
+  outcome: ChatRunTerminalOutcome;
+  streamEvent: {
+    type: "done";
+    status: ChatRunTerminalOutcome;
+    error?: string;
+  };
+  persistence: {
+    status: ChatRunPersistenceTerminalStatus;
+    error?: string;
+  };
+};
+
+export function createChatRunTerminalTransition(
+  status: ChatRunPersistenceTerminalStatus,
+  error: string | undefined,
+  cancelRequested: boolean
+): ChatRunTerminalTransition {
+  const outcome: ChatRunTerminalOutcome = cancelRequested
+    ? "cancelled"
+    : status;
+  return {
+    outcome,
+    streamEvent: {
+      type: "done",
+      status: outcome,
+      ...(outcome === "error" && error ? { error } : {})
+    },
+    persistence: { status, error }
+  };
+}
+
 type ChatRunTerminalFinalization = {
   outcome: ChatRunTerminalOutcome;
   persistTerminalState: (outcome: ChatRunTerminalOutcome) => void | Promise<void>;
