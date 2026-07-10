@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import type { SessionState } from "../../domain/chat/sessionModel";
 import {
   runInitialSessionLoad,
@@ -16,12 +16,14 @@ export type UseSessionSyncInput = {
   sessionClientIdRef: ValueRef<string>;
   sessionStateRef: ValueRef<SessionState>;
   sessionsLoadedRef: ValueRef<boolean>;
+  sessionsHydratedRef: ValueRef<boolean>;
   deletedSessionIdsRef: ValueRef<ReadonlySet<string>>;
   transientEmptySessionIdRef: ValueRef<string | null>;
   runConnectionsRef: ValueRef<SizeLike>;
   cancelledRunIdsRef: ValueRef<SizeLike>;
   updateState: SessionStateUpdater;
   setSessionsLoaded(loaded: boolean): void;
+  setSessionsHydrated(hydrated: boolean): void;
   dependencies?: Partial<SessionSyncDependencies>;
 };
 
@@ -31,14 +33,21 @@ export function useSessionSync({
   sessionClientIdRef,
   sessionStateRef,
   sessionsLoadedRef,
+  sessionsHydratedRef,
   deletedSessionIdsRef,
   transientEmptySessionIdRef,
   runConnectionsRef,
   cancelledRunIdsRef,
   updateState,
   setSessionsLoaded,
+  setSessionsHydrated,
   dependencies
 }: UseSessionSyncInput): void {
+  const markSessionsHydrated = useCallback(() => {
+    sessionsHydratedRef.current = true;
+    setSessionsHydrated(true);
+  }, [sessionsHydratedRef, setSessionsHydrated]);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
@@ -50,6 +59,7 @@ export function useSessionSync({
         clientId: sessionClientIdRef.current,
         isCancelled: () => cancelled,
         updateState,
+        onApplied: markSessionsHydrated,
         getDeletedSessionIds: () => deletedSessionIdsRef.current,
         getTransientEmptySessionId: () => transientEmptySessionIdRef.current
       },
@@ -74,6 +84,7 @@ export function useSessionSync({
     deletedSessionIdsRef,
     dependencies,
     sessionClientIdRef,
+    markSessionsHydrated,
     sessionsLoadedRef,
     setSessionsLoaded,
     transientEmptySessionIdRef,
@@ -93,6 +104,7 @@ export function useSessionSync({
           isCancelled: () => cancelled,
           getState: () => sessionStateRef.current,
           updateState,
+          onApplied: markSessionsHydrated,
           getDeletedSessionIds: () => deletedSessionIdsRef.current,
           getTransientEmptySessionId: () =>
             transientEmptySessionIdRef.current,
@@ -120,6 +132,7 @@ export function useSessionSync({
     deletedSessionIdsRef,
     dependencies,
     intervalMs,
+    markSessionsHydrated,
     runConnectionsRef,
     sessionClientIdRef,
     sessionStateRef,

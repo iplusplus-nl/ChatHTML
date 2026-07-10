@@ -72,6 +72,7 @@ describe("session sync controller", () => {
     let transientId: string | null = null;
     const deletedIds = new Set<string>();
     let requestedClientId = "";
+    let hydrationSignals = 0;
 
     const loading = runInitialSessionLoad(
       {
@@ -83,6 +84,9 @@ describe("session sync controller", () => {
             current = next;
           }
         ),
+        onApplied: () => {
+          hydrationSignals += 1;
+        },
         getDeletedSessionIds: () => deletedIds,
         getTransientEmptySessionId: () => transientId
       },
@@ -108,6 +112,7 @@ describe("session sync controller", () => {
 
     assert.equal(await loading, "applied");
     assert.equal(requestedClientId, "client-1");
+    assert.equal(hydrationSignals, 1);
     assert.equal(current.activeSessionId, "draft");
     assert.deepEqual(
       current.sessions.map((item) => item.id),
@@ -157,6 +162,7 @@ describe("session sync controller", () => {
   it("suppresses cancelled initial results before normalize and update", async () => {
     let normalized = false;
     let updated = false;
+    let hydrationSignals = 0;
 
     const outcome = await runInitialSessionLoad(
       {
@@ -164,6 +170,9 @@ describe("session sync controller", () => {
         isCancelled: () => true,
         updateState: () => {
           updated = true;
+        },
+        onApplied: () => {
+          hydrationSignals += 1;
         },
         getDeletedSessionIds: () => [],
         getTransientEmptySessionId: () => null
@@ -180,13 +189,18 @@ describe("session sync controller", () => {
     assert.equal(outcome, "cancelled");
     assert.equal(normalized, false);
     assert.equal(updated, false);
+    assert.equal(hydrationSignals, 0);
   });
 
   it("surfaces initial and polling HTTP failures with their original messages", async () => {
+    let hydrationSignals = 0;
     const common = {
       clientId: "client-1",
       isCancelled: () => false,
       updateState: (() => undefined) as SessionStateUpdater,
+      onApplied: () => {
+        hydrationSignals += 1;
+      },
       getDeletedSessionIds: () => [] as string[],
       getTransientEmptySessionId: () => null
     };
@@ -210,12 +224,14 @@ describe("session sync controller", () => {
       ),
       /Session sync failed with HTTP 503\./
     );
+    assert.equal(hydrationSignals, 0);
   });
 
   it("skips a poll tick while any synchronization gate is active", async () => {
     const populated = state("saved", [session("saved", 1, "Saved")]);
     const emptyDraft = state("draft", [session("draft", 1)]);
     let requestCount = 0;
+    let hydrationSignals = 0;
     const syncDependencies = dependencies({
       requestSessions: async () => {
         requestCount += 1;
@@ -237,6 +253,9 @@ describe("session sync controller", () => {
           isCancelled: () => false,
           getState: () => current,
           updateState: () => undefined,
+          onApplied: () => {
+            hydrationSignals += 1;
+          },
           getDeletedSessionIds: () => [],
           getTransientEmptySessionId: () => options.transientId ?? null,
           hasActiveRuns: () => options.activeRuns ?? false,
@@ -249,6 +268,7 @@ describe("session sync controller", () => {
     assert.equal(await run(populated, { cancellations: true }), "skipped");
     assert.equal(await run(emptyDraft, { transientId: "draft" }), "skipped");
     assert.equal(requestCount, 0);
+    assert.equal(hydrationSignals, 0);
   });
 
   it("merges a pending poll with the latest state and tombstones", async () => {
@@ -256,6 +276,7 @@ describe("session sync controller", () => {
     let current = state("local-a", [session("local-a", 1, "Local A")]);
     const deletedIds = new Set<string>();
     let activeRuns = false;
+    let hydrationSignals = 0;
 
     const polling = runSessionPoll(
       {
@@ -268,6 +289,9 @@ describe("session sync controller", () => {
             current = next;
           }
         ),
+        onApplied: () => {
+          hydrationSignals += 1;
+        },
         getDeletedSessionIds: () => deletedIds,
         getTransientEmptySessionId: () => null,
         hasActiveRuns: () => activeRuns,
@@ -287,11 +311,13 @@ describe("session sync controller", () => {
     assert.equal(await polling, "applied");
     assert.equal(current.sessions.some((item) => item.id === "local-b"), true);
     assert.equal(current.sessions.some((item) => item.id === "remote"), false);
+    assert.equal(hydrationSignals, 1);
   });
 
   it("normalizes but does not apply a cancelled poll response", async () => {
     let normalized = false;
     let updated = false;
+    let hydrationSignals = 0;
 
     const outcome = await runSessionPoll(
       {
@@ -300,6 +326,9 @@ describe("session sync controller", () => {
         getState: () => state("saved", [session("saved", 1, "Saved")]),
         updateState: () => {
           updated = true;
+        },
+        onApplied: () => {
+          hydrationSignals += 1;
         },
         getDeletedSessionIds: () => [],
         getTransientEmptySessionId: () => null,
@@ -318,6 +347,7 @@ describe("session sync controller", () => {
     assert.equal(outcome, "cancelled");
     assert.equal(normalized, true);
     assert.equal(updated, false);
+    assert.equal(hydrationSignals, 0);
   });
 
   it("allows overlapping polls and preserves the current reference for equal data", async () => {

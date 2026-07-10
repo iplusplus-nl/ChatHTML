@@ -130,18 +130,12 @@ import {
 } from "./features/chat/branching";
 import {
   deleteSessionFile,
-  requestSessionIndex,
   requestSessions,
   uploadSessionFile,
   type SessionFileUploadInput
 } from "./features/sessions/sessionApi";
 import {
-  loadCachedSessionListPreview,
-  loadSessionClientId,
-  normalizeSessionListPreview,
-  saveCachedSessionListPreview,
-  sessionListPreviewFromState,
-  type SessionListPreview
+  loadSessionClientId
 } from "./features/sessions/sessionPersistence";
 import {
   findSessionIdForMessage,
@@ -150,6 +144,7 @@ import {
 } from "./features/sessions/sessionSelectors";
 import { useSessionSync } from "./features/sessions/useSessionSync";
 import { useSessionSave } from "./features/sessions/useSessionSave";
+import { useSessionIndex } from "./features/sessions/useSessionIndex";
 import {
   getArtifactEditActiveVariant,
   getArtifactEditCompleteRawStream,
@@ -553,6 +548,7 @@ export default function App() {
   const [sessionState, setSessionState] =
     useState<SessionState>(createInitialSessionState);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [sessionsHydrated, setSessionsHydrated] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode);
   const [apiSettings, setApiSettings] = useState<ApiSettings>(loadApiSettings);
   const [searchSettings, setSearchSettings] =
@@ -561,8 +557,6 @@ export default function App() {
     useState<DisplaySettings>(loadDisplaySettings);
   const [profileSettings, setProfileSettings] =
     useState<ProfileSettings>(loadProfileSettings);
-  const [sessionListPreview, setSessionListPreview] =
-    useState<SessionListPreview | null>(loadCachedSessionListPreview);
   const [runtimeSettings, setRuntimeSettings] =
     useState<RuntimeSettingsSummary | null>(null);
   const [authSummary, setAuthSummary] = useState<AuthSummary | null>(null);
@@ -633,9 +627,7 @@ export default function App() {
   const isSendingRef = useRef(isSending);
   const artifactSelectionsRef = useRef<ArtifactSelection[]>([]);
   const sessionsLoadedRef = useRef(sessionsLoaded);
-  const lastSessionListPreviewPayloadRef = useRef<string | null>(
-    sessionListPreview ? JSON.stringify(sessionListPreview) : null
-  );
+  const sessionsHydratedRef = useRef(sessionsHydrated);
   const renderersRef = useRef<Map<string, StreamingRenderer>>(new Map());
   const runConnectionsRef = useRef<Map<string, AbortController>>(new Map());
   const cancelledRunIdsRef = useRef<Set<string>>(new Set());
@@ -894,42 +886,12 @@ export default function App() {
     saveProfileSettings(profileSettings);
   }, [profileSettings]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return undefined;
-    }
-
-    let cancelled = false;
-
-    requestSessionIndex(sessionClientIdRef.current)
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Session index load failed with HTTP ${response.status}.`);
-        }
-        return response.json() as Promise<unknown>;
-      })
-      .then((data) => {
-        if (cancelled) {
-          return;
-        }
-
-        const preview = normalizeSessionListPreview(data);
-        lastSessionListPreviewPayloadRef.current = preview
-          ? JSON.stringify(preview)
-          : null;
-        setSessionListPreview(preview);
-        saveCachedSessionListPreview(preview);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.warn("Could not load ChatHTML session index.", error);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const sessionListPreview = useSessionIndex({
+    sessionState,
+    sessionsHydrated,
+    sessionClientIdRef,
+    sessionsHydratedRef
+  });
 
   useSessionSync({
     sessionsLoaded,
@@ -937,12 +899,14 @@ export default function App() {
     sessionClientIdRef,
     sessionStateRef,
     sessionsLoadedRef,
+    sessionsHydratedRef,
     deletedSessionIdsRef,
     transientEmptySessionIdRef,
     runConnectionsRef,
     cancelledRunIdsRef,
     updateState: setSessionStateAndRef,
-    setSessionsLoaded
+    setSessionsLoaded,
+    setSessionsHydrated
   });
 
   useEffect(() => {
@@ -3686,22 +3650,6 @@ export default function App() {
     (messageId: string) => getAssistantBranchInfo(activeSession, messageId),
     [activeSession]
   );
-
-  useEffect(() => {
-    if (!sessionsLoaded) {
-      return;
-    }
-
-    const preview = sessionListPreviewFromState(sessionState);
-    const payload = preview ? JSON.stringify(preview) : null;
-    if (payload === lastSessionListPreviewPayloadRef.current) {
-      return;
-    }
-
-    lastSessionListPreviewPayloadRef.current = payload;
-    setSessionListPreview(preview);
-    saveCachedSessionListPreview(preview);
-  }, [sessionState, sessionsLoaded]);
 
   return (
     <>
