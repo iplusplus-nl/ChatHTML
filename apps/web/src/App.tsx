@@ -1,27 +1,18 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState
 } from "react";
-import { CheckCircle2, LoaderCircle, X } from "lucide-react";
 import {
   AssistantRuntimeProvider,
-  AuiIf,
-  ThreadPrimitive,
-  useAuiState,
   useExternalStoreRuntime,
   type AppendMessage,
   type ThreadMessageLike
 } from "@assistant-ui/react";
-import { AssistantMessage } from "./components/AssistantMessage";
-import { ChatInput } from "./components/ChatInput";
-import { ChatMessage } from "./components/ChatMessage";
 import { ChatShell } from "./components/ChatShell";
 import { BugReportDialog } from "./components/BugReportDialog";
-import { stripSyntheticReasoningStatus } from "./core/reasoningText";
 import {
   SessionSidebar,
   type SessionListItem,
@@ -78,12 +69,7 @@ import {
   type ProfileSettings
 } from "./core/profileSettings";
 import { buildArtifactContext } from "./core/artifactContext";
-import {
-  MAX_ARTIFACT_SELECTIONS,
-  canCaptureArtifactSelection,
-  type ArtifactSelection,
-  type ArtifactSelectionPayload
-} from "./core/artifactSelection";
+import type { ArtifactSelection } from "./core/artifactSelection";
 import {
   getSnapshotDiagnostics,
   renderSnapshotToPngBlob
@@ -96,17 +82,12 @@ import {
   createEmptySession,
   createId,
   createInitialSessionState,
-  filterDeletedSessionState,
   getSessionStreamingRunIds,
-  hasPersistedMessages,
   interruptStaleArtifactEditsInSessionState,
   initialMessages,
   isSessionEmpty,
-  mergeSyncedSessionState,
-  normalizeStoredSession,
   normalizeStoredSessionState,
   normalizeBugReportDraft,
-  serializeSessions,
   sortSessions,
   MAX_BUG_REPORT_IMAGES,
   STALE_ARTIFACT_EDIT_SWEEP_INTERVAL_MS,
@@ -122,6 +103,76 @@ import {
   type SessionState
 } from "./domain/chat/sessionModel";
 import { toApiMessages } from "./features/chat/apiMessages";
+import {
+  cancelChatRun,
+  readNdjsonLines,
+  requestChatRunEvents,
+  startChatRun
+} from "./features/chat/chatApi";
+import {
+  createCancelledAssistantPatch,
+  formatChatHttpError,
+  isAbortError,
+  sanitizeChatErrorMessage
+} from "./features/chat/chatErrors";
+import { createChatStreamLineHandler } from "./features/chat/chatStreamEvents";
+import { reconcileChatRunState } from "./features/chat/chatRunReconcile";
+import { StreamThread } from "./features/chat/ui/StreamThread";
+import { submitBugReport } from "./features/bug-reports/bugReportApi";
+import {
+  getAssistantBranchInfo,
+  getAssistantForUserTurn,
+  getBranchTurnInsertionIndex,
+  getBranchVariantOrder,
+  getSelectedBranchVariant,
+  getVisibleSessionMessages,
+  isMessageVisibleInSession
+} from "./features/chat/branching";
+import {
+  deleteSessionFile,
+  requestSessionIndex,
+  requestSessions,
+  saveSerializedSessionState,
+  saveSessionStateOnPageExit,
+  uploadSessionFile,
+  type SessionFileUploadInput
+} from "./features/sessions/sessionApi";
+import {
+  clearLegacyLocalSessions,
+  loadCachedSessionListPreview,
+  loadLegacyLocalSessionState,
+  loadSessionClientId,
+  normalizeSessionListPreview,
+  saveCachedSessionListPreview,
+  serializeSessionStateForSave,
+  sessionListPreviewFromState,
+  type SessionListPreview
+} from "./features/sessions/sessionPersistence";
+import {
+  findSessionIdForMessage,
+  findSessionMessage,
+  mergeSessionFiles
+} from "./features/sessions/sessionSelectors";
+import {
+  mergePolledSessionState,
+  resolveInitialSessionState,
+  shouldRequestSessionSync
+} from "./features/sessions/sessionSyncPolicy";
+import {
+  getArtifactEditActiveVariant,
+  getArtifactEditCompleteRawStream,
+  getArtifactEditDisplayRawStream,
+  getArtifactEditParentId,
+  getArtifactEditRawStream,
+  getResolvedArtifactEditId,
+  hasUsableArtifactEditVariant
+} from "./features/artifacts/artifactEditModel";
+import { requestArtifactEdit } from "./features/artifacts/artifactEditApi";
+import {
+  completeArtifactEditVariant,
+  failArtifactEditVariant,
+  removeArtifactEdit
+} from "./features/artifacts/artifactEditTransitions";
 import type {
   ImageAttachment,
   UploadedSessionFile
@@ -135,42 +186,6 @@ import type {
   StreamUiAction,
   StreamingRenderer
 } from "./runtime/streamui/types";
-
-type TextStreamEvent = {
-  type?: "content" | "reasoning";
-  text?: string;
-  runId?: string;
-  seq?: number;
-};
-
-type DoneStreamEvent = {
-  type: "done";
-  status?: "complete" | "error";
-  error?: string;
-  runId?: string;
-  seq?: number;
-};
-
-type SequencedMemoryStreamEvent = MemoryStreamEvent & {
-  runId?: string;
-  seq?: number;
-};
-
-type ChatStreamEvent =
-  | TextStreamEvent
-  | DoneStreamEvent
-  | SequencedMemoryStreamEvent;
-
-type ArtifactEditResponse = {
-  rawStream: string;
-  summary?: string;
-  edits?: Array<{
-    note?: string;
-    occurrence?: number;
-    findLength?: number;
-    replaceLength?: number;
-  }>;
-};
 
 type SendStreamUiRequestOptions = {
   appendUserMessage?: boolean;
@@ -225,35 +240,8 @@ type BranchRunCancelCleanup = {
   fallbackVariantId?: string;
 };
 
-type MessageBranchInfo = {
-  groupId: string;
-  activeIndex: number;
-  total: number;
-  previousVariantId?: string;
-  nextVariantId?: string;
-};
-
-type ArtifactVersionInfo = {
-  activeIndex: number;
-  total: number;
-  previousEditId?: string | null;
-  nextEditId?: string | null;
-  disabled?: boolean;
-};
-
-const LEGACY_SESSION_STORAGE_KEY = "streamui.sessions.v1";
-const LEGACY_ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
 const THEME_STORAGE_KEY = "streamui.theme.v1";
-const SESSION_CLIENT_ID_STORAGE_KEY = "streamui.clientId.v1";
-const SESSION_INDEX_CACHE_KEY = "streamui.sessionIndex.v1";
-const SESSION_CLIENT_ID_HEADER = "X-ChatHTML-Client-Id";
 const SESSION_SYNC_INTERVAL_MS = 4_000;
-const CHAT_CANCELLED_MESSAGE = "Generation stopped.";
-
-type SessionListPreview = {
-  activeSessionId: string;
-  sessions: SessionListItem[];
-};
 
 function coerceApiSettingsForRuntime(
   settings: ApiSettings,
@@ -281,172 +269,6 @@ function coerceApiSettingsForRuntime(
     userPreferencePrompt: normalized.userPreferencePrompt,
     memoryItems: normalized.memoryItems
   });
-}
-
-function mergeSessionFiles(files: SessionFile[]): SessionFile[] {
-  const merged = new Map<string, SessionFile>();
-  for (const file of files) {
-    merged.set(file.id, file);
-  }
-
-  return Array.from(merged.values()).sort((a, b) => a.createdAt - b.createdAt);
-}
-
-function normalizeSessionListPreview(input: unknown): SessionListPreview | null {
-  if (!input || typeof input !== "object") {
-    return null;
-  }
-
-  const state = input as {
-    activeSessionId?: unknown;
-    sessions?: unknown;
-  };
-  if (!Array.isArray(state.sessions)) {
-    return null;
-  }
-
-  const seen = new Set<string>();
-  const sessions: SessionListItem[] = [];
-  for (const item of state.sessions) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-
-    const session = item as { id?: unknown; title?: unknown };
-    const id = typeof session.id === "string" ? session.id.trim() : "";
-    if (!id || seen.has(id)) {
-      continue;
-    }
-
-    seen.add(id);
-    sessions.push({
-      id,
-      title:
-        typeof session.title === "string" && session.title.trim()
-          ? session.title.trim()
-          : "New Session"
-    });
-  }
-
-  if (!sessions.length) {
-    return null;
-  }
-
-  const requestedActiveId =
-    typeof state.activeSessionId === "string" ? state.activeSessionId : "";
-  const activeSessionId = sessions.some(
-    (session) => session.id === requestedActiveId
-  )
-    ? requestedActiveId
-    : sessions[0].id;
-
-  return {
-    activeSessionId,
-    sessions
-  };
-}
-
-function sessionListPreviewFromState(state: SessionState): SessionListPreview | null {
-  const sessions = state.sessions
-    .filter((session) => !isSessionEmpty(session))
-    .map((session) => ({
-      id: session.id,
-      title: session.title || summarizeSession(session.messages)
-    }));
-
-  if (!sessions.length) {
-    return null;
-  }
-
-  const activeSessionId = sessions.some(
-    (session) => session.id === state.activeSessionId
-  )
-    ? state.activeSessionId
-    : sessions[0].id;
-
-  return {
-    activeSessionId,
-    sessions
-  };
-}
-
-function loadCachedSessionListPreview(): SessionListPreview | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    return normalizeSessionListPreview(
-      JSON.parse(window.localStorage.getItem(SESSION_INDEX_CACHE_KEY) ?? "null")
-    );
-  } catch {
-    return null;
-  }
-}
-
-function saveCachedSessionListPreview(preview: SessionListPreview | null): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    if (!preview) {
-      window.localStorage.removeItem(SESSION_INDEX_CACHE_KEY);
-      return;
-    }
-
-    window.localStorage.setItem(SESSION_INDEX_CACHE_KEY, JSON.stringify(preview));
-  } catch {
-    // Sidebar cache is only a startup hint.
-  }
-}
-
-type SessionFileUploadInput = {
-  kind: SessionFile["kind"];
-  name: string;
-  mimeType: string;
-  dataUrl?: string;
-  text?: string;
-  width?: number;
-  height?: number;
-  sourceMessageId?: string;
-  summary?: string;
-  draft?: boolean;
-};
-
-function createSessionClientId(): string {
-  const random =
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `client-${random}`;
-}
-
-function loadSessionClientId(): string {
-  if (typeof window === "undefined") {
-    return createSessionClientId();
-  }
-
-  const existing = window.localStorage
-    .getItem(SESSION_CLIENT_ID_STORAGE_KEY)
-    ?.trim();
-  if (existing) {
-    return existing;
-  }
-
-  const clientId = createSessionClientId();
-  window.localStorage.setItem(SESSION_CLIENT_ID_STORAGE_KEY, clientId);
-  return clientId;
-}
-
-function sessionRequestHeaders(
-  clientId: string,
-  contentType?: string
-): HeadersInit {
-  return {
-    ...(contentType ? { "Content-Type": contentType } : {}),
-    [SESSION_CLIENT_ID_HEADER]: clientId
-  };
 }
 
 function imageAttachmentToFileUpload(
@@ -552,97 +374,6 @@ function createArtifactFileUpload(
   };
 }
 
-async function uploadSessionFile(
-  sessionId: string,
-  input: SessionFileUploadInput,
-  clientId: string
-): Promise<SessionFile> {
-  const response = await fetch(
-    `/api/sessions/${encodeURIComponent(sessionId)}/files`,
-    {
-      method: "POST",
-      headers: sessionRequestHeaders(clientId, "application/json"),
-      body: JSON.stringify({ ...input, clientId })
-    }
-  );
-
-  const payload = (await response.json().catch(() => ({}))) as {
-    file?: unknown;
-    error?: unknown;
-  };
-  if (!response.ok || !payload.file) {
-    throw new Error(
-      typeof payload.error === "string"
-        ? payload.error
-        : `File upload failed with HTTP ${response.status}.`
-    );
-  }
-
-  return payload.file as SessionFile;
-}
-
-async function submitBugReport(
-  input: {
-    sessionId: string;
-    sessionTitle: string;
-    draft: BugReportDraft;
-  },
-  clientId: string
-): Promise<string> {
-  const response = await fetch("/api/bug-reports", {
-    method: "POST",
-    headers: sessionRequestHeaders(clientId, "application/json"),
-    body: JSON.stringify({
-      clientId,
-      sessionId: input.sessionId,
-      sessionTitle: input.sessionTitle,
-      text: input.draft.text,
-      images: input.draft.images,
-      pageUrl: window.location.href,
-      userAgent: navigator.userAgent,
-      viewport: {
-        width: window.innerWidth,
-        height: window.innerHeight,
-        devicePixelRatio: window.devicePixelRatio || 1
-      }
-    })
-  });
-
-  const payload = (await response.json().catch(() => ({}))) as {
-    id?: unknown;
-    error?: unknown;
-  };
-  if (!response.ok) {
-    throw new Error(
-      typeof payload.error === "string"
-        ? payload.error
-        : `Bug report failed with HTTP ${response.status}.`
-    );
-  }
-
-  return typeof payload.id === "string" ? payload.id : "";
-}
-
-async function deleteSessionFile(
-  sessionId: string,
-  fileId: string,
-  clientId: string
-): Promise<void> {
-  const response = await fetch(
-    `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(
-      fileId
-    )}`,
-    {
-      method: "DELETE",
-      headers: sessionRequestHeaders(clientId)
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`File delete failed with HTTP ${response.status}.`);
-  }
-}
-
 function commitUploadedImageFile(
   attachment: ImageAttachment,
   sourceMessageId: string
@@ -661,181 +392,6 @@ function commitUploadedImageFile(
     width: file.width ?? attachment.width,
     height: file.height ?? attachment.height
   };
-}
-
-function serializeSessionStateForSave(
-  state: SessionState,
-  clientId: string,
-  deletedSessionIds: string[] = []
-): string {
-  const compactedState = compactEmptySessions(state);
-
-  return JSON.stringify({
-    clientId,
-    deletedSessionIds,
-    sessions: serializeSessions(compactedState.sessions),
-    activeSessionId: compactedState.activeSessionId
-  });
-}
-
-function saveSerializedSessionState(
-  serializedState: string,
-  clientId: string,
-  signal?: AbortSignal
-): Promise<Response> {
-  return fetch("/api/sessions", {
-    method: "PUT",
-    headers: sessionRequestHeaders(clientId, "application/json"),
-    signal,
-    body: serializedState
-  });
-}
-
-function saveSessionStateOnPageExit(
-  serializedState: string,
-  clientId: string
-): void {
-  if (
-    typeof navigator !== "undefined" &&
-    typeof navigator.sendBeacon === "function"
-  ) {
-    const body = new Blob([serializedState], { type: "application/json" });
-    if (navigator.sendBeacon("/api/sessions", body)) {
-      return;
-    }
-  }
-
-  void fetch("/api/sessions", {
-    method: "PUT",
-    headers: sessionRequestHeaders(clientId, "application/json"),
-    keepalive: true,
-    body: serializedState
-  }).catch((error) => {
-    console.warn("Could not flush ChatHTML sessions before page exit.", error);
-  });
-}
-
-function compactErrorText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function stripHtmlErrorText(value: string): string {
-  return compactErrorText(
-    value
-      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]*>/g, " ")
-      .replace(/&nbsp;/gi, " ")
-      .replace(/&amp;/gi, "&")
-      .replace(/&lt;/gi, "<")
-      .replace(/&gt;/gi, ">")
-      .replace(/&quot;/gi, "\"")
-      .replace(/&#39;/gi, "'")
-  );
-}
-
-function looksLikeHtmlError(value: string): boolean {
-  return /<!doctype\s+html|<html\b|<head\b|<body\b|<\/?[a-z][\s\S]*>/i.test(
-    value
-  );
-}
-
-function extractHtmlErrorTitle(value: string): string {
-  const match = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(value);
-  return match ? stripHtmlErrorText(match[1]) : "";
-}
-
-function safeErrorJsonMessage(value: string): string {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== "object") {
-      return "";
-    }
-
-    const error = parsed as { error?: unknown; message?: unknown };
-    if (typeof error.message === "string" && error.message.trim()) {
-      return error.message.trim();
-    }
-    if (typeof error.error === "string" && error.error.trim()) {
-      return error.error.trim();
-    }
-    if (error.error && typeof error.error === "object") {
-      const nested = error.error as { message?: unknown };
-      return typeof nested.message === "string" ? nested.message.trim() : "";
-    }
-  } catch {
-    return "";
-  }
-
-  return "";
-}
-
-function sanitizeChatErrorMessage(
-  value: string | undefined,
-  fallback = "The chat request failed."
-): string {
-  const raw = value?.trim() ?? "";
-  if (!raw) {
-    return fallback;
-  }
-
-  const jsonMessage = safeErrorJsonMessage(raw);
-  if (jsonMessage) {
-    return compactErrorText(jsonMessage).slice(0, 500);
-  }
-
-  if (looksLikeHtmlError(raw)) {
-    return (
-      extractHtmlErrorTitle(raw) ||
-      stripHtmlErrorText(raw) ||
-      fallback
-    ).slice(0, 180);
-  }
-
-  return compactErrorText(raw).slice(0, 500);
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
-
-function isChatCancelledMessage(value: string | undefined): boolean {
-  return compactErrorText(value ?? "") === CHAT_CANCELLED_MESSAGE;
-}
-
-function createCancelledAssistantPatch(
-  raw: string,
-  reasoning: string,
-  streamSequence: number
-): Partial<ClientMessage> {
-  const parts = extractStreamUiParts(raw);
-
-  return {
-    content:
-      parts.chat ||
-      (!parts.hasStreamUi ? parts.fallbackText : "") ||
-      CHAT_CANCELLED_MESSAGE,
-    reasoning: reasoning || undefined,
-    rawStream: raw,
-    streamSequence,
-    hasStreamUi: parts.hasStreamUi,
-    streamUiComplete: parts.streamUiComplete,
-    status: "complete",
-    error: undefined
-  };
-}
-
-function formatChatHttpError(response: Response, bodyText: string): string {
-  const statusText = compactErrorText(response.statusText || "");
-  const status = `HTTP ${response.status}${statusText ? ` ${statusText}` : ""}`;
-  const detail = sanitizeChatErrorMessage(bodyText, "");
-  const prefix = `Request failed with ${status}.`;
-
-  if (!detail || detail.toLowerCase().includes(String(response.status))) {
-    return prefix;
-  }
-
-  return `${prefix} ${detail}`;
 }
 
 function renderErrorKey(error: Pick<RenderError, "kind" | "message">): string {
@@ -858,48 +414,6 @@ function loadThemeMode(): ThemeMode {
   return window.localStorage.getItem(THEME_STORAGE_KEY) === "day"
     ? "day"
     : "night";
-}
-
-function loadLegacyLocalSessionState(): SessionState | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(
-      window.localStorage.getItem(LEGACY_SESSION_STORAGE_KEY) ?? "[]"
-    ) as unknown;
-    const sessions = Array.isArray(parsed)
-      ? parsed
-          .map((session) => normalizeStoredSession(session))
-          .filter((session): session is ChatSession => session !== null)
-      : [];
-
-    if (!sessions.length) {
-      return null;
-    }
-
-    const sorted = sortSessions(sessions);
-    const storedActiveId = window.localStorage.getItem(
-      LEGACY_ACTIVE_SESSION_STORAGE_KEY
-    );
-    const activeSessionId = sorted.some((session) => session.id === storedActiveId)
-      ? storedActiveId ?? sorted[0].id
-      : sorted[0].id;
-
-    return { sessions: sorted, activeSessionId };
-  } catch {
-    return null;
-  }
-}
-
-function clearLegacyLocalSessions(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.removeItem(LEGACY_SESSION_STORAGE_KEY);
-  window.localStorage.removeItem(LEGACY_ACTIVE_SESSION_STORAGE_KEY);
 }
 
 function getCanvasContext() {
@@ -1009,431 +523,8 @@ function buildCompletedAssistantPatchFromRawStream(
   };
 }
 
-function getArtifactEditRawStream(
-  message: ClientMessage,
-  editId: string | undefined
-): string | undefined {
-  if (!editId) {
-    return message.artifactEditBaseRawStream ?? message.rawStream;
-  }
-
-  const edit = message.artifactEdits?.find((item) => item.id === editId);
-  return edit ? getArtifactEditCompleteRawStream(edit) : undefined;
-}
-
-function getArtifactEditDisplayRawStream(
-  message: ClientMessage,
-  editId: string | undefined
-): string | undefined {
-  const rawStream = getArtifactEditRawStream(message, editId);
-  if (rawStream || !editId) {
-    return rawStream;
-  }
-
-  const edits = message.artifactEdits ?? [];
-  const edit = edits.find((item) => item.id === editId);
-  if (!edit || edit.status !== "error") {
-    return undefined;
-  }
-
-  return getArtifactEditRawStream(
-    message,
-    getArtifactEditParentId(edits, edit)
-  );
-}
-
-function getArtifactEditActiveVariant(edit: ArtifactEdit) {
-  return (
-    edit.variants.find((item) => item.id === edit.activeVariantId) ??
-    edit.variants[0]
-  );
-}
-
-function getArtifactEditCompleteRawStream(
-  edit: ArtifactEdit
-): string | undefined {
-  if (edit.status !== "complete") {
-    return undefined;
-  }
-
-  const variant = getArtifactEditActiveVariant(edit);
-  return variant?.status === "complete" ? variant.rawStream : undefined;
-}
-
-function hasUsableArtifactEditVariant(edit: ArtifactEdit): boolean {
-  return Boolean(getArtifactEditCompleteRawStream(edit));
-}
-
-function hasPendingArtifactEditVariant(edit: ArtifactEdit): boolean {
-  return (
-    edit.status === "pending" ||
-    edit.variants.some((variant) => variant.status === "pending")
-  );
-}
-
-function shouldShowArtifactEditPromptBubble(edit: ArtifactEdit): boolean {
-  return edit.promptBubble !== false;
-}
-
-function shouldKeepFailedArtifactEditVersion(edit: ArtifactEdit): boolean {
-  return edit.status === "error" && shouldShowArtifactEditPromptBubble(edit);
-}
-
-function getArtifactEditParentId(
-  edits: ArtifactEdit[],
-  edit: ArtifactEdit
-): string | undefined {
-  if (edit.parentId && edits.some((candidate) => candidate.id === edit.parentId)) {
-    return edit.parentId;
-  }
-
-  const index = edits.findIndex((candidate) => candidate.id === edit.id);
-  return index > 0 ? edits[index - 1].id : undefined;
-}
-
-function getArtifactEditChain(
-  edits: ArtifactEdit[],
-  editId: string | undefined
-): ArtifactEdit[] {
-  if (!editId) {
-    return [];
-  }
-
-  const byId = new Map(edits.map((edit) => [edit.id, edit]));
-  const chain: ArtifactEdit[] = [];
-  const seen = new Set<string>();
-  let current = byId.get(editId);
-
-  while (current && !seen.has(current.id)) {
-    seen.add(current.id);
-    chain.push(current);
-    const parentId = getArtifactEditParentId(edits, current);
-    current = parentId ? byId.get(parentId) : undefined;
-  }
-
-  return chain.reverse();
-}
-
-function getResolvedArtifactEditId(message: ClientMessage): string | undefined {
-  const edits = message.artifactEdits ?? [];
-  if (
-    message.activeArtifactEditId &&
-    edits.some((edit) => edit.id === message.activeArtifactEditId)
-  ) {
-    return message.activeArtifactEditId;
-  }
-
-  if (!message.rawStream) {
-    return undefined;
-  }
-
-  for (let index = edits.length - 1; index >= 0; index -= 1) {
-    const edit = edits[index];
-    if (edit.status !== "complete") {
-      continue;
-    }
-
-    const variant =
-      edit.variants.find((item) => item.id === edit.activeVariantId) ??
-      edit.variants[0];
-    if (variant?.status === "complete" && variant.rawStream === message.rawStream) {
-      return edit.id;
-    }
-  }
-
-  return undefined;
-}
-
-function getActiveArtifactEditChain(message: ClientMessage): ArtifactEdit[] {
-  return getArtifactEditChain(
-    message.artifactEdits ?? [],
-    getResolvedArtifactEditId(message)
-  );
-}
-
-function getArtifactVersionInfo(
-  message: ClientMessage
-): ArtifactVersionInfo | undefined {
-  const activeEditId = getResolvedArtifactEditId(message) ?? null;
-  const hasOriginal = Boolean(
-    (message.artifactEditBaseRawStream ?? message.rawStream)?.trim()
-  );
-  const edits = message.artifactEdits ?? [];
-  const versions: Array<{ editId: string | null }> = hasOriginal
-    ? [{ editId: null }]
-    : [];
-
-  for (const edit of edits) {
-    if (
-      hasUsableArtifactEditVariant(edit) ||
-      hasPendingArtifactEditVariant(edit) ||
-      shouldKeepFailedArtifactEditVersion(edit) ||
-      edit.id === activeEditId
-    ) {
-      versions.push({ editId: edit.id });
-    }
-  }
-
-  if (versions.length <= 1) {
-    return undefined;
-  }
-
-  const activeIndex = versions.findIndex(
-    (version) => version.editId === activeEditId
-  );
-  const resolvedActiveIndex = activeIndex >= 0 ? activeIndex : 0;
-  const isVersionSwitchDisabled =
-    message.status === "streaming" || edits.some(hasPendingArtifactEditVariant);
-
-  return {
-    activeIndex: resolvedActiveIndex,
-    total: versions.length,
-    previousEditId: isVersionSwitchDisabled
-      ? undefined
-      : versions[resolvedActiveIndex - 1]?.editId,
-    nextEditId: isVersionSwitchDisabled
-      ? undefined
-      : versions[resolvedActiveIndex + 1]?.editId,
-    disabled: isVersionSwitchDisabled
-  };
-}
-
-function getPendingArtifactEditReferences(
-  message: ClientMessage
-): ArtifactEditReference[] {
-  const seen = new Set<string>();
-  const references: ArtifactEditReference[] = [];
-
-  for (const edit of message.artifactEdits ?? []) {
-    if (edit.status !== "pending") {
-      continue;
-    }
-
-    for (const reference of edit.references) {
-      const key = `${reference.kind}:${reference.selector}:${reference.key}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      references.push(reference);
-    }
-  }
-
-  return references;
-}
-
-function normalizeArtifactEditResponse(input: unknown): ArtifactEditResponse {
-  if (!input || typeof input !== "object") {
-    throw new Error("The artifact edit response was empty.");
-  }
-
-  const response = input as Partial<ArtifactEditResponse>;
-  if (typeof response.rawStream !== "string" || !response.rawStream.trim()) {
-    throw new Error("The artifact edit did not return updated source.");
-  }
-
-  return {
-    rawStream: response.rawStream,
-    summary:
-      typeof response.summary === "string" && response.summary.trim()
-        ? response.summary.trim().slice(0, 500)
-        : undefined,
-    edits: Array.isArray(response.edits) ? response.edits : undefined
-  };
-}
-
-function didArtifactEditChangeSource(before: string, after: string): boolean {
-  return before.trim() !== after.trim();
-}
-
 function buildArtifactActionMessage(action: StreamUiAction): string {
   return action.type === "prompt" ? action.prompt.trim().slice(0, 2000) : "";
-}
-
-function findSessionMessage(
-  state: SessionState,
-  messageId: string
-): ClientMessage | undefined {
-  for (const session of state.sessions) {
-    const message = session.messages.find((candidate) => candidate.id === messageId);
-    if (message) {
-      return message;
-    }
-  }
-
-  return undefined;
-}
-
-function findSessionIdForMessage(
-  state: SessionState,
-  messageId: string
-): string | undefined {
-  for (const session of state.sessions) {
-    if (session.messages.some((candidate) => candidate.id === messageId)) {
-      return session.id;
-    }
-  }
-
-  return undefined;
-}
-
-function getMessageBranchGroup(message: ClientMessage): string | undefined {
-  return message.branchGroupId && message.branchVariantId
-    ? message.branchGroupId
-    : undefined;
-}
-
-function getBranchVariantOrder(
-  messages: ClientMessage[],
-  groupId: string,
-  options: { anchorsOnly?: boolean } = {}
-): string[] {
-  const seen = new Set<string>();
-  const variants: string[] = [];
-
-  for (const message of messages) {
-    if (
-      message.branchGroupId !== groupId ||
-      !message.branchVariantId ||
-      (options.anchorsOnly && !(message.role === "assistant" && message.branchAnchor))
-    ) {
-      continue;
-    }
-
-    if (!seen.has(message.branchVariantId)) {
-      seen.add(message.branchVariantId);
-      variants.push(message.branchVariantId);
-    }
-  }
-
-  return variants;
-}
-
-function getBranchTurnInsertionIndex(
-  messages: ClientMessage[],
-  groupId: string,
-  branchStartId: string,
-  branchAnchorId?: string
-): number {
-  const firstBranchIndex = messages.findIndex(
-    (message) => message.branchGroupId === groupId
-  );
-  if (firstBranchIndex >= 0) {
-    let index = firstBranchIndex;
-    while (index < messages.length && messages[index].branchGroupId === groupId) {
-      index += 1;
-    }
-    return index;
-  }
-
-  const anchorIndex = branchAnchorId
-    ? messages.findIndex((message) => message.id === branchAnchorId)
-    : -1;
-  if (anchorIndex >= 0) {
-    return anchorIndex + 1;
-  }
-
-  const startIndex = messages.findIndex((message) => message.id === branchStartId);
-  return startIndex >= 0 ? startIndex + 1 : messages.length;
-}
-
-function getSelectedBranchVariant(
-  session: ChatSession,
-  groupId: string
-): string | undefined {
-  const variants = getBranchVariantOrder(session.messages, groupId);
-  if (!variants.length) {
-    return undefined;
-  }
-
-  const selected = session.branchSelections?.[groupId];
-  return selected && variants.includes(selected) ? selected : variants[0];
-}
-
-function isMessageVisibleInSession(
-  session: ChatSession,
-  message: ClientMessage
-): boolean {
-  const groupId = getMessageBranchGroup(message);
-  if (!groupId || !message.branchVariantId) {
-    return true;
-  }
-
-  return getSelectedBranchVariant(session, groupId) === message.branchVariantId;
-}
-
-function getVisibleSessionMessages(session: ChatSession | undefined): ClientMessage[] {
-  if (!session) {
-    return initialMessages;
-  }
-
-  return session.messages.filter((message) =>
-    isMessageVisibleInSession(session, message)
-  );
-}
-
-function getAssistantForUserTurn(
-  messages: ClientMessage[],
-  userIndex: number
-): ClientMessage | undefined {
-  for (let index = userIndex + 1; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (message.role === "user") {
-      return undefined;
-    }
-    if (message.role === "assistant") {
-      return message;
-    }
-  }
-
-  return undefined;
-}
-
-function getAssistantBranchInfo(
-  session: ChatSession | undefined,
-  messageId: string
-): MessageBranchInfo | undefined {
-  if (!session) {
-    return undefined;
-  }
-
-  const message = session.messages.find((candidate) => candidate.id === messageId);
-  if (
-    !message ||
-    message.role !== "assistant" ||
-    !message.branchAnchor ||
-    !message.branchGroupId ||
-    !message.branchVariantId ||
-    !isMessageVisibleInSession(session, message)
-  ) {
-    return undefined;
-  }
-
-  const variants = getBranchVariantOrder(session.messages, message.branchGroupId, {
-    anchorsOnly: true
-  });
-  if (variants.length <= 1) {
-    return undefined;
-  }
-
-  const activeIndex = variants.indexOf(message.branchVariantId);
-  if (activeIndex < 0) {
-    return undefined;
-  }
-
-  return {
-    groupId: message.branchGroupId,
-    activeIndex,
-    total: variants.length,
-    previousVariantId: variants[activeIndex - 1],
-    nextVariantId: variants[activeIndex + 1]
-  };
-}
-
-function isTerminalAssistantStatus(
-  status: ClientMessage["status"] | undefined
-): status is "complete" | "error" {
-  return status === "complete" || status === "error";
 }
 
 function isImageAttachment(
@@ -1463,733 +554,6 @@ function getAppendMessageImages(message: AppendMessage): ImageAttachment[] {
     .filter(isImageAttachment);
 
   return [...fromAttachments, ...fromInlineParts];
-}
-
-type StreamThreadProps = {
-  activeSessionId: string;
-  messages: ClientMessage[];
-  files: SessionFile[];
-  getBranchInfo(messageId: string): MessageBranchInfo | undefined;
-  themeMode: ThemeMode;
-  showRawStream: boolean;
-  artifactEditingEnabled: boolean;
-  model: string;
-  modelOptions: string[];
-  reasoningEffort: ReasoningEffort;
-  uiComplexity: number;
-  artifactSelectionClearVersion: number;
-  onRuntimeError(id: string, error: RenderError): void;
-  onArtifactAction(id: string, action: StreamUiAction): void;
-  onVisualRepairAssistant(id: string, snapshot: RenderSnapshot, width: number): void;
-  onRegenerateAssistant(id: string): void;
-  onEditUserMessage(id: string, content: string): void;
-  onSelectBranch(groupId: string, variantId: string): void;
-  onSelectArtifactEdit(assistantId: string, editId?: string): void;
-  onEditArtifactEditPrompt(
-    assistantId: string,
-    editId: string,
-    prompt: string
-  ): boolean;
-  onArtifactSelectionsChange(selections: ArtifactSelection[]): void;
-  onModelChange(model: string): void;
-  onReasoningEffortChange(reasoningEffort: ReasoningEffort): void;
-  onUiComplexityChange(uiComplexity: number): void;
-};
-
-const SESSION_OUTPUT_SCROLL_SETTLE_MS = 900;
-const SESSION_OUTPUT_SCROLL_RETRY_MS = [0, 80, 240, 520];
-const AUTO_SCROLL_BOTTOM_THRESHOLD = 160;
-const THINKING_ACTIVITY_ANIMATION_MS = 220;
-
-function ThinkingActivityPanel({
-  message,
-  isClosing,
-  onClose
-}: {
-  message: ClientMessage;
-  isClosing?: boolean;
-  onClose(): void;
-}) {
-  const reasoning = stripSyntheticReasoningStatus(message.reasoning ?? "").trim();
-  const isStreaming = message.status === "streaming";
-
-  return (
-    <aside
-      className={`thinking-activity-panel ${isClosing ? "is-closing" : ""}`}
-      aria-labelledby="thinking-activity-title"
-    >
-      <header className="thinking-activity-header">
-        <h2 id="thinking-activity-title">Activity</h2>
-        <span className="thinking-activity-header-status">
-          {isStreaming ? "Thinking" : "Complete"}
-        </span>
-        <button
-          className="thinking-activity-close"
-          type="button"
-          aria-label="Close activity"
-          onClick={onClose}
-        >
-          <X size={20} strokeWidth={2} aria-hidden="true" />
-        </button>
-      </header>
-      <div className="thinking-activity-body">
-        <section className="thinking-activity-section">
-          <h3>Thinking</h3>
-          <div className="thinking-activity-step">
-            {isStreaming ? (
-              <LoaderCircle size={16} strokeWidth={2} aria-hidden="true" />
-            ) : (
-              <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
-            )}
-            <div>
-              <strong>{isStreaming ? "Thinking" : "Thought"}</strong>
-              <span>{isStreaming ? "In progress" : "Complete"}</span>
-            </div>
-          </div>
-          {reasoning ? (
-            <pre className="thinking-activity-text">{reasoning}</pre>
-          ) : null}
-        </section>
-      </div>
-    </aside>
-  );
-}
-
-function isNearScrollBottom(viewport: HTMLElement): boolean {
-  return (
-    viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <=
-    AUTO_SCROLL_BOTTOM_THRESHOLD
-  );
-}
-
-function scrollToBottom(viewport: HTMLElement): void {
-  viewport.scrollTo({
-    top: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
-    behavior: "auto"
-  });
-}
-
-function scrollToLastOutputStart(viewport: HTMLElement): boolean {
-  const outputs = Array.from(
-    viewport.querySelectorAll<HTMLElement>(".assistant-canvas")
-  );
-  const assistantRows = Array.from(
-    viewport.querySelectorAll<HTMLElement>(".chat-row.assistant")
-  );
-  const target =
-    outputs[outputs.length - 1] ?? assistantRows[assistantRows.length - 1];
-
-  if (!target) {
-    return false;
-  }
-
-  const viewportRect = viewport.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const paddingTop = Number.parseFloat(getComputedStyle(viewport).paddingTop) || 0;
-  const top =
-    viewport.scrollTop + targetRect.top - viewportRect.top - paddingTop;
-
-  viewport.scrollTo({ top: Math.max(0, top), behavior: "auto" });
-  return true;
-}
-
-function focusComposerInput(): void {
-  window.setTimeout(() => {
-    const input = document.querySelector<HTMLElement>(".chat-input-textarea");
-    input?.focus({ preventScroll: true });
-  }, 0);
-}
-
-function StreamThread({
-  activeSessionId,
-  messages,
-  files,
-  getBranchInfo,
-  themeMode,
-  showRawStream,
-  artifactEditingEnabled,
-  model,
-  modelOptions,
-  reasoningEffort,
-  uiComplexity,
-  artifactSelectionClearVersion,
-  onRuntimeError,
-  onArtifactAction,
-  onVisualRepairAssistant,
-  onRegenerateAssistant,
-  onEditUserMessage,
-  onSelectBranch,
-  onSelectArtifactEdit,
-  onEditArtifactEditPrompt,
-  onArtifactSelectionsChange,
-  onModelChange,
-  onReasoningEffortChange,
-  onUiComplexityChange
-}: StreamThreadProps) {
-  const isNewChat = useAuiState((state) => state.thread.messages.length === 0);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const shouldFollowBottomRef = useRef(true);
-  const reasoningActivityCloseTimerRef = useRef<number | null>(null);
-  const [composerFooterElement, setComposerFooterElement] =
-    useState<HTMLDivElement | null>(null);
-  const lastAutoScrollTargetRef = useRef<{
-    count: number;
-    lastMessageId: string;
-  }>({ count: 0, lastMessageId: "" });
-  const messageById = useMemo(
-    () => new Map(messages.map((message) => [message.id, message])),
-    [messages]
-  );
-  const hasStreamingMessage = useMemo(
-    () => messages.some((message) => message.status === "streaming"),
-    [messages]
-  );
-  const fileById = useMemo(
-    () => new Map(files.map((file) => [file.id, file])),
-    [files]
-  );
-  const [artifactSelections, setArtifactSelections] = useState<
-    ArtifactSelection[]
-  >([]);
-  const [selectionModeMessageId, setSelectionModeMessageId] = useState<
-    string | null
-  >(null);
-  const [activeReasoningMessageId, setActiveReasoningMessageId] = useState<
-    string | null
-  >(null);
-  const [isReasoningActivityClosing, setIsReasoningActivityClosing] =
-    useState(false);
-  const activeReasoningMessage = activeReasoningMessageId
-    ? messageById.get(activeReasoningMessageId)
-    : undefined;
-  const showReasoningActivity =
-    activeReasoningMessage?.role === "assistant" &&
-    (activeReasoningMessage.status === "streaming" ||
-      Boolean(
-        stripSyntheticReasoningStatus(
-          activeReasoningMessage.reasoning ?? ""
-        ).trim()
-      ));
-  const isReasoningActivityOpen =
-    Boolean(showReasoningActivity) && !isReasoningActivityClosing;
-  const visibleMessageIds = useMemo(
-    () => new Set(messages.map((message) => message.id)),
-    [messages]
-  );
-  const selectionsByMessageId = useMemo(() => {
-    const grouped = new Map<string, ArtifactSelection[]>();
-    for (const selection of artifactSelections) {
-      const group = grouped.get(selection.messageId) ?? [];
-      group.push(selection);
-      grouped.set(selection.messageId, group);
-    }
-    return grouped;
-  }, [artifactSelections]);
-  const artifactEditTimelineByUserId = useMemo(() => {
-    const byUserId = new Map<
-      string,
-      {
-        assistantId: string;
-        edits: ArtifactEdit[];
-        activeEditId?: string;
-        disabled?: boolean;
-      }
-    >();
-
-    for (let index = 0; index < messages.length; index += 1) {
-      const assistant = messages[index];
-      if (
-        assistant.role !== "assistant" ||
-        !assistant.artifactEdits?.length
-      ) {
-        continue;
-      }
-
-      const activeEditId = getResolvedArtifactEditId(assistant);
-      const timeline = {
-        assistantId: assistant.id,
-        edits: getActiveArtifactEditChain(assistant).filter(
-          shouldShowArtifactEditPromptBubble
-        ),
-        activeEditId,
-        disabled:
-          assistant.status === "streaming" ||
-          assistant.artifactEdits.some(hasPendingArtifactEditVariant)
-      };
-
-      for (let userIndex = index - 1; userIndex >= 0; userIndex -= 1) {
-        const user = messages[userIndex];
-        if (user.role !== "user") {
-          continue;
-        }
-
-        byUserId.set(user.id, timeline);
-        break;
-      }
-    }
-
-    return byUserId;
-  }, [messages]);
-
-  const clearReasoningActivityCloseTimer = useCallback(() => {
-    if (reasoningActivityCloseTimerRef.current !== null) {
-      window.clearTimeout(reasoningActivityCloseTimerRef.current);
-      reasoningActivityCloseTimerRef.current = null;
-    }
-  }, []);
-
-  const openReasoningActivity = useCallback(
-    (messageId: string) => {
-      clearReasoningActivityCloseTimer();
-      setActiveReasoningMessageId(messageId);
-      setIsReasoningActivityClosing(false);
-    },
-    [clearReasoningActivityCloseTimer]
-  );
-
-  const closeReasoningActivity = useCallback(() => {
-    if (!activeReasoningMessageId) {
-      return;
-    }
-
-    clearReasoningActivityCloseTimer();
-    setIsReasoningActivityClosing(true);
-    reasoningActivityCloseTimerRef.current = window.setTimeout(() => {
-      setActiveReasoningMessageId(null);
-      setIsReasoningActivityClosing(false);
-      reasoningActivityCloseTimerRef.current = null;
-    }, THINKING_ACTIVITY_ANIMATION_MS);
-  }, [activeReasoningMessageId, clearReasoningActivityCloseTimer]);
-
-  useEffect(() => {
-    return clearReasoningActivityCloseTimer;
-  }, [clearReasoningActivityCloseTimer]);
-
-  useEffect(() => {
-    setArtifactSelections([]);
-    setSelectionModeMessageId(null);
-    clearReasoningActivityCloseTimer();
-    setActiveReasoningMessageId(null);
-    setIsReasoningActivityClosing(false);
-  }, [activeSessionId, clearReasoningActivityCloseTimer]);
-
-  useEffect(() => {
-    if (artifactEditingEnabled) {
-      return;
-    }
-
-    setArtifactSelections((current) => {
-      const next = current.filter((selection) =>
-        canCaptureArtifactSelection(selection.kind, false)
-      );
-      return next.length === current.length ? current : next;
-    });
-    setSelectionModeMessageId(null);
-  }, [artifactEditingEnabled]);
-
-  useEffect(() => {
-    setArtifactSelections((current) => {
-      const next = current.filter((selection) =>
-        visibleMessageIds.has(selection.messageId)
-      );
-      return next.length === current.length ? current : next;
-    });
-    setSelectionModeMessageId((current) => {
-      if (!current || !visibleMessageIds.has(current)) {
-        return null;
-      }
-
-      const activeMessage = messages.find((message) => message.id === current);
-      return activeMessage?.role === "assistant" &&
-        activeMessage.status === "complete"
-        ? current
-        : null;
-    });
-    setActiveReasoningMessageId((current) => {
-      if (!current || !visibleMessageIds.has(current)) {
-        if (current) {
-          clearReasoningActivityCloseTimer();
-          setIsReasoningActivityClosing(false);
-        }
-        return null;
-      }
-
-      const activeMessage = messages.find((message) => message.id === current);
-      const canShow = Boolean(
-        activeMessage?.role === "assistant" &&
-        (activeMessage.status === "streaming" ||
-          stripSyntheticReasoningStatus(activeMessage.reasoning ?? "").trim())
-      );
-      if (!canShow) {
-        clearReasoningActivityCloseTimer();
-        setIsReasoningActivityClosing(false);
-        return null;
-      }
-      return current;
-    });
-  }, [clearReasoningActivityCloseTimer, messages, visibleMessageIds]);
-
-  const addArtifactSelection = useCallback(
-    (messageId: string, selection: ArtifactSelectionPayload) => {
-      setArtifactSelections((current) => {
-        const nextSelection: ArtifactSelection = {
-          ...selection,
-          id: createId("artifact-selection"),
-          messageId,
-          createdAt: Date.now()
-        };
-        const next = current
-          .filter(
-            (item) => item.messageId === messageId && item.key !== selection.key
-          )
-          .concat(nextSelection);
-
-        return next.slice(Math.max(0, next.length - MAX_ARTIFACT_SELECTIONS));
-      });
-      focusComposerInput();
-    },
-    []
-  );
-
-  const handleArtifactSelection = useCallback(
-    (messageId: string, selection: ArtifactSelectionPayload) => {
-      if (
-        !canCaptureArtifactSelection(selection.kind, artifactEditingEnabled)
-      ) {
-        return;
-      }
-      addArtifactSelection(messageId, selection);
-    },
-    [addArtifactSelection, artifactEditingEnabled]
-  );
-
-  const handleArtifactSelectionModeChange = useCallback(
-    (messageId: string, enabled: boolean) => {
-      if (!artifactEditingEnabled) {
-        setSelectionModeMessageId(null);
-        return;
-      }
-      setSelectionModeMessageId((current) =>
-        enabled
-          ? current === messageId
-            ? null
-            : messageId
-          : current === messageId
-            ? null
-            : current
-      );
-    },
-    [artifactEditingEnabled]
-  );
-
-  const handleRemoveArtifactSelection = useCallback((id: string) => {
-    setArtifactSelections((current) =>
-      current.filter((selection) => selection.id !== id)
-    );
-  }, []);
-
-  const handleClearArtifactSelections = useCallback(() => {
-    setArtifactSelections([]);
-  }, []);
-
-  useEffect(() => {
-    onArtifactSelectionsChange(artifactSelections);
-  }, [artifactSelections, onArtifactSelectionsChange]);
-
-  useEffect(() => {
-    if (artifactSelectionClearVersion <= 0) {
-      return;
-    }
-
-    setArtifactSelections([]);
-    setSelectionModeMessageId(null);
-  }, [artifactSelectionClearVersion]);
-
-  useEffect(() => {
-    if (!selectionModeMessageId) {
-      return undefined;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelectionModeMessageId(null);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [selectionModeMessageId]);
-
-  useEffect(() => {
-    if (!selectionModeMessageId) {
-      return undefined;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (
-        event.target instanceof Element &&
-        event.target.closest(".artifact-select-action")
-      ) {
-        return;
-      }
-
-      if (
-        event.target instanceof HTMLIFrameElement &&
-        event.target.classList.contains("preview-frame")
-      ) {
-        return;
-      }
-
-      setSelectionModeMessageId(null);
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-    };
-  }, [selectionModeMessageId]);
-
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    const footer = composerFooterElement;
-
-    if (!viewport || !footer) {
-      return undefined;
-    }
-
-    const updateComposerFooterHeight = () => {
-      viewport.style.setProperty(
-        "--composer-footer-height",
-        `${Math.ceil(footer.getBoundingClientRect().height)}px`
-      );
-    };
-
-    updateComposerFooterHeight();
-
-    const resizeObserver =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(updateComposerFooterHeight);
-    resizeObserver?.observe(footer);
-    window.addEventListener("resize", updateComposerFooterHeight);
-
-    return () => {
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", updateComposerFooterHeight);
-      viewport.style.removeProperty("--composer-footer-height");
-    };
-  }, [composerFooterElement]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-
-    if (!viewport || !hasStreamingMessage) {
-      return undefined;
-    }
-
-    const timeoutIds: number[] = [];
-    const animationFrameId = window.requestAnimationFrame(() => {
-      scrollToLastOutputStart(viewport);
-    });
-
-    SESSION_OUTPUT_SCROLL_RETRY_MS.forEach((delay) => {
-      timeoutIds.push(
-        window.setTimeout(() => scrollToLastOutputStart(viewport), delay)
-      );
-    });
-
-    const resizeObserver =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(() => scrollToLastOutputStart(viewport));
-
-    if (resizeObserver) {
-      viewport
-        .querySelectorAll<HTMLElement>(
-          ".chat-row, .assistant-canvas, .preview-frame"
-        )
-        .forEach((element) => resizeObserver.observe(element));
-    }
-
-    const settleTimeoutId = window.setTimeout(() => {
-      resizeObserver?.disconnect();
-    }, SESSION_OUTPUT_SCROLL_SETTLE_MS);
-
-    return () => {
-      window.cancelAnimationFrame(animationFrameId);
-      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
-      window.clearTimeout(settleTimeoutId);
-      resizeObserver?.disconnect();
-    };
-  }, [activeSessionId, hasStreamingMessage]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-
-    if (!viewport) {
-      return undefined;
-    }
-
-    const handleScroll = () => {
-      shouldFollowBottomRef.current = isNearScrollBottom(viewport);
-    };
-
-    handleScroll();
-    viewport.addEventListener("scroll", handleScroll, { passive: true });
-
-    return () => {
-      viewport.removeEventListener("scroll", handleScroll);
-    };
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    const lastMessage = messages[messages.length - 1];
-    const isNewMessageTarget =
-      lastAutoScrollTargetRef.current.count !== messages.length ||
-      lastAutoScrollTargetRef.current.lastMessageId !== (lastMessage?.id ?? "");
-    lastAutoScrollTargetRef.current = {
-      count: messages.length,
-      lastMessageId: lastMessage?.id ?? ""
-    };
-
-    if (
-      !viewport ||
-      !shouldFollowBottomRef.current ||
-      !hasStreamingMessage ||
-      !isNewMessageTarget
-    ) {
-      return undefined;
-    }
-
-    const animationFrameId = window.requestAnimationFrame(() => {
-      if (shouldFollowBottomRef.current) {
-        scrollToBottom(viewport);
-      }
-    });
-
-    return () => window.cancelAnimationFrame(animationFrameId);
-  }, [activeSessionId, messages]);
-
-  return (
-    <ThreadPrimitive.Root
-      className={`thread-root ${isNewChat ? "is-new" : "has-messages"} ${
-        showReasoningActivity ? "has-thinking-activity" : ""
-      } ${
-        isReasoningActivityOpen ? "is-thinking-activity-open" : ""
-      }`}
-    >
-      <ThreadPrimitive.Viewport
-        ref={viewportRef}
-        className={`message-list ${isNewChat ? "is-new" : "has-messages"}`}
-        autoScroll={false}
-        scrollToBottomOnRunStart={false}
-        scrollToBottomOnInitialize={false}
-        scrollToBottomOnThreadSwitch={false}
-      >
-        <AuiIf condition={(state) => state.thread.messages.length === 0}>
-          <section className="thread-welcome">
-            <p>ChatHTML Runtime</p>
-            <h2>How can I help you today?</h2>
-          </section>
-        </AuiIf>
-        <ThreadPrimitive.Messages>
-          {({ message }) => {
-            const clientMessage = messageById.get(message.id);
-            if (!clientMessage) {
-              return null;
-            }
-
-            if (clientMessage.role === "assistant") {
-              const branchInfo = getBranchInfo(clientMessage.id);
-              const artifactVersionInfo =
-                getArtifactVersionInfo(clientMessage);
-              return (
-                <AssistantMessage
-                  id={clientMessage.id}
-                  content={clientMessage.content}
-                  reasoning={clientMessage.reasoning}
-                  rawStream={clientMessage.rawStream}
-                  hasStreamUi={clientMessage.hasStreamUi}
-                  snapshot={clientMessage.snapshot}
-                  runtimeErrors={clientMessage.runtimeErrors}
-                  themeMode={themeMode}
-                  showRawStream={showRawStream}
-                  artifactEditingEnabled={artifactEditingEnabled}
-                  status={clientMessage.status}
-                  error={clientMessage.error}
-                  artifactSelections={
-                    selectionsByMessageId.get(clientMessage.id) ?? []
-                  }
-                  artifactBusySelections={
-                    getPendingArtifactEditReferences(clientMessage)
-                  }
-                  isArtifactSelectionModeActive={
-                    selectionModeMessageId === clientMessage.id
-                  }
-                  branchInfo={branchInfo}
-                  artifactVersionInfo={artifactVersionInfo}
-                  activeReasoningMessageId={activeReasoningMessageId ?? undefined}
-                  onRuntimeError={onRuntimeError}
-                  onArtifactAction={onArtifactAction}
-                  onArtifactSelection={handleArtifactSelection}
-                  onArtifactSelectionModeChange={
-                    handleArtifactSelectionModeChange
-                  }
-                  onOpenReasoningActivity={openReasoningActivity}
-                  onVisualRepair={onVisualRepairAssistant}
-                  onRegenerate={onRegenerateAssistant}
-                  onSelectBranch={onSelectBranch}
-                  onSelectArtifactEdit={onSelectArtifactEdit}
-                />
-              );
-            }
-
-            return (
-              <ChatMessage
-                id={clientMessage.id}
-                role={clientMessage.role}
-                files={clientMessage.fileIds
-                  ?.map((fileId) => fileById.get(fileId))
-                  .filter((file): file is SessionFile => Boolean(file))}
-                artifactEditTimeline={artifactEditTimelineByUserId.get(
-                  clientMessage.id
-                )}
-                onEdit={onEditUserMessage}
-                onEditArtifactEditPrompt={onEditArtifactEditPrompt}
-              >
-                {clientMessage.content}
-              </ChatMessage>
-            );
-          }}
-        </ThreadPrimitive.Messages>
-        <ThreadPrimitive.ViewportFooter
-          ref={setComposerFooterElement}
-          className={`composer-footer ${isNewChat ? "is-new" : "has-messages"}`}
-        >
-          <ChatInput
-            model={model}
-            modelOptions={modelOptions}
-            reasoningEffort={reasoningEffort}
-            uiComplexity={uiComplexity}
-            artifactSelections={artifactSelections}
-            onRemoveArtifactSelection={handleRemoveArtifactSelection}
-            onClearArtifactSelections={handleClearArtifactSelections}
-            onModelChange={onModelChange}
-            onReasoningEffortChange={onReasoningEffortChange}
-            onUiComplexityChange={onUiComplexityChange}
-          />
-        </ThreadPrimitive.ViewportFooter>
-      </ThreadPrimitive.Viewport>
-      {showReasoningActivity && activeReasoningMessage ? (
-        <ThinkingActivityPanel
-          message={activeReasoningMessage}
-          isClosing={isReasoningActivityClosing}
-          onClose={closeReasoningActivity}
-        />
-      ) : null}
-    </ThreadPrimitive.Root>
-  );
 }
 
 export default function App() {
@@ -2546,9 +910,7 @@ export default function App() {
 
     let cancelled = false;
 
-    fetch("/api/sessions/index", {
-      headers: sessionRequestHeaders(sessionClientIdRef.current)
-    })
+    requestSessionIndex(sessionClientIdRef.current)
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`Session index load failed with HTTP ${response.status}.`);
@@ -2585,9 +947,7 @@ export default function App() {
 
     let cancelled = false;
 
-    fetch("/api/sessions", {
-      headers: sessionRequestHeaders(sessionClientIdRef.current)
-    })
+    requestSessions(sessionClientIdRef.current)
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`Session load failed with HTTP ${response.status}.`);
@@ -2601,35 +961,16 @@ export default function App() {
             interruptPendingArtifactEdits: true
           });
           const legacyState = loadLegacyLocalSessionState();
-          const loadedState =
-            !hasPersistedMessages(serverState) &&
-            legacyState &&
-            hasPersistedMessages(legacyState)
-              ? legacyState
-              : serverState;
 
-          setSessionStateAndRef((current) => {
-            const deletedSessionIds = Array.from(deletedSessionIdsRef.current);
-            const filteredLoadedState = filterDeletedSessionState(
-              loadedState,
-              deletedSessionIds,
-              current
-            );
-            const transientId = transientEmptySessionIdRef.current;
-            const active = current.sessions.find(
-              (session) => session.id === current.activeSessionId
-            );
-
-            return transientId &&
-              active?.id === transientId &&
-              isSessionEmpty(active)
-              ? mergeSyncedSessionState(
-                  current,
-                  filteredLoadedState,
-                  deletedSessionIds
-                )
-              : filteredLoadedState;
-          });
+          setSessionStateAndRef((current) =>
+            resolveInitialSessionState({
+              current,
+              serverState,
+              legacyState,
+              deletedSessionIds: deletedSessionIdsRef.current,
+              transientEmptySessionId: transientEmptySessionIdRef.current
+            })
+          );
         }
       })
       .catch((error) => {
@@ -2657,28 +998,20 @@ export default function App() {
     let cancelled = false;
 
     const syncSessions = async () => {
-      if (
-        runConnectionsRef.current.size > 0 ||
-        cancelledRunIdsRef.current.size > 0
-      ) {
-        return;
-      }
-
       const currentState = sessionStateRef.current;
-      const active = currentState.sessions.find(
-        (session) => session.id === currentState.activeSessionId
-      );
       if (
-        active?.id === transientEmptySessionIdRef.current &&
-        isSessionEmpty(active)
+        !shouldRequestSessionSync({
+          state: currentState,
+          transientEmptySessionId: transientEmptySessionIdRef.current,
+          hasActiveRuns: runConnectionsRef.current.size > 0,
+          hasRecentCancellations: cancelledRunIdsRef.current.size > 0
+        })
       ) {
         return;
       }
 
       try {
-        const response = await fetch("/api/sessions", {
-          headers: sessionRequestHeaders(sessionClientIdRef.current)
-        });
+        const response = await requestSessions(sessionClientIdRef.current);
         if (!response.ok) {
           throw new Error(`Session sync failed with HTTP ${response.status}.`);
         }
@@ -2695,26 +1028,14 @@ export default function App() {
           return;
         }
 
-        setSessionStateAndRef((current) => {
-          const deletedSessionIds = Array.from(deletedSessionIdsRef.current);
-          const next = mergeSyncedSessionState(
+        setSessionStateAndRef((current) =>
+          mergePolledSessionState({
             current,
             serverState,
-            deletedSessionIds
-          );
-          const currentPayload = serializeSessionStateForSave(
-            current,
-            sessionClientIdRef.current,
-            deletedSessionIds
-          );
-          const nextPayload = serializeSessionStateForSave(
-            next,
-            sessionClientIdRef.current,
-            deletedSessionIds
-          );
-
-          return currentPayload === nextPayload ? current : next;
-        });
+            clientId: sessionClientIdRef.current,
+            deletedSessionIds: deletedSessionIdsRef.current
+          })
+        );
       } catch (error) {
         if (!cancelled) {
           console.warn("Could not sync ChatHTML sessions.", error);
@@ -3364,10 +1685,7 @@ export default function App() {
     localArtifactEditController?.abort();
 
     const cancelRequests = runIds.map((runId) =>
-      fetch(`/api/chat/runs/${encodeURIComponent(runId)}/cancel`, {
-        method: "POST",
-        headers: sessionRequestHeaders(sessionClientIdRef.current)
-      }).catch((error) => {
+      cancelChatRun(runId, sessionClientIdRef.current).catch((error) => {
         console.warn("Could not cancel ChatHTML run on the server.", error);
       })
     );
@@ -3737,45 +2055,31 @@ export default function App() {
       let serverSyncInFlight = false;
 
       const applyServerAssistantMessage = (serverMessage: ClientMessage) => {
-        if (serverMessage.role !== "assistant") {
-          return;
-        }
-        if (
-          serverMessage.generationRunId &&
-          serverMessage.generationRunId !== generationRunId
-        ) {
-          return;
-        }
-
-        const serverSequence = serverMessage.streamSequence ?? 0;
-        const serverRaw = serverMessage.rawStream ?? "";
-        const serverReasoning = serverMessage.reasoning ?? "";
-        const terminalStatus = isTerminalAssistantStatus(serverMessage.status)
-          ? serverMessage.status
-          : undefined;
-        const hasNewerStream =
-          serverSequence > lastStreamSequence ||
-          serverRaw.length > raw.length ||
-          serverReasoning.length > reasoning.length;
-        const hasTerminalUpdate =
-          Boolean(terminalStatus) && doneStatus !== terminalStatus;
-
-        if (!hasNewerStream && !hasTerminalUpdate) {
-          return;
-        }
-
-        raw = serverRaw || raw;
-        reasoning = serverReasoning || reasoning;
-        lastStreamSequence = Math.max(lastStreamSequence, serverSequence);
-        updateAssistantForPhase(
-          serverMessage,
-          terminalStatus ?? "streaming"
+        const result = reconcileChatRunState(
+          {
+            runId: generationRunId,
+            raw,
+            reasoning,
+            streamSequence: lastStreamSequence,
+            doneStatus,
+            doneError,
+            completedFromServer
+          },
+          serverMessage
         );
+        if (!result.accepted || !result.phase) {
+          return;
+        }
 
-        if (terminalStatus) {
-          doneStatus = terminalStatus;
-          doneError = sanitizeChatErrorMessage(serverMessage.error, "");
-          completedFromServer = true;
+        raw = result.state.raw;
+        reasoning = result.state.reasoning;
+        lastStreamSequence = result.state.streamSequence;
+        doneStatus = result.state.doneStatus;
+        doneError = result.state.doneError;
+        completedFromServer = result.state.completedFromServer;
+        updateAssistantForPhase(serverMessage, result.phase);
+
+        if (result.abortConnection) {
           streamController.abort();
         }
       };
@@ -3787,9 +2091,7 @@ export default function App() {
 
         serverSyncInFlight = true;
         try {
-          const response = await fetch("/api/sessions", {
-            headers: sessionRequestHeaders(sessionClientIdRef.current)
-          });
+          const response = await requestSessions(sessionClientIdRef.current);
           if (!response.ok) {
             throw new Error(`Session sync failed with HTTP ${response.status}.`);
           }
@@ -3852,54 +2154,34 @@ export default function App() {
         });
       };
 
-      const handleStreamEvent = (line: string) => {
-        if (!line.trim()) {
-          return;
-        }
-
-        try {
-          const event = JSON.parse(line) as ChatStreamEvent;
-          const streamSequence =
-            typeof event.seq === "number" && Number.isFinite(event.seq)
-              ? Math.max(0, Math.round(event.seq))
-              : undefined;
+      const handleStreamEvent = createChatStreamLineHandler({
+        runId: generationRunId,
+        getLastSequence: () => lastStreamSequence,
+        onSequence: (streamSequence) => {
+          lastStreamSequence = streamSequence;
+        },
+        onDone: (status, error, streamSequence) => {
+          doneStatus = status;
+          doneError = error;
           if (typeof streamSequence === "number") {
-            lastStreamSequence = streamSequence;
+            updateAssistant(assistantId, { streamSequence });
           }
-          if (event.type === "done") {
-            doneStatus =
-              event.status === "error" && !isChatCancelledMessage(event.error)
-                ? "error"
-                : "complete";
-            doneError = sanitizeChatErrorMessage(event.error, "");
-            if (typeof streamSequence === "number") {
-              updateAssistant(assistantId, { streamSequence });
-            }
-            return;
+        },
+        onMemory: (event, streamSequence) => {
+          handleMemoryStreamEvent(event);
+          if (typeof streamSequence === "number") {
+            updateAssistant(assistantId, { streamSequence });
           }
-          if (event.type === "memory") {
-            handleMemoryStreamEvent(event);
-            if (typeof streamSequence === "number") {
-              updateAssistant(assistantId, { streamSequence });
-            }
-            return;
-          }
-          if (event.type === "reasoning" && event.text) {
-            reasoning += event.text;
-            updateAssistant(assistantId, {
-              reasoning,
-              ...(typeof streamSequence === "number" ? { streamSequence } : {})
-            });
-            return;
-          }
-          if (event.type === "content" && event.text) {
-            handleContentChunk(event.text, streamSequence);
-            return;
-          }
-        } catch {
-          handleContentChunk(line);
-        }
-      };
+        },
+        onReasoning: (text, streamSequence) => {
+          reasoning += text;
+          updateAssistant(assistantId, {
+            reasoning,
+            ...(typeof streamSequence === "number" ? { streamSequence } : {})
+          });
+        },
+        onContent: handleContentChunk
+      });
 
       try {
         if (hasUnuploadedAttachments) {
@@ -3919,14 +2201,8 @@ export default function App() {
         ]);
         startServerReconcile();
 
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: sessionRequestHeaders(
-            sessionClientIdRef.current,
-            "application/json"
-          ),
-          signal: streamController.signal,
-          body: JSON.stringify({
+        const response = await startChatRun(
+          {
             clientId: sessionClientIdRef.current,
             sessionId: requestSessionId,
             runId: generationRunId,
@@ -3940,8 +2216,10 @@ export default function App() {
             themeMode,
             apiSettings: serializeApiSettings(requestApiSettings),
             searchSettings: serializeSearchSettings(searchSettings)
-          })
-        });
+          },
+          sessionClientIdRef.current,
+          streamController.signal
+        );
 
         if (!response.ok || !response.body) {
           const errorText = await response.text();
@@ -3949,29 +2227,7 @@ export default function App() {
         }
         streamConnected = true;
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let streamBuffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            break;
-          }
-
-          streamBuffer += decoder.decode(value, { stream: true });
-          const lines = streamBuffer.split("\n");
-          streamBuffer = lines.pop() ?? "";
-          lines.forEach(handleStreamEvent);
-        }
-
-        const tail = decoder.decode();
-        if (tail) {
-          streamBuffer += tail;
-        }
-        if (streamBuffer.trim()) {
-          streamBuffer.split("\n").forEach(handleStreamEvent);
-        }
+        await readNdjsonLines(response.body, handleStreamEvent);
 
         await reconcileAssistantFromServer();
 
@@ -4744,67 +3000,35 @@ export default function App() {
       isSendingRef.current = true;
 
       try {
-        const response = await fetch("/api/artifact-edits", {
-          method: "POST",
-          headers: sessionRequestHeaders(
-            sessionClientIdRef.current,
-            "application/json"
-          ),
-          signal: controller.signal,
-          body: JSON.stringify({
+        const result = await requestArtifactEdit(
+          {
             source,
             prompt,
             references: edit.references,
             apiSettings: serializeApiSettings(requestApiSettings)
-          })
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(formatChatHttpError(response, errorText));
-        }
-
-        const result = normalizeArtifactEditResponse(await response.json());
-        if (!didArtifactEditChangeSource(source, result.rawStream)) {
-          throw new Error(
-            "The artifact edit did not change the source. Try a more specific prompt or select a larger reference."
-          );
-        }
+          },
+          sessionClientIdRef.current,
+          controller.signal
+        );
         const patch = buildCompletedAssistantPatchFromRawStream(
           result.rawStream,
           themeMode
         );
         const editCount = result.edits?.length;
 
-        updateAssistantMessage(assistantId, (message) => ({
-          ...message,
-          ...patch,
-          artifactEditBaseRawStream:
-            message.artifactEditBaseRawStream ?? assistant.artifactEditBaseRawStream ?? source,
-          artifactEdits: (message.artifactEdits ?? []).map((item) =>
-            item.id === nextEditId
-              ? {
-                  ...item,
-                  status: "complete",
-                  error: undefined,
-                  activeVariantId: variantId,
-                  variants: item.variants.map((variant) =>
-                    variant.id === variantId
-                      ? {
-                          ...variant,
-                          status: "complete",
-                          rawStream: result.rawStream,
-                          summary: result.summary,
-                          error: undefined,
-                          editCount
-                        }
-                      : variant
-                  )
-                }
-              : item
-          ),
-          activeArtifactEditId: nextEditId
-        }));
+        updateAssistantMessage(assistantId, (message) =>
+          completeArtifactEditVariant(
+            { ...message, ...patch },
+            {
+              editId: nextEditId,
+              variantId,
+              rawStream: result.rawStream,
+              summary: result.summary,
+              editCount,
+              baseRawStream: assistant.artifactEditBaseRawStream ?? source
+            }
+          )
+        );
         artifactSelectionsRef.current = [];
         setArtifactSelectionClearVersion((version) => version + 1);
       } catch (error) {
@@ -4854,30 +3078,14 @@ export default function App() {
                 "The artifact edit regeneration failed."
               )
             : "The artifact edit regeneration failed.";
-        updateAssistantMessage(assistantId, (message) => ({
-          ...message,
-          artifactEdits: (message.artifactEdits ?? []).map((item) => {
-            if (item.id !== nextEditId) {
-              return item;
-            }
-
-            return {
-              ...item,
-              status: "error",
-              error: errorMessage,
-              variants: item.variants.map((variant) =>
-                variant.id === variantId
-                  ? {
-                      ...variant,
-                      status: "error",
-                      error: errorMessage
-                    }
-                  : variant
-              )
-            };
-          }),
-          activeArtifactEditId: nextEditId
-        }));
+        updateAssistantMessage(assistantId, (message) =>
+          failArtifactEditVariant(
+            message,
+            nextEditId,
+            variantId,
+            errorMessage
+          )
+        );
       } finally {
         if (localArtifactEditAbortRef.current === controller) {
           localArtifactEditAbortRef.current = null;
@@ -5178,28 +3386,9 @@ export default function App() {
       isSendingRef.current = true;
 
       const failEdit = (errorMessage: string) => {
-        updateAssistantMessage(assistantId, (message) => ({
-          ...message,
-          artifactEdits: (message.artifactEdits ?? []).map((edit) =>
-            edit.id === editId
-              ? {
-                  ...edit,
-                  status: "error",
-                  error: errorMessage,
-                  variants: edit.variants.map((variant) =>
-                    variant.id === variantId
-                      ? {
-                          ...variant,
-                          status: "error",
-                          error: errorMessage
-                        }
-                      : variant
-                  )
-                }
-              : edit
-          ),
-          activeArtifactEditId: editId
-        }));
+        updateAssistantMessage(assistantId, (message) =>
+          failArtifactEditVariant(message, editId, variantId, errorMessage)
+        );
       };
 
       try {
@@ -5209,86 +3398,40 @@ export default function App() {
           );
         }
 
-        const response = await fetch("/api/artifact-edits", {
-          method: "POST",
-          headers: sessionRequestHeaders(
-            sessionClientIdRef.current,
-            "application/json"
-          ),
-          signal: controller.signal,
-          body: JSON.stringify({
+        const result = await requestArtifactEdit(
+          {
             source,
             prompt: trimmed,
             references,
             apiSettings: serializeApiSettings(requestApiSettings)
-          })
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(formatChatHttpError(response, errorText));
-        }
-
-        const result = normalizeArtifactEditResponse(await response.json());
-        if (!didArtifactEditChangeSource(source, result.rawStream)) {
-          throw new Error(
-            "The artifact edit did not change the source. Try a more specific prompt or select a larger reference."
-          );
-        }
+          },
+          sessionClientIdRef.current,
+          controller.signal
+        );
         const patch = buildCompletedAssistantPatchFromRawStream(
           result.rawStream,
           themeMode
         );
         const editCount = result.edits?.length;
 
-        updateAssistantMessage(assistantId, (message) => ({
-          ...message,
-          ...patch,
-          artifactEditBaseRawStream:
-            message.artifactEditBaseRawStream ?? source,
-          artifactEdits: (message.artifactEdits ?? []).map((edit) =>
-            edit.id === editId
-              ? {
-                  ...edit,
-                  status: "complete",
-                  error: undefined,
-                  activeVariantId: variantId,
-                  variants: edit.variants.map((variant) =>
-                    variant.id === variantId
-                      ? {
-                          ...variant,
-                          status: "complete",
-                          rawStream: result.rawStream,
-                          summary: result.summary,
-                          error: undefined,
-                          editCount
-                        }
-                      : variant
-                  )
-                }
-              : edit
-          ),
-          activeArtifactEditId: editId
-        }));
+        updateAssistantMessage(assistantId, (message) =>
+          completeArtifactEditVariant(
+            { ...message, ...patch },
+            {
+              editId,
+              variantId,
+              rawStream: result.rawStream,
+              summary: result.summary,
+              editCount,
+              baseRawStream: source
+            }
+          )
+        );
       } catch (error) {
         if (isAbortError(error)) {
-          updateAssistantMessage(assistantId, (message) => {
-            const artifactEdits = (message.artifactEdits ?? []).filter(
-              (edit) => edit.id !== editId
-            );
-
-            return {
-              ...message,
-              artifactEditBaseRawStream: artifactEdits.length
-                ? message.artifactEditBaseRawStream
-                : undefined,
-              artifactEdits: artifactEdits.length ? artifactEdits : undefined,
-              activeArtifactEditId:
-                message.activeArtifactEditId === editId
-                  ? previousEditId
-                  : message.activeArtifactEditId
-            };
-          });
+          updateAssistantMessage(assistantId, (message) =>
+            removeArtifactEdit(message, editId, previousEditId)
+          );
           return;
         }
 
@@ -5363,42 +3506,31 @@ export default function App() {
           let serverSyncInFlight = false;
 
           const applyServerAssistantMessage = (serverMessage: ClientMessage) => {
-            if (serverMessage.role !== "assistant") {
-              return;
-            }
-            if (
-              serverMessage.generationRunId &&
-              serverMessage.generationRunId !== generationRunId
-            ) {
-              return;
-            }
-
-            const serverSequence = serverMessage.streamSequence ?? 0;
-            const serverRaw = serverMessage.rawStream ?? "";
-            const serverReasoning = serverMessage.reasoning ?? "";
-            const terminalStatus = isTerminalAssistantStatus(serverMessage.status)
-              ? serverMessage.status
-              : undefined;
-            const hasNewerStream =
-              serverSequence > lastStreamSequence ||
-              serverRaw.length > raw.length ||
-              serverReasoning.length > reasoning.length;
-            const hasTerminalUpdate =
-              Boolean(terminalStatus) && doneStatus !== terminalStatus;
-
-            if (!hasNewerStream && !hasTerminalUpdate) {
+            const result = reconcileChatRunState(
+              {
+                runId: generationRunId,
+                raw,
+                reasoning,
+                streamSequence: lastStreamSequence,
+                doneStatus,
+                doneError,
+                completedFromServer
+              },
+              serverMessage
+            );
+            if (!result.accepted) {
               return;
             }
 
-            raw = serverRaw || raw;
-            reasoning = serverReasoning || reasoning;
-            lastStreamSequence = Math.max(lastStreamSequence, serverSequence);
+            raw = result.state.raw;
+            reasoning = result.state.reasoning;
+            lastStreamSequence = result.state.streamSequence;
+            doneStatus = result.state.doneStatus;
+            doneError = result.state.doneError;
+            completedFromServer = result.state.completedFromServer;
             updateAssistant(message.id, serverMessage);
 
-            if (terminalStatus) {
-              doneStatus = terminalStatus;
-              doneError = sanitizeChatErrorMessage(serverMessage.error, "");
-              completedFromServer = true;
+            if (result.abortConnection) {
               controller.abort();
             }
           };
@@ -5410,9 +3542,7 @@ export default function App() {
 
             serverSyncInFlight = true;
             try {
-              const response = await fetch("/api/sessions", {
-                headers: sessionRequestHeaders(sessionClientIdRef.current)
-              });
+              const response = await requestSessions(sessionClientIdRef.current);
               if (!response.ok) {
                 throw new Error(`Session sync failed with HTTP ${response.status}.`);
               }
@@ -5477,67 +3607,44 @@ export default function App() {
             });
           };
 
-          const handleStreamEvent = (line: string) => {
-            if (!line.trim()) {
-              return;
-            }
-
-            try {
-              const event = JSON.parse(line) as ChatStreamEvent;
-              const streamSequence =
-                typeof event.seq === "number" && Number.isFinite(event.seq)
-                  ? Math.max(0, Math.round(event.seq))
-                  : undefined;
+          const handleStreamEvent = createChatStreamLineHandler({
+            runId: generationRunId,
+            getLastSequence: () => lastStreamSequence,
+            onSequence: (streamSequence) => {
+              lastStreamSequence = streamSequence;
+            },
+            onDone: (status, error, streamSequence) => {
+              doneStatus = status;
+              doneError = error;
               if (typeof streamSequence === "number") {
-                lastStreamSequence = streamSequence;
+                updateAssistant(message.id, { streamSequence });
               }
-              if (event.type === "done") {
-                doneStatus =
-                  event.status === "error" && !isChatCancelledMessage(event.error)
-                    ? "error"
-                    : "complete";
-                doneError = sanitizeChatErrorMessage(event.error, "");
-                if (typeof streamSequence === "number") {
-                  updateAssistant(message.id, { streamSequence });
-                }
-                return;
+            },
+            onMemory: (event, streamSequence) => {
+              handleMemoryStreamEvent(event);
+              if (typeof streamSequence === "number") {
+                updateAssistant(message.id, { streamSequence });
               }
-              if (event.type === "memory") {
-                handleMemoryStreamEvent(event);
-                if (typeof streamSequence === "number") {
-                  updateAssistant(message.id, { streamSequence });
-                }
-                return;
-              }
-              if (event.type === "reasoning" && event.text) {
-                reasoning += event.text;
-                updateAssistant(message.id, {
-                  reasoning,
-                  ...(typeof streamSequence === "number"
-                    ? { streamSequence }
-                    : {})
-                });
-                return;
-              }
-              if (event.type === "content" && event.text) {
-                handleContentChunk(event.text, streamSequence);
-                return;
-              }
-            } catch {
-              handleContentChunk(line);
-            }
-          };
+            },
+            onReasoning: (text, streamSequence) => {
+              reasoning += text;
+              updateAssistant(message.id, {
+                reasoning,
+                ...(typeof streamSequence === "number"
+                  ? { streamSequence }
+                  : {})
+              });
+            },
+            onContent: handleContentChunk
+          });
 
           try {
             startServerReconcile();
-            const response = await fetch(
-              `/api/chat/runs/${encodeURIComponent(
-                generationRunId
-              )}/events?after=${encodeURIComponent(String(lastStreamSequence))}`,
-              {
-                headers: sessionRequestHeaders(sessionClientIdRef.current),
-                signal: controller.signal
-              }
+            const response = await requestChatRunEvents(
+              generationRunId,
+              lastStreamSequence,
+              sessionClientIdRef.current,
+              controller.signal
             );
 
             if (response.status === 404) {
@@ -5557,29 +3664,7 @@ export default function App() {
               throw new Error(formatChatHttpError(response, errorText));
             }
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let streamBuffer = "";
-
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) {
-                break;
-              }
-
-              streamBuffer += decoder.decode(value, { stream: true });
-              const lines = streamBuffer.split("\n");
-              streamBuffer = lines.pop() ?? "";
-              lines.forEach(handleStreamEvent);
-            }
-
-            const tail = decoder.decode();
-            if (tail) {
-              streamBuffer += tail;
-            }
-            if (streamBuffer.trim()) {
-              streamBuffer.split("\n").forEach(handleStreamEvent);
-            }
+            await readNdjsonLines(response.body, handleStreamEvent);
 
             await reconcileAssistantFromServer();
 
