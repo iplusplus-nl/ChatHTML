@@ -5,7 +5,13 @@ import {
 import type { ClientMessage } from "../../domain/chat/sessionModel";
 import { extractStreamUiParts } from "../../runtime/streamui/protocol";
 import type { RenderSnapshot } from "../../runtime/streamui/types";
-import { sanitizeChatErrorMessage } from "./chatErrors";
+import type { StreamingRenderer } from "../../runtime/streamui/types";
+import {
+  createCancelledAssistantPatch,
+  sanitizeChatErrorMessage
+} from "./chatErrors";
+import type { ChatRunAssistantPhase } from "./chatRunRequest";
+import type { ChatRunState } from "./chatRunStateMachine";
 
 export type ChatRunPresentationInput = {
   raw: string;
@@ -25,6 +31,11 @@ export type CompletedChatRunProjection = {
 export type StreamingChatRunProjection = {
   patch: Partial<ClientMessage>;
   streamUiSource?: string;
+};
+
+export type LocalChatRunTerminalPresentation = {
+  phase: Exclude<ChatRunAssistantPhase, "streaming">;
+  patch: Partial<ClientMessage>;
 };
 
 export function projectStreamingChatRun(
@@ -101,5 +112,58 @@ export function projectFailedChatRun(
     streamSequence: input.streamSequence,
     error: sanitizeChatErrorMessage(input.error),
     status: "error"
+  };
+}
+
+export function presentLocalChatRunTerminal(
+  state: ChatRunState,
+  renderer: Pick<StreamingRenderer, "replace" | "complete" | "getSnapshot">
+): LocalChatRunTerminalPresentation | undefined {
+  const terminal = state.terminal;
+  if (!terminal || terminal.source === "server") {
+    return undefined;
+  }
+
+  if (terminal.phase === "cancelled") {
+    return {
+      phase: "cancelled",
+      patch: createCancelledAssistantPatch(
+        state.raw,
+        state.reasoning,
+        state.streamSequence
+      )
+    };
+  }
+
+  if (terminal.phase === "error") {
+    return {
+      phase: "error",
+      patch: projectFailedChatRun({
+        raw: state.raw,
+        reasoning: state.reasoning,
+        streamSequence: state.streamSequence,
+        error: terminal.error
+      })
+    };
+  }
+
+  const completion = projectCompletedChatRun({
+    raw: state.raw,
+    reasoning: state.reasoning,
+    streamSequence: state.streamSequence
+  });
+  let snapshot: RenderSnapshot | undefined;
+  if (completion.streamUiSource) {
+    renderer.replace(completion.streamUiSource);
+    renderer.complete();
+    snapshot = renderer.getSnapshot();
+  }
+
+  return {
+    phase: "complete",
+    patch: {
+      ...completion.patch,
+      snapshot
+    }
   };
 }

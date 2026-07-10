@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { RenderSnapshot } from "../../runtime/streamui/types";
+import { createStreamingRenderer } from "../../runtime/streamui/streamingRenderer";
 import {
+  createChatRunState,
+  reduceChatRunState
+} from "./chatRunStateMachine";
+import {
+  presentLocalChatRunTerminal,
   projectCompletedChatRun,
   projectFailedChatRun,
   projectStreamingChatRun
@@ -213,6 +219,79 @@ describe("chat run presentation", () => {
         error: ""
       }).content,
       "I could not complete that request."
+    );
+  });
+
+  it("presents an explicit stream completion even if transport later fails", () => {
+    const streaming = createChatRunState({
+      runId: "run-1",
+      raw: "<chat>Done</chat><streamui><main>Artifact</main></streamui>",
+      reasoning: "Thought",
+      streamSequence: 4
+    });
+    const done = reduceChatRunState(streaming, {
+      type: "done",
+      status: "complete",
+      error: "",
+      sequence: 5
+    }).state;
+    const result = presentLocalChatRunTerminal(
+      done,
+      createStreamingRenderer("day")
+    );
+
+    assert.equal(result?.phase, "complete");
+    assert.equal(result?.patch.content, "Done");
+    assert.equal(result?.patch.status, "complete");
+    assert.equal(result?.patch.streamSequence, 5);
+    assert.equal(result?.patch.snapshot?.status, "complete");
+    assert.equal(result?.patch.snapshot?.raw, "<main>Artifact</main>");
+  });
+
+  it("presents explicit stream errors and cancellation without a renderer snapshot", () => {
+    const streaming = createChatRunState({
+      runId: "run-1",
+      raw: "<chat>Partial</chat>",
+      streamSequence: 2
+    });
+    const failed = reduceChatRunState(streaming, {
+      type: "done",
+      status: "error",
+      error: '{"error":"Provider failed"}',
+      sequence: 3
+    }).state;
+    const cancelled = reduceChatRunState(streaming, { type: "cancel" }).state;
+    const renderer = createStreamingRenderer();
+    const failure = presentLocalChatRunTerminal(failed, renderer);
+    const cancellation = presentLocalChatRunTerminal(cancelled, renderer);
+
+    assert.equal(failure?.phase, "error");
+    assert.equal(failure?.patch.error, "Provider failed");
+    assert.equal(failure?.patch.content, "Partial");
+    assert.equal(cancellation?.phase, "cancelled");
+    assert.equal(cancellation?.patch.status, "complete");
+    assert.equal(cancellation?.patch.error, undefined);
+    assert.equal(renderer.getSnapshot().status, "idle");
+  });
+
+  it("leaves server terminals for their authoritative server patch", () => {
+    const serverTerminal = reduceChatRunState(
+      createChatRunState({ runId: "run-1" }),
+      {
+        type: "server",
+        message: {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Done",
+          generationRunId: "run-1",
+          status: "complete"
+        }
+      }
+    ).state;
+
+    assert.equal(
+      presentLocalChatRunTerminal(serverTerminal, createStreamingRenderer()),
+      undefined
     );
   });
 });

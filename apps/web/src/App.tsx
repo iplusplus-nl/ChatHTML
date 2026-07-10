@@ -57,16 +57,16 @@ import {
   sanitizeChatErrorMessage
 } from "./features/chat/chatErrors";
 import { createChatStreamLineHandler } from "./features/chat/chatStreamEvents";
-import { reconcileChatRunState } from "./features/chat/chatRunReconcile";
 import {
-  projectCompletedChatRun,
-  projectFailedChatRun,
+  presentLocalChatRunTerminal,
   projectStreamingChatRun
 } from "./features/chat/chatRunPresentation";
 import {
   createChatRunState,
   reduceChatRunState
 } from "./features/chat/chatRunStateMachine";
+import { createChatRunReconnectScheduler } from "./features/chat/chatRunReconnectScheduler";
+import { subscribeRestoredChatRunRenderer } from "./features/chat/chatRunRendererLifecycle";
 import type {
   ChatRunAssistantPhase,
   PendingManagedRequest,
@@ -290,6 +290,13 @@ export default function App() {
       }
     })
   );
+  const [restoredRunReconnectScheduler] = useState(() =>
+    createChatRunReconnectScheduler({
+      setTimer: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      clearTimer: (timer) => window.clearTimeout(timer as number)
+    })
+  );
+  const [restoredRunRetryVersion, setRestoredRunRetryVersion] = useState(0);
   const [pendingManagedRequestSlot] = useState(
     () => createPendingRequestSlot<PendingManagedRequest>(),
   );
@@ -360,13 +367,15 @@ export default function App() {
   }, [sessionsLoaded]);
 
   useEffect(() => {
+    restoredRunReconnectScheduler.activate();
     return () => {
       runConnectionsRef.current.forEach((controller) => controller.abort());
       runConnectionsRef.current.clear();
       branchRunCancelCleanupRef.current.clear();
+      restoredRunReconnectScheduler.dispose();
       generationActivity.reset();
     };
-  }, [generationActivity]);
+  }, [generationActivity, restoredRunReconnectScheduler]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1161,6 +1170,19 @@ export default function App() {
         return result;
       };
 
+      const canAcceptRunStreamEvent = () => {
+        if (
+          cancelledRunIdsRef.current.has(generationRunId) ||
+          runConnectionsRef.current.get(generationRunId) !== streamController ||
+          (streamController.signal.aborted &&
+            runState.terminal?.source !== "server")
+        ) {
+          dispatchRunEvent({ type: "cancel" });
+          return false;
+        }
+        return true;
+      };
+
       const applyServerAssistantMessage = (serverMessage: ClientMessage) => {
         if (
           cancelledRunIdsRef.current.has(generationRunId) ||
@@ -1235,6 +1257,9 @@ export default function App() {
       };
 
       const handleContentChunk = (chunk: string, streamSequence?: number) => {
+        if (!canAcceptRunStreamEvent()) {
+          return;
+        }
         const result = dispatchRunEvent({
           type: "content",
           text: chunk,
@@ -1272,6 +1297,9 @@ export default function App() {
           getLastSequence: () => runState.streamSequence,
           onSequence: () => undefined,
           onDone: (status, error, streamSequence) => {
+            if (!canAcceptRunStreamEvent()) {
+              return;
+            }
             const result = dispatchRunEvent({
               type: "done",
               status,
@@ -1283,6 +1311,9 @@ export default function App() {
             }
           },
           onMemory: (event, streamSequence) => {
+            if (!canAcceptRunStreamEvent()) {
+              return;
+            }
             const result = dispatchRunEvent({
               type: "memory",
               sequence: streamSequence
@@ -1296,6 +1327,9 @@ export default function App() {
             }
           },
           onReasoning: (text, streamSequence) => {
+            if (!canAcceptRunStreamEvent()) {
+              return;
+            }
             const result = dispatchRunEvent({
               type: "reasoning",
               text,
@@ -1326,6 +1360,41 @@ export default function App() {
         console.warn("Could not initialize ChatHTML stream handler.", error);
         return;
       }
+
+      const applyLocalRunTerminal = async (): Promise<boolean> => {
+        const presentation = presentLocalChatRunTerminal(runState, renderer);
+        if (!presentation) {
+          return false;
+        }
+        const terminalApplied = updateAssistantForPhase(
+          presentation.patch,
+          presentation.phase
+        );
+        if (!terminalApplied || presentation.phase !== "complete") {
+          return true;
+        }
+
+        const artifactUpload = createArtifactFileUpload(
+          assistantId,
+          runState.raw,
+          presentation.patch.snapshot,
+          presentation.patch.artifactContext?.textSummary
+        );
+        if (artifactUpload) {
+          try {
+            upsertSessionFiles(requestSessionId, [
+              await uploadSessionFile(
+                requestSessionId,
+                artifactUpload,
+                sessionClientIdRef.current
+              )
+            ]);
+          } catch (uploadError) {
+            console.warn("Could not persist ChatHTML artifact file.", uploadError);
+          }
+        }
+        return true;
+      };
 
       try {
         const requestHistory =
@@ -1393,72 +1462,8 @@ export default function App() {
           return;
         }
 
-        if (runState.terminal?.phase === "cancelled") {
-          updateAssistantForPhase(
-            createCancelledAssistantPatch(
-              runState.raw,
-              runState.reasoning,
-              runState.streamSequence
-            ),
-            "cancelled"
-          );
+        if (await applyLocalRunTerminal()) {
           return;
-        }
-
-        if (runState.terminal?.phase === "error") {
-          updateAssistantForPhase(
-            projectFailedChatRun({
-              raw: runState.raw,
-              reasoning: runState.reasoning,
-              streamSequence: runState.streamSequence,
-              error: runState.terminal.error
-            }),
-            "error"
-          );
-          return;
-        }
-
-        const completion = projectCompletedChatRun({
-          raw: runState.raw,
-          reasoning: runState.reasoning,
-          streamSequence: runState.streamSequence
-        });
-        let finalSnapshot: RenderSnapshot | undefined;
-
-        if (completion.streamUiSource) {
-          renderer.replace(completion.streamUiSource);
-          renderer.complete();
-          finalSnapshot = renderer.getSnapshot();
-        }
-
-        const terminalApplied = updateAssistantForPhase(
-          {
-            ...completion.patch,
-            snapshot: finalSnapshot
-          },
-          "complete"
-        );
-        if (!terminalApplied) {
-          return;
-        }
-        const artifactUpload = createArtifactFileUpload(
-          assistantId,
-          runState.raw,
-          finalSnapshot,
-          completion.patch.artifactContext?.textSummary
-        );
-        if (artifactUpload) {
-          try {
-            upsertSessionFiles(requestSessionId, [
-              await uploadSessionFile(
-                requestSessionId,
-                artifactUpload,
-                sessionClientIdRef.current
-              )
-            ]);
-          } catch (uploadError) {
-            console.warn("Could not persist ChatHTML artifact file.", uploadError);
-          }
         }
       } catch (error) {
         if (runState.terminal?.source === "server") {
@@ -1470,14 +1475,10 @@ export default function App() {
           isAbortError(error)
         ) {
           dispatchRunEvent({ type: "cancel" });
-          updateAssistantForPhase(
-            createCancelledAssistantPatch(
-              runState.raw,
-              runState.reasoning,
-              runState.streamSequence
-            ),
-            "cancelled"
-          );
+          await applyLocalRunTerminal();
+          return;
+        }
+        if (await applyLocalRunTerminal()) {
           return;
         }
         const message =
@@ -1846,6 +1847,7 @@ export default function App() {
     );
 
     runIds.forEach((runId) => {
+      restoredRunReconnectScheduler.cancel(runId);
       const controller = runConnectionsRef.current.get(runId);
       controller?.abort();
       runConnectionsRef.current.delete(runId);
@@ -1875,6 +1877,7 @@ export default function App() {
     getActiveVisualRepairRun,
     markRunsCancelled,
     removeCancelledBranchRunVariants,
+    restoredRunReconnectScheduler,
     saveCurrentSessionStateNow
   ]);
 
@@ -2020,7 +2023,8 @@ export default function App() {
           message.role !== "assistant" ||
           message.status !== "streaming" ||
           !generationRunId ||
-          runConnectionsRef.current.has(generationRunId)
+          runConnectionsRef.current.has(generationRunId) ||
+          restoredRunReconnectScheduler.has(generationRunId)
         ) {
           continue;
         }
@@ -2055,6 +2059,7 @@ export default function App() {
                   : { ...current, ...patch }
             );
             if (changed && phase !== "streaming") {
+              restoredRunReconnectScheduler.cancel(generationRunId);
               void Promise.resolve(saveCurrentSessionStateNow()).catch((error) => {
                 console.warn(
                   "Could not save restored generated artifact state.",
@@ -2088,8 +2093,12 @@ export default function App() {
           try {
             setupRenderer = createStreamingRenderer(themeMode);
             renderersRef.current.set(message.id, setupRenderer);
-            setupUnsubscribeSnapshot = setupRenderer.onSnapshot((snapshot) => {
-              updateRestoredAssistant({ snapshot });
+            setupUnsubscribeSnapshot = subscribeRestoredChatRunRenderer({
+              renderer: setupRenderer,
+              rawStream: message.rawStream,
+              onSnapshot: (snapshot) => {
+                updateRestoredAssistant({ snapshot });
+              }
             });
           } catch (error) {
             cleanupRestoredChatActivity();
@@ -2110,41 +2119,82 @@ export default function App() {
             cleanupRestoredChatActivity();
             return;
           }
-          let raw = message.rawStream ?? "";
-          let reasoning = message.reasoning ?? "";
-          let lastStreamSequence = message.streamSequence ?? 0;
-          let doneStatus: "complete" | "error" | undefined;
-          let doneError = "";
-          let completedFromServer = false;
+          let runState = createChatRunState({
+            runId: generationRunId,
+            raw: message.rawStream,
+            reasoning: message.reasoning,
+            streamSequence: message.streamSequence
+          });
           let serverSyncIntervalId: number | undefined;
-          let serverSyncInFlight = false;
+          let serverSyncPromise: Promise<void> | null = null;
+
+          const dispatchRunEvent = (
+            event: Parameters<typeof reduceChatRunState>[1]
+          ) => {
+            const result = reduceChatRunState(runState, event);
+            runState = result.state;
+            return result;
+          };
+
+          const canAcceptRunStreamEvent = () => {
+            if (
+              cancelledRunIdsRef.current.has(generationRunId) ||
+              runConnectionsRef.current.get(generationRunId) !== controller ||
+              (controller.signal.aborted &&
+                runState.terminal?.source !== "server")
+            ) {
+              dispatchRunEvent({ type: "cancel" });
+              return false;
+            }
+            return true;
+          };
+
+          const scheduleRestoredReconnect = () => {
+            if (
+              runState.terminal ||
+              !canAcceptRunStreamEvent()
+            ) {
+              return;
+            }
+            restoredRunReconnectScheduler.schedule(generationRunId, () => {
+              const currentMessage = sessionStateRef.current.sessions
+                .find((candidate) => candidate.id === session.id)
+                ?.messages.find((candidate) => candidate.id === message.id);
+              if (
+                currentMessage?.role === "assistant" &&
+                currentMessage.status === "streaming" &&
+                currentMessage.generationRunId === generationRunId
+              ) {
+                setRestoredRunRetryVersion((current) => current + 1);
+              } else {
+                restoredRunReconnectScheduler.cancel(generationRunId);
+              }
+            });
+          };
 
           const applyServerAssistantMessage = (serverMessage: ClientMessage) => {
-            const result = reconcileChatRunState(
-              {
-                runId: generationRunId,
-                raw,
-                reasoning,
-                streamSequence: lastStreamSequence,
-                doneStatus,
-                doneError,
-                completedFromServer
-              },
-              serverMessage
-            );
-            if (!result.accepted) {
+            if (
+              cancelledRunIdsRef.current.has(generationRunId) ||
+              runConnectionsRef.current.get(generationRunId) !== controller ||
+              (controller.signal.aborted &&
+                runState.terminal?.source !== "server")
+            ) {
+              dispatchRunEvent({ type: "cancel" });
               return;
             }
 
-            raw = result.state.raw;
-            reasoning = result.state.reasoning;
-            lastStreamSequence = result.state.streamSequence;
-            doneStatus = result.state.doneStatus;
-            doneError = result.state.doneError;
-            completedFromServer = result.state.completedFromServer;
+            const result = dispatchRunEvent({
+              type: "server",
+              message: serverMessage
+            });
+            if (!result.accepted || !result.phase || !result.assistantPatch) {
+              return;
+            }
+
+            restoredRunReconnectScheduler.markProgress(generationRunId);
             updateRestoredAssistant(
-              serverMessage,
-              result.phase ?? "streaming"
+              result.assistantPatch,
+              result.phase
             );
 
             if (result.abortConnection) {
@@ -2152,39 +2202,46 @@ export default function App() {
             }
           };
 
-          const reconcileAssistantFromServer = async () => {
-            if (serverSyncInFlight || completedFromServer) {
-              return;
+          const reconcileAssistantFromServer = (): Promise<void> => {
+            if (runState.terminal?.source === "server") {
+              return Promise.resolve();
+            }
+            if (serverSyncPromise) {
+              return serverSyncPromise;
             }
 
-            serverSyncInFlight = true;
-            try {
-              const response = await requestSessions(sessionClientIdRef.current);
-              if (!response.ok) {
-                throw new Error(`Session sync failed with HTTP ${response.status}.`);
-              }
-
-              const serverState = normalizeStoredSessionState(
-                await response.json(),
-                Date.now(),
-                {
-                  rebuildSnapshots: false,
-                  interruptPendingArtifactEdits: true
+            serverSyncPromise = (async () => {
+              try {
+                const response = await requestSessions(sessionClientIdRef.current);
+                if (!response.ok) {
+                  throw new Error(
+                    `Session sync failed with HTTP ${response.status}.`
+                  );
                 }
-              );
-              const serverMessage = serverState.sessions
-                .find((candidate) => candidate.id === session.id)
-                ?.messages.find((candidate) => candidate.id === message.id);
-              if (serverMessage) {
-                applyServerAssistantMessage(serverMessage);
+
+                const serverState = normalizeStoredSessionState(
+                  await response.json(),
+                  Date.now(),
+                  {
+                    rebuildSnapshots: false,
+                    interruptPendingArtifactEdits: true
+                  }
+                );
+                const serverMessage = serverState.sessions
+                  .find((candidate) => candidate.id === session.id)
+                  ?.messages.find((candidate) => candidate.id === message.id);
+                if (serverMessage) {
+                  applyServerAssistantMessage(serverMessage);
+                }
+              } catch (error) {
+                if ((error as { name?: unknown }).name !== "AbortError") {
+                  console.warn("Could not reconcile ChatHTML stream state.", error);
+                }
+              } finally {
+                serverSyncPromise = null;
               }
-            } catch (error) {
-              if ((error as { name?: unknown }).name !== "AbortError") {
-                console.warn("Could not reconcile ChatHTML stream state.", error);
-              }
-            } finally {
-              serverSyncInFlight = false;
-            }
+            })();
+            return serverSyncPromise;
           };
 
           const startServerReconcile = () => {
@@ -2195,8 +2252,24 @@ export default function App() {
           };
 
           const handleContentChunk = (chunk: string, streamSequence?: number) => {
-            raw += chunk;
-            const projection = projectStreamingChatRun(raw, streamSequence);
+            if (!canAcceptRunStreamEvent()) {
+              return;
+            }
+            const result = dispatchRunEvent({
+              type: "content",
+              text: chunk,
+              sequence: streamSequence
+            });
+            if (!result.accepted) {
+              return;
+            }
+            restoredRunReconnectScheduler.markProgress(generationRunId);
+            const projection = projectStreamingChatRun(
+              runState.raw,
+              typeof streamSequence === "number"
+                ? runState.streamSequence
+                : undefined
+            );
 
             if (projection.streamUiSource !== undefined) {
               renderer.replace(projection.streamUiSource);
@@ -2218,29 +2291,63 @@ export default function App() {
           try {
             handleStreamEvent = createChatStreamLineHandler({
               runId: generationRunId,
-              getLastSequence: () => lastStreamSequence,
-              onSequence: (streamSequence) => {
-                lastStreamSequence = streamSequence;
-              },
+              getLastSequence: () => runState.streamSequence,
+              onSequence: () => undefined,
               onDone: (status, error, streamSequence) => {
-                doneStatus = status;
-                doneError = error;
-                if (typeof streamSequence === "number") {
-                  updateRestoredAssistant({ streamSequence });
+                if (!canAcceptRunStreamEvent()) {
+                  return;
+                }
+                const result = dispatchRunEvent({
+                  type: "done",
+                  status,
+                  error,
+                  sequence: streamSequence
+                });
+                if (result.accepted) {
+                  restoredRunReconnectScheduler.markProgress(generationRunId);
+                }
+                if (result.accepted && typeof streamSequence === "number") {
+                  updateRestoredAssistant({
+                    streamSequence: runState.streamSequence
+                  });
                 }
               },
               onMemory: (event, streamSequence) => {
+                if (!canAcceptRunStreamEvent()) {
+                  return;
+                }
+                const result = dispatchRunEvent({
+                  type: "memory",
+                  sequence: streamSequence
+                });
+                if (!result.accepted) {
+                  return;
+                }
+                restoredRunReconnectScheduler.markProgress(generationRunId);
                 handleMemoryStreamEvent(event);
                 if (typeof streamSequence === "number") {
-                  updateRestoredAssistant({ streamSequence });
+                  updateRestoredAssistant({
+                    streamSequence: runState.streamSequence
+                  });
                 }
               },
               onReasoning: (text, streamSequence) => {
-                reasoning += text;
+                if (!canAcceptRunStreamEvent()) {
+                  return;
+                }
+                const result = dispatchRunEvent({
+                  type: "reasoning",
+                  text,
+                  sequence: streamSequence
+                });
+                if (!result.accepted) {
+                  return;
+                }
+                restoredRunReconnectScheduler.markProgress(generationRunId);
                 updateRestoredAssistant({
-                  reasoning,
+                  reasoning: runState.reasoning,
                   ...(typeof streamSequence === "number"
-                    ? { streamSequence }
+                    ? { streamSequence: runState.streamSequence }
                     : {})
                 });
               },
@@ -2260,22 +2367,43 @@ export default function App() {
             return;
           }
 
+          const applyLocalRunTerminal = (): boolean => {
+            const presentation = presentLocalChatRunTerminal(runState, renderer);
+            if (!presentation) {
+              return false;
+            }
+            updateRestoredAssistant(presentation.patch, presentation.phase);
+            return true;
+          };
+
           try {
             startServerReconcile();
             const response = await requestChatRunEvents(
               generationRunId,
-              lastStreamSequence,
+              runState.streamSequence,
               sessionClientIdRef.current,
               controller.signal
             );
 
             if (response.status === 404) {
+              await reconcileAssistantFromServer();
+              if (runState.terminal?.source === "server") {
+                return;
+              }
+              if (
+                cancelledRunIdsRef.current.has(generationRunId) ||
+                controller.signal.aborted
+              ) {
+                dispatchRunEvent({ type: "cancel" });
+                applyLocalRunTerminal();
+                return;
+              }
               updateRestoredAssistant(
                 {
                   content: "I could not complete that request.",
-                  reasoning,
-                  rawStream: raw,
-                  streamSequence: lastStreamSequence,
+                  reasoning: runState.reasoning,
+                  rawStream: runState.raw,
+                  streamSequence: runState.streamSequence,
                   status: "error",
                   error: STREAM_INTERRUPTED_ERROR
                 },
@@ -2292,46 +2420,20 @@ export default function App() {
             await readNdjsonLines(response.body, handleStreamEvent);
 
             await reconcileAssistantFromServer();
+            const eofResult = dispatchRunEvent({ type: "eof" });
 
-            if (completedFromServer) {
+            if (runState.terminal?.source === "server") {
               return;
             }
 
-            if (doneStatus === "error") {
-              updateRestoredAssistant(
-                projectFailedChatRun({
-                  raw,
-                  reasoning,
-                  streamSequence: lastStreamSequence,
-                  error: doneError
-                }),
-                "error"
-              );
+            if (eofResult.eofDisposition === "detached") {
+              scheduleRestoredReconnect();
               return;
             }
 
-            const completion = projectCompletedChatRun({
-              raw,
-              reasoning,
-              streamSequence: lastStreamSequence
-            });
-            let finalSnapshot: RenderSnapshot | undefined;
-
-            if (completion.streamUiSource) {
-              renderer.replace(completion.streamUiSource);
-              renderer.complete();
-              finalSnapshot = renderer.getSnapshot();
-            }
-
-            updateRestoredAssistant(
-              {
-                ...completion.patch,
-                snapshot: finalSnapshot
-              },
-              "complete"
-            );
+            applyLocalRunTerminal();
           } catch (error) {
-            if (completedFromServer) {
+            if (runState.terminal?.source === "server") {
               return;
             }
             if (
@@ -2339,19 +2441,17 @@ export default function App() {
               controller.signal.aborted ||
               isAbortError(error)
             ) {
-              updateRestoredAssistant(
-                createCancelledAssistantPatch(
-                  raw,
-                  reasoning,
-                  lastStreamSequence
-                ),
-                "cancelled"
-              );
+              dispatchRunEvent({ type: "cancel" });
+              applyLocalRunTerminal();
+              return;
+            }
+            if (applyLocalRunTerminal()) {
               return;
             }
             if ((error as { name?: unknown }).name !== "AbortError") {
               console.warn("Could not resume ChatHTML run.", error);
             }
+            scheduleRestoredReconnect();
           } finally {
             if (typeof serverSyncIntervalId === "number") {
               window.clearInterval(serverSyncIntervalId);
@@ -2364,6 +2464,8 @@ export default function App() {
   }, [
     generationActivity,
     handleMemoryStreamEvent,
+    restoredRunReconnectScheduler,
+    restoredRunRetryVersion,
     saveCurrentSessionStateNow,
     sessionState.sessions,
     sessionsLoaded,
