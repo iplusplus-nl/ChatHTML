@@ -21,6 +21,7 @@ import {
   extractRetrievalUrls as extractUrls,
   latestRetrievalUserText as latestUserText,
   prioritizeRetrievalSearchResults as prioritizeSearchResults,
+  visualRetrievalResultMatchesSubject,
   shouldSearchRetrieval as shouldSearch
 } from "./retrievalPlanner.js";
 import {
@@ -348,6 +349,33 @@ function assignSourceIds(sources: RetrievalSource[]): RetrievalSource[] {
   }));
 }
 
+function diversifyRetrievalUrls(urls: string[], maxUrls: number): string[] {
+  if (urls.length <= maxUrls) {
+    return urls;
+  }
+  const selected: string[] = [];
+  const deferred: string[] = [];
+  const seenHosts = new Set<string>();
+
+  for (const url of urls) {
+    const hostname = getHostname(url) ?? url;
+    if (!seenHosts.has(hostname) && selected.length < maxUrls) {
+      seenHosts.add(hostname);
+      selected.push(url);
+    } else {
+      deferred.push(url);
+    }
+  }
+
+  for (const url of deferred) {
+    if (selected.length >= maxUrls) {
+      break;
+    }
+    selected.push(url);
+  }
+  return selected;
+}
+
 async function fetchSources(
   urls: string[],
   searchResults: SearchResult[],
@@ -562,12 +590,25 @@ export async function collectRetrievalContext(
       intentText,
       plannedQueries[0]
     ).slice(0, prioritizedResultCap);
+    if (visualSearchNeeded && asksForRecentVisualResources(intentText)) {
+      searchResults = searchResults.filter(
+        (result) =>
+          visualRetrievalResultMatchesSubject(
+            result,
+            plannedQueries[0],
+            Boolean(result.imageUrl)
+          )
+      );
+    }
   }
 
   const searchUrls = searchResults.map((result) => result.url);
-  const urlsToFetch = uniqueByUrl(
+  const allUrlsToFetch = uniqueByUrl(
     [...directUrls, ...searchUrls].map((url) => ({ url }))
   ).map((target) => target.url);
+  const urlsToFetch = visualSearchNeeded
+    ? diversifyRetrievalUrls(allUrlsToFetch, config.fetchMaxPages)
+    : allUrlsToFetch;
   const pageSources =
     config.fetchMaxPages > 0
       ? await fetchSources(

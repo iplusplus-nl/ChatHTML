@@ -57,6 +57,18 @@ describe("sandboxDocument", () => {
     assert.match(document, /event\.target instanceof HTMLImageElement/);
   });
 
+  it("turns eager YouTube embeds into click-to-play launchers", () => {
+    const document = buildIframeDocument(
+      '<iframe src="https://www.youtube.com/embed/abcdefghijk" title="Event video"></iframe>'
+    );
+
+    assert.match(document, /prepareYouTubeIframe/);
+    assert.match(document, /streamui-video-launch/);
+    assert.match(document, /data-streamui-youtube-id/);
+    assert.match(document, /youtube-nocookie\.com\/embed/);
+    assert.match(document, /autoplay=1/);
+  });
+
   it("builds the same body html used by the live preview patcher", () => {
     const body = buildIframeBodyHtml("<p>Hello</p>");
     const document = buildIframeDocument("<p>Hello</p>");

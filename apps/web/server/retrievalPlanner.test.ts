@@ -8,7 +8,8 @@ import {
   extractRetrievalUrls,
   latestRetrievalUserText,
   prioritizeRetrievalSearchResults,
-  shouldSearchRetrieval
+  shouldSearchRetrieval,
+  visualRetrievalResultMatchesSubject
 } from "./retrievalPlanner.js";
 
 test("extractRetrievalUrls normalizes web URLs, removes fragments, and deduplicates", () => {
@@ -27,7 +28,8 @@ test("recent visual query planning targets social and video sources", () => {
   assert.equal(asksForRecentVisualResources(request, 2026), true);
   assert.deepEqual(buildRetrievalSearchQueries(request), [
     "photos and videos from today's North Harbor Festival",
-    "photos and videos from today's North Harbor Festival site:instagram.com/p OR site:facebook.com/photos",
+    "photos and videos from today's North Harbor Festival. I like night photography.",
+    "photos and videos from today's North Harbor Festival site:instagram.com OR site:facebook.com OR site:tiktok.com recent posts photos reels",
     "photos and videos from today's North Harbor Festival site:youtube.com/watch videos"
   ]);
 });
@@ -42,7 +44,8 @@ test("focused tool queries retain the original gallery intent generically", () =
 
   assert.deepEqual(buildRetrievalSearchQueries(toolText, intent), [
     "videos and photos of North Harbor Festival 2026",
-    "videos and photos of North Harbor Festival 2026 site:instagram.com/p OR site:facebook.com/photos",
+    "North Harbor Festival 2026 night photography photos videos",
+    "videos and photos of North Harbor Festival 2026 site:instagram.com OR site:facebook.com OR site:tiktok.com recent posts photos reels",
     "videos and photos of North Harbor Festival 2026 site:youtube.com/watch videos"
   ]);
   assert.deepEqual(buildRetrievalImageSearchQueries(toolText, intent), [
@@ -140,5 +143,45 @@ test("recent visual result prioritization favors relevant social event pages", (
       "latest North Harbor Festival 2026 photos and videos"
     ).map((result) => result.url),
     [results[1].url, results[2].url, results[0].url]
+  );
+});
+
+test("visual subject matching requires core identity and requested year", () => {
+  const subject = "North Harbor Festival 2026 photos";
+  assert.equal(
+    visualRetrievalResultMatchesSubject(
+      {
+        url: "https://video.example/watch/1",
+        title: "North Harbor Festival 2026 highlights",
+        provider: "tavily",
+        rank: 1
+      },
+      subject
+    ),
+    true
+  );
+  assert.equal(
+    visualRetrievalResultMatchesSubject(
+      {
+        url: "https://video.example/watch/2",
+        title: "North Harbor Festival 2025 highlights",
+        provider: "tavily",
+        rank: 2
+      },
+      subject
+    ),
+    false
+  );
+  assert.equal(
+    visualRetrievalResultMatchesSubject(
+      {
+        url: "https://video.example/watch/3",
+        title: "North Harbor technology conference 2026",
+        provider: "tavily",
+        rank: 3
+      },
+      subject
+    ),
+    false
   );
 });

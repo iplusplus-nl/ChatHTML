@@ -17,6 +17,26 @@ import type {
 } from "./retrievalTypes.js";
 import { isRetrievalDomainPermitted } from "./retrievalUrlPolicy.js";
 
+function youtubeThumbnailUrl(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    const id = host === "youtu.be"
+      ? url.pathname.split("/").filter(Boolean)[0]
+      : host.endsWith("youtube.com")
+        ? url.searchParams.get("v")
+        : undefined;
+    return id && /^[A-Za-z0-9_-]{11}$/.test(id)
+      ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function searchBrave(
   query: string,
   config: RetrievalConfig
@@ -74,6 +94,14 @@ export async function searchTavily(
     throw new Error("TAVILY_API_KEY is not set.");
   }
 
+  const socialSearch = /\bsite:(?:instagram|facebook|tiktok)\.com\b/i.test(query);
+  const effectiveQuery = socialSearch
+    ? `${query
+        .replace(/\bsite:(?:instagram|facebook|tiktok)\.com(?:\/\S*)?/gi, " ")
+        .replace(/\bOR\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim()} recent social media posts photos reels`
+    : query;
   const data = (await fetchRetrievalJson(
     "https://api.tavily.com/search",
     {
@@ -84,13 +112,16 @@ export async function searchTavily(
       },
       body: JSON.stringify({
         api_key: apiKey,
-        query,
+        query: effectiveQuery,
         topic: "general",
         search_depth: "basic",
         max_results: config.searchMaxResults,
         include_answer: false,
         include_raw_content: false,
-        include_images: false
+        include_images: false,
+        ...(socialSearch
+          ? { include_domains: ["instagram.com", "facebook.com", "tiktok.com"] }
+          : {})
       })
     },
     config.timeoutMs,
@@ -108,6 +139,8 @@ export async function searchTavily(
       url: parseAbsoluteUrl(result.url ?? "") ?? "",
       title: clip(result.title, 220),
       snippet: clip(result.content, 420),
+      imageUrl: youtubeThumbnailUrl(result.url),
+      imageAlt: clip(result.title, 160),
       provider: "tavily",
       rank: index + 1
     }))

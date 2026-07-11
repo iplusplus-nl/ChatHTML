@@ -146,12 +146,25 @@ export function buildRetrievalSearchQueries(
           ""
         )
         .trim() || intentQuery;
+    const coreTerms = new Set(visualRelevanceTerms(eventQuery));
+    const focusedTerms = visualRelevanceTerms(query);
+    const hasFocusedConstraint = focusedTerms.some(
+      (term) => !coreTerms.has(term)
+    );
+    const focusedVisualQuery = hasFocusedConstraint
+      ? /\b(?:image|images|photo|photos|picture|pictures|video|videos)\b/i.test(
+          query
+        )
+        ? query
+        : `${query} photos videos`
+      : "";
 
     return uniqueStrings([
       eventQuery,
-      `${eventQuery} site:instagram.com/p OR site:facebook.com/photos`,
+      focusedVisualQuery,
+      `${eventQuery} site:instagram.com OR site:facebook.com OR site:tiktok.com recent posts photos reels`,
       `${eventQuery} site:youtube.com/watch videos`
-    ]).slice(0, 3);
+    ]).slice(0, 4);
   }
 
   return uniqueStrings([
@@ -226,6 +239,32 @@ function visualResultRelevance(result: SearchResult, text: string): number {
   return terms.reduce(
     (matches, term) => matches + (haystack.includes(term) ? 1 : 0),
     0
+  );
+}
+
+export function visualRetrievalResultMatchesSubject(
+  result: SearchResult,
+  text: string,
+  requireRequestedYear = true
+): boolean {
+  const terms = visualRelevanceTerms(text);
+  const requiredTermMatches = terms.length
+    ? Math.max(1, Math.ceil(terms.length * 0.75))
+    : 0;
+  if (
+    requiredTermMatches > 0 &&
+    visualResultRelevance(result, text) < requiredTermMatches
+  ) {
+    return false;
+  }
+
+  const identityHaystack = decodeSearchText(
+    `${result.url} ${result.title ?? ""}`
+  );
+  const years = uniqueStrings(text.match(/\b(?:19|20)\d{2}\b/g) ?? []);
+  return (
+    !requireRequestedYear ||
+    years.every((year) => identityHaystack.includes(year))
   );
 }
 
@@ -342,7 +381,17 @@ function recentVisualSourceScore(result: SearchResult, text: string): number {
       "flickr.com"
     ].some((domain) => matchesRetrievalDomain(hostname, domain))
   ) {
-    return 70;
+    const pathname = (() => {
+      try {
+        return new URL(result.url).pathname.toLowerCase();
+      } catch {
+        return "";
+      }
+    })();
+    const isPostOrVideo =
+      /\/(?:p|reel|reels|posts|photos|videos?|watch)\//.test(pathname) ||
+      pathname === "/watch";
+    return isPostOrVideo ? 110 : 30;
   }
 
   if (

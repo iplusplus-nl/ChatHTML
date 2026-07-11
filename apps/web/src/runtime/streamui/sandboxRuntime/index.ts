@@ -3,6 +3,7 @@ import { buildCoreSource } from "./coreSource";
 import { diagnosticsSource } from "./diagnosticsSource";
 import { hostRenderSource } from "./hostRenderSource";
 import { measurementSource } from "./measurementSource";
+import { mediaSource } from "./mediaSource";
 import { selectionSource } from "./selectionSource";
 
 export function buildSandboxRuntimeSource(
@@ -13,6 +14,7 @@ export function buildSandboxRuntimeSource(
   return (
     buildCoreSource(mathJaxScriptSrc, hostChannelToken, hostDocumentEpoch) +
     measurementSource +
+    mediaSource +
     selectionSource +
     actionSource +
     hostRenderSource +

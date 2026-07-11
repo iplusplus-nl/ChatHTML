@@ -10,6 +10,26 @@ import {
 } from "./retrievalProviderClient.js";
 import type { RetrievalConfig, SearchResult } from "./retrievalTypes.js";
 
+function youtubeVideoId(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    const id = host === "youtu.be"
+      ? url.pathname.split("/").filter(Boolean)[0]
+      : host.endsWith("youtube.com")
+        ? url.searchParams.get("v") ?? url.pathname.match(/\/embed\/([^/?]+)/)?.[1]
+        : host.endsWith("ytimg.com")
+          ? url.pathname.match(/\/vi\/([^/]+)/)?.[1]
+          : undefined;
+    return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function searchTavilyImages(
   query: string,
   config: RetrievalConfig
@@ -84,12 +104,23 @@ export async function searchTavilyImages(
   }
   if (!results.length) {
     for (const image of data.images ?? []) {
-      addImage(image, "", undefined, undefined);
+      const rawImageUrl = typeof image === "string" ? image : image.url;
+      const videoId = youtubeVideoId(rawImageUrl);
+      const matchingSource = videoId
+        ? data.results?.find((result) => youtubeVideoId(result.url) === videoId)
+        : undefined;
+      if (matchingSource) {
+        addImage(
+          image,
+          matchingSource.url ?? "",
+          matchingSource.title,
+          matchingSource.content
+        );
+      }
     }
   }
 
-  return results
-    .filter((result) => result.url && result.imageUrl);
+  return results.filter((result) => result.url && result.imageUrl);
 }
 
 export async function searchOpenverseImages(
