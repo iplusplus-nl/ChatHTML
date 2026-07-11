@@ -10,6 +10,60 @@ import {
 } from "./retrievalProviderClient.js";
 import type { RetrievalConfig, SearchResult } from "./retrievalTypes.js";
 
+export async function searchSerperImages(
+  query: string,
+  config: RetrievalConfig
+): Promise<SearchResult[]> {
+  const apiKey = config.serperApiKey;
+  if (!apiKey) {
+    throw new Error("SERPER_API_KEY is not set.");
+  }
+
+  const data = (await fetchRetrievalJson(
+    "https://google.serper.dev/images",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-KEY": apiKey,
+        "User-Agent": RETRIEVAL_USER_AGENT
+      },
+      body: JSON.stringify({
+        q: query,
+        num: retrievalImageProviderLimit(config)
+      })
+    },
+    config.timeoutMs,
+    config.signal
+  )) as {
+    images?: Array<{
+      title?: string;
+      imageUrl?: string;
+      thumbnailUrl?: string;
+      link?: string;
+      source?: string;
+      imageWidth?: number;
+      imageHeight?: number;
+      position?: number;
+    }>;
+  };
+
+  return (data.images ?? [])
+    .map((image, index) => ({
+      url: parseAbsoluteUrl(image.link ?? image.imageUrl ?? "") ?? "",
+      title: clip(image.title, 220),
+      snippet: compactParts([image.source, "Google Images via Serper"]),
+      imageUrl: parseAbsoluteUrl(image.imageUrl ?? image.thumbnailUrl ?? ""),
+      imageAlt: clip(image.title, 160),
+      imageWidth: image.imageWidth,
+      imageHeight: image.imageHeight,
+      imageCredit: clip(image.source, 160),
+      provider: "serper-images",
+      rank: image.position ?? index + 1
+    }))
+    .filter((result) => result.url && result.imageUrl);
+}
+
 export async function searchOpenverseImages(
   query: string,
   config: RetrievalConfig

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  asksForRecentVisualResources,
   asksForVisualResources,
   buildRetrievalSearchQueries,
   extractRetrievalUrls,
@@ -16,6 +17,18 @@ test("extractRetrievalUrls normalizes web URLs, removes fragments, and deduplica
     ),
     ["https://example.com/a", "https://www.example.org/path"]
   );
+});
+
+test("recent visual query planning targets social and video sources", () => {
+  const request =
+    "Create a gallery of photos and videos from today's GTC Rally. I like Japanese cars.";
+
+  assert.equal(asksForRecentVisualResources(request, 2026), true);
+  assert.deepEqual(buildRetrievalSearchQueries(request), [
+    "photos and videos from today's GTC Rally",
+    "photos and videos from today's GTC Rally site:instagram.com/p OR site:facebook.com/photos",
+    "photos and videos from today's GTC Rally site:youtube.com/watch videos"
+  ]);
 });
 
 test("retrieval planning distinguishes direct fetches from companion searches", () => {
@@ -77,4 +90,36 @@ test("visual result prioritization favors first-party image providers stably", (
     [results[1].url, results[2].url, results[0].url]
   );
   assert.equal(prioritizeRetrievalSearchResults(results, "write a card"), results);
+});
+
+test("recent visual result prioritization favors relevant social event pages", () => {
+  const results = [
+    {
+      url: "https://www.metmuseum.org/art/collection/search/436964",
+      title: "Young Lady in 1866",
+      provider: "met",
+      rank: 1
+    },
+    {
+      url: "https://www.instagram.com/gtcrally/",
+      title: "GTC Rally (@gtcrally) photos and videos",
+      snippet: "GTC Rally 2026 on 10 and 11 July",
+      provider: "duckduckgo",
+      rank: 1
+    },
+    {
+      url: "https://www.gtcrally.com/foto-s",
+      title: "GTC Rally photos and videos",
+      provider: "duckduckgo",
+      rank: 2
+    }
+  ];
+
+  assert.deepEqual(
+    prioritizeRetrievalSearchResults(
+      results,
+      "latest GTC Rally 2026 photos and videos"
+    ).map((result) => result.url),
+    [results[1].url, results[2].url, results[0].url]
+  );
 });

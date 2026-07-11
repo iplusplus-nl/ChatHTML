@@ -14,6 +14,7 @@ import { uniqueByUrl } from "./retrievalPrimitives.js";
 import {
   searchOpenverseImages,
   searchPexelsImages,
+  searchSerperImages,
   searchUnsplashImages
 } from "./retrievalStockImageProviders.js";
 import type { RetrievalConfig, SearchResult } from "./retrievalTypes.js";
@@ -22,8 +23,24 @@ import { isRetrievalDomainPermitted } from "./retrievalUrlPolicy.js";
 export type RetrievalImageProvider = {
   name: string;
   envKeys?: string[];
+  configured?: (
+    config: RetrievalConfig,
+    environment: NodeJS.ProcessEnv
+  ) => boolean;
+  setupHint?: string;
   search: (query: string, config: RetrievalConfig) => Promise<SearchResult[]>;
 };
+
+export function createRecentRetrievalImageProviders(): RetrievalImageProvider[] {
+  return [
+    {
+      name: "Serper Images",
+      configured: (config) => Boolean(config.serperApiKey),
+      setupHint: "select Serper with an API key or set SERPER_API_KEY",
+      search: searchSerperImages
+    }
+  ];
+}
 
 export function createRetrievalImageProviders(): RetrievalImageProvider[] {
   return [
@@ -64,11 +81,14 @@ export async function searchRetrievalImageSources(
   for (const provider of providers) {
     throwIfRetrievalAborted(config.signal);
     if (
-      provider.envKeys &&
-      !provider.envKeys.some((key) => Boolean(environment[key]?.trim()))
+      (provider.configured && !provider.configured(config, environment)) ||
+      (provider.envKeys &&
+        !provider.envKeys.some((key) => Boolean(environment[key]?.trim())))
     ) {
       notes.push(
-        `${provider.name} image search skipped: set ${provider.envKeys.join(" or ")} to enable it.`
+        `${provider.name} image search skipped: ${
+          provider.setupHint ?? `set ${provider.envKeys?.join(" or ")} to enable it`
+        }.`
       );
       continue;
     }

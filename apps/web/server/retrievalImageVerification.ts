@@ -71,6 +71,8 @@ export function isDecorativeRetrievalImage(image: RetrievedImage): boolean {
   const haystack = decodeSearchText(`${image.url} ${image.alt ?? ""}`);
   return (
     /\.(?:svg|ico)(?:[?#]|$)/i.test(image.url) ||
+    /cdninstagram\.com\/v\/t\d+\.\d+-19\//i.test(image.url) ||
+    /fbcdn\.net\/v\/t\d+\.\d+-1\//i.test(image.url) ||
     /\b(?:avatar|badge|blank|button|copyright|creative commons|favicon|icon|licen[cs]e|logo|placeholder|rights reserved|some rights reserved|sprite|wordmark)\b/i.test(
       haystack
     ) ||

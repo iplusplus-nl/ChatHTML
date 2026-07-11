@@ -45,6 +45,23 @@ export function asksForVisualResources(text: string): boolean {
   );
 }
 
+export function asksForRecentVisualResources(
+  text: string,
+  currentYear = new Date().getUTCFullYear()
+): boolean {
+  if (!asksForVisualResources(text)) {
+    return false;
+  }
+
+  const freshnessCue =
+    /\b(current|recent|latest|live|today|tonight|yesterday|this (?:week|weekend|month|year)|breaking|just happened|happening now)\b|\u6700\u65b0|\u4eca\u5929|\u6628\u5929|\u5b9e\u65f6|\u73b0\u573a|\u672c\u5468|\u8fd9\u5468|\u4eca\u5e74/i;
+  const mentionedYears = Array.from(text.matchAll(/\b(?:19|20)\d{2}\b/g)).map(
+    (match) => Number.parseInt(match[0], 10)
+  );
+
+  return freshnessCue.test(text) || mentionedYears.includes(currentYear);
+}
+
 export function shouldSearchRetrieval(
   text: string,
   options: Pick<RetrievalOptions, "forceSearch">,
@@ -112,11 +129,83 @@ export function buildRetrievalSearchQueries(text: string): string[] {
     return [query];
   }
 
+  if (asksForRecentVisualResources(text)) {
+    const eventQuery =
+      query
+        .replace(
+          /(?:[.!?]\s*|\s+)\b(?:i|we)\s+(?:like|prefer|want|love|am interested in|are interested in)\b[\s\S]*$/i,
+          ""
+        )
+        .trim() || query;
+
+    return uniqueStrings([
+      eventQuery,
+      `${eventQuery} site:instagram.com/p OR site:facebook.com/photos`,
+      `${eventQuery} site:youtube.com/watch videos`
+    ]).slice(0, 3);
+  }
+
   return uniqueStrings([
     query,
     `${query} Wikimedia Commons`,
     `${query} site:commons.wikimedia.org`
   ]).slice(0, 3);
+}
+
+const VISUAL_RELEVANCE_STOP_WORDS = new Set([
+  "and",
+  "build",
+  "cars",
+  "create",
+  "for",
+  "gallery",
+  "galleries",
+  "image",
+  "images",
+  "like",
+  "make",
+  "media",
+  "of",
+  "photo",
+  "photos",
+  "picture",
+  "pictures",
+  "please",
+  "show",
+  "the",
+  "video",
+  "videos",
+  "want",
+  "with"
+]);
+
+function visualRelevanceTerms(text: string): string[] {
+  const terms = decodeSearchText(text).match(/[a-z0-9]+/g) ?? [];
+  return uniqueStrings(
+    terms
+      .filter(
+        (term) =>
+          term.length > 2 &&
+          !/^\d{4}$/.test(term) &&
+          !VISUAL_RELEVANCE_STOP_WORDS.has(term)
+      )
+      .map((term) => (term.length > 4 && term.endsWith("s") ? term.slice(0, -1) : term))
+  );
+}
+
+function visualResultRelevance(result: SearchResult, text: string): number {
+  const terms = visualRelevanceTerms(text);
+  if (!terms.length) {
+    return 0;
+  }
+
+  const haystack = decodeSearchText(
+    `${result.url} ${result.title ?? ""} ${result.snippet ?? ""}`
+  );
+  return terms.reduce(
+    (matches, term) => matches + (haystack.includes(term) ? 1 : 0),
+    0
+  );
 }
 
 export function latestRetrievalUserText(
@@ -143,6 +232,7 @@ export function visualRetrievalResultScore(result: SearchResult): number {
     [
       "openverse",
       "pexels",
+      "serper-images",
       "unsplash",
       "nasa",
       "loc",
@@ -196,9 +286,44 @@ export function prioritizeRetrievalSearchResults(
     return results;
   }
 
+  const recentVisuals = asksForRecentVisualResources(text);
+
   return [...results].sort(
     (a, b) =>
-      visualRetrievalResultScore(b) - visualRetrievalResultScore(a) ||
+      visualResultRelevance(b, text) * 45 -
+        visualResultRelevance(a, text) * 45 +
+        (recentVisuals
+          ? recentVisualSourceScore(b, text) - recentVisualSourceScore(a, text)
+          : 0) +
+        visualRetrievalResultScore(b) -
+        visualRetrievalResultScore(a) ||
       a.rank - b.rank
   );
+}
+
+function recentVisualSourceScore(result: SearchResult, text: string): number {
+  const hostname = getRetrievalHostname(result.url) ?? "";
+  if (
+    [
+      "instagram.com",
+      "facebook.com",
+      "tiktok.com",
+      "youtube.com",
+      "youtu.be",
+      "vimeo.com",
+      "flickr.com"
+    ].some((domain) => matchesRetrievalDomain(hostname, domain))
+  ) {
+    return 70;
+  }
+
+  if (
+    ["met", "artic", "nasa", "loc", "rijksmuseum", "openverse"].includes(
+      result.provider
+    ) && visualResultRelevance(result, text) === 0
+  ) {
+    return -40;
+  }
+
+  return 0;
 }

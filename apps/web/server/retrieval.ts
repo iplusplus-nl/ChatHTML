@@ -15,6 +15,7 @@ import {
 } from "./retrievalUrlPolicy.js";
 import {
   asksForVisualResources,
+  asksForRecentVisualResources,
   buildRetrievalSearchQueries as buildSearchQueries,
   extractRetrievalUrls as extractUrls,
   latestRetrievalUserText as latestUserText,
@@ -39,6 +40,7 @@ import {
   verifyRetrievalImageCandidates as verifyImageCandidates
 } from "./retrievalImageVerification.js";
 import {
+  createRecentRetrievalImageProviders,
   searchRetrievalImageSources as searchImageSources
 } from "./retrievalImageProviders.js";
 import type {
@@ -505,15 +507,31 @@ export async function collectRetrievalContext(
     throwIfRetrievalAborted(config.signal);
     if (visualSearchNeeded) {
       queries.push(plannedQueries[0]);
-      searchResults = uniqueByUrl([
-        ...searchResults,
-        ...(await searchImageSources(
-          plannedQueries[0],
-          config,
-          notes,
-          options.onStatus
-        ))
-      ]).slice(0, searchResultCap);
+      if (asksForRecentVisualResources(text)) {
+        notes.push(
+          "Recent-event visual search prioritized current web and social sources over archival image catalogs."
+        );
+        searchResults = uniqueByUrl([
+          ...searchResults,
+          ...(await searchImageSources(
+            plannedQueries[0],
+            config,
+            notes,
+            options.onStatus,
+            createRecentRetrievalImageProviders()
+          ))
+        ]).slice(0, searchResultCap);
+      } else {
+        searchResults = uniqueByUrl([
+          ...searchResults,
+          ...(await searchImageSources(
+            plannedQueries[0],
+            config,
+            notes,
+            options.onStatus
+          ))
+        ]).slice(0, searchResultCap);
+      }
     }
 
     for (const query of plannedQueries) {

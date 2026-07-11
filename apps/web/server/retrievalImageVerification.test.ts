@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   collectRetrievalImageCandidates,
+  isDecorativeRetrievalImage,
   retrievalImageDedupeKey,
   retrievalImageUrlVariants,
   verifyRetrievalImageCandidates
@@ -61,6 +62,27 @@ test("candidate collection removes decorative and canonical URL duplicates", () 
   assert.equal(
     retrievalImageDedupeKey("https://cdn.example/cat.jpg?a=1"),
     retrievalImageDedupeKey("https://cdn.example/cat.jpg?a=2")
+  );
+});
+
+test("social profile pictures are treated as decorative", () => {
+  assert.equal(
+    isDecorativeRetrievalImage({
+      url: "https://scontent.cdninstagram.com/v/t51.82787-19/profile.jpg"
+    }),
+    true
+  );
+  assert.equal(
+    isDecorativeRetrievalImage({
+      url: "https://scontent.xx.fbcdn.net/v/t39.30808-1/profile.jpg"
+    }),
+    true
+  );
+  assert.equal(
+    isDecorativeRetrievalImage({
+      url: "https://scontent.cdninstagram.com/v/t51.2885-15/event-photo.jpg"
+    }),
+    false
   );
 });
 
