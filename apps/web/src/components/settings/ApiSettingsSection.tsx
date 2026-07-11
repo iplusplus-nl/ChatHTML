@@ -100,67 +100,78 @@ export function ApiSettingsSection({
         </select>
       </label>
 
-      <label className="settings-row">
-        <span>Base URL</span>
-        <input
-          value={settings.baseUrl}
-          autoComplete="off"
-          spellCheck={false}
-          disabled={isManagedProvider}
-          placeholder="https://api.example.com/v1"
-          onChange={(event) => onBaseUrlChange(event.target.value)}
-        />
-      </label>
-
-      <label className="settings-row">
-        <span>API Key Source</span>
-        <select
-          value={settings.apiKeySource}
-          disabled={isManagedProvider}
-          onChange={(event) =>
-            onSettingsChange({ apiKeySource: event.target.value as ApiKeySource })
-          }
-        >
-          {apiKeySourceOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="settings-row">
-        <span>API Key</span>
-        <div className="settings-control-stack">
-          <input
-            value={settings.apiKey}
-            autoComplete="off"
-            disabled={settings.apiKeySource !== "manual"}
-            spellCheck={false}
-            type="password"
-            placeholder={
-              isManagedProvider
-                ? "Managed by ChatHTML Cloud"
-                : settings.apiKeySource === "environment"
-                  ? getApiKeyEnvironmentName(settings)
-                  : "sk-..."
-            }
-            onChange={(event) => onSettingsChange({ apiKey: event.target.value })}
-          />
-          {usesRuntimeKey ? (
-            <span
-              className={`settings-hint settings-env-status ${getEnvironmentStatusClass(
-                apiKeyStatus
-              )}`}
-            >
-              {formatEnvironmentStatus(
-                getApiKeyEnvironmentName(settings),
-                apiKeyStatus
-              )}
-            </span>
-          ) : null}
+      {isManagedProvider ? (
+        <div className="settings-row">
+          <span>Connection</span>
+          <span className="settings-hint">
+            Managed securely by the ChatHTML server
+          </span>
         </div>
-      </label>
+      ) : (
+        <>
+          <label className="settings-row">
+            <span>Base URL</span>
+            <input
+              value={settings.baseUrl}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="https://api.example.com/v1"
+              onChange={(event) => onBaseUrlChange(event.target.value)}
+            />
+          </label>
+
+          <label className="settings-row">
+            <span>API Key Source</span>
+            <select
+              value={settings.apiKeySource}
+              onChange={(event) =>
+                onSettingsChange({
+                  apiKeySource: event.target.value as ApiKeySource
+                })
+              }
+            >
+              {apiKeySourceOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="settings-row">
+            <span>API Key</span>
+            <div className="settings-control-stack">
+              <input
+                value={settings.apiKey}
+                autoComplete="off"
+                disabled={settings.apiKeySource !== "manual"}
+                spellCheck={false}
+                type="password"
+                placeholder={
+                  settings.apiKeySource === "environment"
+                    ? getApiKeyEnvironmentName(settings)
+                    : "sk-..."
+                }
+                onChange={(event) =>
+                  onSettingsChange({ apiKey: event.target.value })
+                }
+              />
+              {usesRuntimeKey ? (
+                <span
+                  className={`settings-hint settings-env-status ${getEnvironmentStatusClass(
+                    apiKeyStatus
+                  )}`}
+                >
+                  {formatEnvironmentStatus(
+                    getApiKeyEnvironmentName(settings),
+                    apiKeyStatus
+                  )}
+                </span>
+              ) : null}
+            </div>
+          </label>
+        </>
+      )}
 
       <label className="settings-row">
         <span>Default Model</span>
@@ -182,32 +193,33 @@ export function ApiSettingsSection({
         </div>
       </label>
 
-      <label className="settings-row">
-        <span>Models Endpoint</span>
-        <div className="settings-inline-control">
-          <input
-            value={settings.modelsEndpoint}
-            autoComplete="off"
-            spellCheck={false}
-            disabled={isManagedProvider}
-            placeholder={
-              getDefaultModelsEndpoint(settings.baseUrl) ||
-              "https://api.example.com/v1/models"
-            }
-            onChange={(event) =>
-              onSettingsChange({ modelsEndpoint: event.target.value })
-            }
-          />
-          <button
-            className="settings-small-button"
-            type="button"
-            disabled={isModelImportLoading}
-            onClick={onFetchModels}
-          >
-            Fetch
-          </button>
-        </div>
-      </label>
+      {!isManagedProvider ? (
+        <label className="settings-row">
+          <span>Models Endpoint</span>
+          <div className="settings-inline-control">
+            <input
+              value={settings.modelsEndpoint}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={
+                getDefaultModelsEndpoint(settings.baseUrl) ||
+                "https://api.example.com/v1/models"
+              }
+              onChange={(event) =>
+                onSettingsChange({ modelsEndpoint: event.target.value })
+              }
+            />
+            <button
+              className="settings-small-button"
+              type="button"
+              disabled={isModelImportLoading}
+              onClick={onFetchModels}
+            >
+              Fetch
+            </button>
+          </div>
+        </label>
+      ) : null}
 
       <div className="settings-row settings-row-textarea">
         <span>Model List</span>

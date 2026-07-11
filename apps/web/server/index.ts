@@ -21,6 +21,7 @@ import {
 import { handleExportResourceRequest } from "./exportResources.js";
 import { handleRetrievalRequest } from "./retrieval.js";
 import { handleGetRuntimeSettings } from "./runtimeApiSettings.js";
+import { createChatHtmlServiceGateway } from "./chatHtmlService.js";
 import {
   handleCreateSessionFile,
   handleDeleteSessionFile,
@@ -35,6 +36,7 @@ const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const clientDist = path.join(projectRoot, "dist");
+const chatHtmlService = createChatHtmlServiceGateway();
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 8787);
@@ -128,11 +130,27 @@ app.get("/api/admin/deploy-ready", (req, res) => {
   });
 });
 
-app.post("/api/chat", handleOpenRouterChat);
+app.get("/api/auth/me", chatHtmlService.handleAuthMe);
+app.post("/api/auth/login", chatHtmlService.handleAuthLogin);
+app.post("/api/auth/register", chatHtmlService.handleAuthRegister);
+app.post("/api/auth/logout", chatHtmlService.handleAuthLogout);
+app.post(
+  "/api/chat",
+  chatHtmlService.injectManagedApiSettings,
+  handleOpenRouterChat
+);
 app.get("/api/chat/runs/:runId/events", handleChatRunEvents);
 app.post("/api/chat/runs/:runId/cancel", handleCancelChatRun);
-app.post("/api/artifact-edits", handleArtifactEdit);
-app.post("/api/models", handleModelsRequest);
+app.post(
+  "/api/artifact-edits",
+  chatHtmlService.injectManagedApiSettings,
+  handleArtifactEdit
+);
+app.post(
+  "/api/models",
+  chatHtmlService.injectManagedApiSettings,
+  handleModelsRequest
+);
 app.post("/api/bug-reports", handleCreateBugReport);
 app.get(
   "/api/bug-reports/:date/:reportId/images/:fileName",

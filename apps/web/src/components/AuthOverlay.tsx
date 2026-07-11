@@ -85,8 +85,8 @@ export function AuthOverlay({
             {isRegisterMode ? "Create your account" : "Sign in"}
           </h1>
           <p>
-            Use your prepaid ChatHTML Cloud balance, or switch providers later
-            to bring your own API key.
+            Use the managed ChatHTML AI service, or switch providers later to
+            bring your own API key.
           </p>
         </div>
 

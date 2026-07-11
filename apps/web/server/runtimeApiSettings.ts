@@ -41,10 +41,10 @@ export type RuntimeMemoryItem = {
 };
 
 export type RuntimeApiDefaults = {
-  providerId: "openrouter";
-  providerName: "OpenRouter";
+  providerId: "openrouter" | "chathtml-cloud";
+  providerName: "OpenRouter" | "ChatHTML Cloud";
   baseUrl: string;
-  apiKeySource: "environment";
+  apiKeySource: "environment" | "managed";
   apiKey: "";
   model: string;
   modelOptions: string[];
@@ -327,6 +327,26 @@ export function getRuntimeApiDefaults(): RuntimeApiDefaults {
   };
 }
 
+function getPublishedRuntimeApiDefaults(): RuntimeApiDefaults {
+  const model = envString("OPENROUTER_MODEL") || DEFAULT_OPENROUTER_MODEL;
+  return {
+    providerId: "chathtml-cloud",
+    providerName: "ChatHTML Cloud",
+    baseUrl: "",
+    apiKeySource: "managed",
+    apiKey: "",
+    model,
+    modelOptions: getDefaultModelOptions(model),
+    modelsEndpoint: "",
+    reasoningEffort: normalizeRuntimeReasoningEffort(
+      envString("OPENROUTER_REASONING_EFFORT")
+    ),
+    uiComplexity: DEFAULT_UI_COMPLEXITY,
+    userPreferencePrompt: "",
+    memoryItems: []
+  };
+}
+
 export function getRuntimeSettingsSummary(): RuntimeSettingsSummary {
   const defaultBrowserEngine = normalizeBrowserEngine(
     envString("STREAMUI_BROWSER_ENGINE")
@@ -334,14 +354,14 @@ export function getRuntimeSettingsSummary(): RuntimeSettingsSummary {
 
   return {
     api: {
-      defaults: getRuntimeApiDefaults(),
+      defaults: getPublishedRuntimeApiDefaults(),
       environmentKeys: environmentKeyStatus(API_ENV_KEYS)
     },
     cloud: {
-      enabled: false,
-      authRequired: false,
+      enabled: true,
+      authRequired: true,
       billingEnabled: false,
-      managedProviderEnabled: false,
+      managedProviderEnabled: true,
       brandName: "ChatHTML Cloud"
     },
     search: {
@@ -438,18 +458,9 @@ export function readRuntimeApiCredentialDescriptor(
   const isManagedProvider =
     requestedProviderId === "chathtml-cloud" || apiKeySource === "managed";
   if (isManagedProvider) {
-    const apiKeyEnvironmentName = getApiKeyEnvironmentName(
-      defaults.providerName,
-      defaults.baseUrl,
-      defaults.providerId
+    throw new Error(
+      "Managed ChatHTML Service credentials must be supplied by the authenticated server gateway."
     );
-    return {
-      providerName: defaults.providerName,
-      baseUrl: defaults.baseUrl,
-      apiKeySource: defaults.apiKeySource,
-      apiKeyEnvironmentName,
-      manualApiKey: ""
-    };
   }
   const providerName =
     typeof object.providerName === "string" && object.providerName.trim()

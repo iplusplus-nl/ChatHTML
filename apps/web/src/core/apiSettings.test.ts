@@ -10,6 +10,7 @@ import {
   getDefaultModelsEndpoint,
   getSelectableModelOptions,
   getUiComplexityLevel,
+  hasCompleteApiSettings,
   normalizeApiSettings,
   normalizeMemoryItems,
   normalizeUiComplexity,
@@ -55,6 +56,9 @@ describe("apiSettings", () => {
 
     assert.equal(normalized.providerId, "chathtml-cloud");
     assert.equal(normalized.apiKeySource, "managed");
+    assert.equal(normalized.baseUrl, "");
+    assert.equal(normalized.modelsEndpoint, "");
+    assert.equal(hasCompleteApiSettings(normalized), true);
     assert.equal(serialized.apiKey, "");
   });
 

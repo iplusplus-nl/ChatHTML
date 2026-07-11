@@ -87,7 +87,7 @@ export const API_PROVIDER_PRESETS: ApiProviderPreset[] = [
   {
     id: "chathtml-cloud",
     label: "ChatHTML Cloud",
-    baseUrl: "https://openrouter.ai/api/v1",
+    baseUrl: "",
     model: "google/gemini-3.1-pro-preview",
     reasoningEffort: "low",
     apiKeySource: "managed"
@@ -563,7 +563,7 @@ export function hasCompleteApiSettings(settings: ApiSettings): boolean {
     (normalized.apiKeySource === "managed" ||
       normalized.apiKeySource === "environment" ||
       normalized.apiKey.trim()) &&
-      normalized.baseUrl.trim() &&
+      (normalized.apiKeySource === "managed" || normalized.baseUrl.trim()) &&
       normalized.model.trim()
   );
 }

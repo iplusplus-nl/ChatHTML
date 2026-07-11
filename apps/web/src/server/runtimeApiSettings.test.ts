@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getRuntimeApiDefaults,
+  getRuntimeSettingsSummary,
   readRuntimeApiCredentials
 } from "../../server/runtimeApiSettings.js";
 
@@ -17,31 +18,30 @@ test("runtime defaults include the required model shortlist", () => {
   assert.equal(defaults.uiComplexity, 50);
 });
 
-test("managed ChatHTML Cloud settings fall back to open runtime credentials", () => {
-  const previousKey = process.env.OPENROUTER_API_KEY;
-  process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+test("managed credentials can only be supplied by the authenticated gateway", () => {
+  assert.throws(
+    () =>
+      readRuntimeApiCredentials({
+        providerId: "chathtml-cloud",
+        apiKeySource: "managed",
+        apiKey: "",
+        baseUrl: "",
+        providerName: "ChatHTML Cloud"
+      }),
+    /authenticated server gateway/
+  );
+});
 
-  try {
-    const credentials = readRuntimeApiCredentials({
-      providerId: "chathtml-cloud",
-      apiKeySource: "managed",
-      apiKey: "",
-      baseUrl: "",
-      providerName: "ChatHTML Cloud"
-    });
+test("published cloud defaults do not expose the service endpoint", () => {
+  const summary = getRuntimeSettingsSummary();
 
-    assert.equal(credentials.providerName, "OpenRouter");
-    assert.equal(credentials.baseUrl, "https://openrouter.ai/api/v1");
-    assert.equal(credentials.apiKeySource, "environment");
-    assert.equal(credentials.apiKeyEnvironmentName, "OPENROUTER_API_KEY");
-    assert.equal(credentials.apiKey, "test-openrouter-key");
-  } finally {
-    if (previousKey === undefined) {
-      delete process.env.OPENROUTER_API_KEY;
-    } else {
-      process.env.OPENROUTER_API_KEY = previousKey;
-    }
-  }
+  assert.equal(summary.cloud?.enabled, true);
+  assert.equal(summary.cloud?.authRequired, true);
+  assert.equal(summary.cloud?.managedProviderEnabled, true);
+  assert.equal(summary.api.defaults.providerId, "chathtml-cloud");
+  assert.equal(summary.api.defaults.apiKeySource, "managed");
+  assert.equal(summary.api.defaults.baseUrl, "");
+  assert.equal(summary.api.defaults.modelsEndpoint, "");
 });
 
 test("environment credentials cannot be resolved for a client-selected origin", () => {
