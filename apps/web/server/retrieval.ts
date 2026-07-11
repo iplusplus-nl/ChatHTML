@@ -723,6 +723,15 @@ export function buildRetrievalContextPrompt(
 
   lines.push(
     "",
+    "Exact source-link URL allowlist. For every media card or source control, copy the matching URL below verbatim into href or data-streamui-open-url. Never use #, an empty link, a search-engine redirect, or an invented destination:"
+  );
+
+  for (const source of context.sources) {
+    lines.push(`- [${source.id}] ${source.finalUrl || source.url}`);
+  }
+
+  lines.push(
+    "",
     "Use the following sources only when relevant. When web context influences the answer, include concise source links in the HTML artifact."
   );
 

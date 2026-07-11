@@ -63,8 +63,13 @@ export const mediaSource = `      const youtubeVideoIdFromEmbed = (value) => {
         launch.className = "streamui-video-launch";
         launch.dataset.streamuiYoutubeId = videoId;
         launch.setAttribute(
+          "data-streamui-open-url",
+          "https://www.youtube.com/watch?v=" + videoId
+        );
+        launch.setAttribute("data-streamui-label", "YouTube video");
+        launch.setAttribute(
           "aria-label",
-          "Play video: " + (iframe.getAttribute("title") || "YouTube video")
+          "Open video: " + (iframe.getAttribute("title") || "YouTube video")
         );
         const icon = document.createElement("span");
         icon.className = "streamui-video-launch-icon";
@@ -72,7 +77,7 @@ export const mediaSource = `      const youtubeVideoIdFromEmbed = (value) => {
         icon.textContent = "▶";
         const label = document.createElement("span");
         label.className = "streamui-video-launch-label";
-        label.textContent = iframe.getAttribute("title") || "Play video";
+        label.textContent = iframe.getAttribute("title") || "Open video on YouTube";
         launch.append(icon, label);
         iframe.replaceWith(launch);
         scheduleMeasure();
@@ -85,45 +90,6 @@ export const mediaSource = `      const youtubeVideoIdFromEmbed = (value) => {
           root.querySelectorAll("iframe[src]").forEach(prepareYouTubeIframe);
         }
       };
-      document.addEventListener("click", (event) => {
-        if (!event.isTrusted || !(event.target instanceof Element)) {
-          return;
-        }
-        const launch = event.target.closest("[data-streamui-youtube-id]");
-        if (!launch) {
-          return;
-        }
-        const videoId = launch.getAttribute("data-streamui-youtube-id") || "";
-        if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
-          return;
-        }
-        event.preventDefault();
-        const wrapper = document.createElement("div");
-        wrapper.className = "streamui-video-player";
-        const iframe = document.createElement("iframe");
-        iframe.src =
-          "https://www.youtube.com/embed/" +
-          videoId +
-          "?autoplay=1&rel=0";
-        iframe.title = launch.getAttribute("aria-label") || "YouTube video";
-        iframe.allow =
-          "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
-        iframe.allowFullscreen = true;
-        iframe.referrerPolicy = "strict-origin-when-cross-origin";
-        iframe.className = "streamui-video-active";
-        iframe.dataset.streamuiVideoActive = "true";
-        const fallback = document.createElement("button");
-        fallback.type = "button";
-        fallback.className = "streamui-video-external";
-        fallback.setAttribute(
-          "data-streamui-open-url",
-          "https://www.youtube.com/watch?v=" + videoId
-        );
-        fallback.textContent = "Playback blocked? Open on YouTube";
-        wrapper.append(iframe, fallback);
-        launch.replaceWith(wrapper);
-        scheduleMeasure();
-      });
       window.addEventListener("DOMContentLoaded", () => {
         prepareExternalImages(document);
         prepareYouTubeIframes(document);

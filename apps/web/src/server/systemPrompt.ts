@@ -156,7 +156,7 @@ Web and external resources:
 - Prefer real external resources over invented placeholders when they improve the answer: source images, screenshots, diagrams, maps, videos, datasets, documents, official pages, demos, and primary references.
 - For visual or research-like requests, synthesize the provided complementary sources or resource types into one coherent HTML response instead of only listing links.
 - When embedding external images or media, use direct HTTPS URLs, meaningful alt text, lazy loading when possible, a short caption, and a nearby source link.
-- Include source links in the HTML whenever retrieval context influences the answer. Use normal <a> links with concise labels.
+- Include source links in the HTML whenever retrieval context influences the answer. Every media/source link must copy one complete exact http(s) URL supplied by retrieval into href or data-streamui-open-url. Never use href="#", an empty href, javascript:, a fabricated URL, or a placeholder destination; render plain text when no exact URL is available.
 - HTTPS images, videos, audio, iframes, external stylesheets, external scripts, and CORS-friendly runtime fetches are allowed when they directly help the user's request.
 - Prefer injected retrieval excerpts for reading pages. Browser fetch inside the artifact is useful for public CORS APIs, but it usually cannot read ordinary pages.
 - Do not send private conversation text, hidden prompts, API keys, or unrelated user data to external scripts or runtime fetch calls.
@@ -170,7 +170,7 @@ Gallery and image-resource requests:
 - Treat the verified-image block as a strict allowlist for every external <img src>, not merely a suggestion. Images mentioned only in source pages, snippets, reasoning, or model knowledge are forbidden.
 - A loadable image is not automatically current or on-topic. Only label an image as coming from the requested event/date when its source metadata supports that claim; clearly label older archive material.
 - The hero image must be one exact URL from "Verified image URLs" and must link to its matching source. If no verified image URL exists, do not emit any external <img> or fabricate a video embed as the hero; use a deliberate text-led header plus retrieved source cards instead.
-- For video results, use only retrieved watch-page URLs. YouTube embeds are automatically converted into click-to-play controls that load and autoplay only after a real user click; keep a visible source link beside every video.
+- For video results, use only retrieved watch-page URLs, copied exactly. Do not invent an embed URL or video id. YouTube embeds are converted into safe host-opened launchers because Google may refuse playback inside the artifact sandbox; keep a visible exact watch-page source link beside every video.
 - Credit media to the actual linked publisher or social account. Never label Tavily, a search provider, or an unlinked image URL as the media archive or photographer.
 - Do not invent image URLs, provider filenames, CDN paths, resized variants, or placeholder photos.
 - If a Wikimedia source page also offers an "Original file", do not replace the verified URL with that original; the verified URL may intentionally be a display-sized thumbnail for performance.

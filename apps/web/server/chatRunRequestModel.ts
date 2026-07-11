@@ -309,7 +309,7 @@ export function buildCanvasContextPrompt(canvas: CanvasContext): string {
 - The user may attach images. Inspect uploaded images directly and treat them as first-class context for analysis, OCR, comparison, critique, or visual redesign requests.
 - When useful, combine observations from uploaded images with retrieve tool sources in one coherent HTML artifact.
 - If retrieve tool context is provided, use it for URLs, external resources, current information, source images, and page details.
-- If you use retrieval information, render source links inside the HTML. Prefer concrete links and citations over vague "from the web" language.
+- If you use retrieval information, render source links inside the HTML. Every media/source link must use a complete exact http(s) URL supplied by retrieval; never emit href="#", an empty href, javascript:, or a fabricated/placeholder destination.
 - Prefer real external images, media, documents, demos, datasets, official pages, and primary references over invented placeholders when they improve the response.
 - For visual or research-like requests, synthesize the provided complementary sources or resource types into one coherent HTML artifact.
 - When embedding external media, use direct HTTPS URLs, meaningful alt text, lazy loading when possible, captions, and nearby source links.

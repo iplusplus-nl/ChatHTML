@@ -140,8 +140,13 @@ export const measurementSource = `      const HEIGHT_SAFETY_PADDING = 28;
         document.querySelectorAll("a[href]").forEach((anchor) => {
           const href = anchor.getAttribute("href") || "";
           if (/^https?:\\/\\//i.test(href)) {
+            anchor.setAttribute("data-streamui-link-bridged", "true");
+            anchor.setAttribute("data-streamui-open-url", href);
             anchor.setAttribute("target", "_blank");
             anchor.setAttribute("rel", "noopener noreferrer");
+          } else if (anchor.dataset.streamuiLinkBridged === "true") {
+            anchor.removeAttribute("data-streamui-link-bridged");
+            anchor.removeAttribute("data-streamui-open-url");
           }
         });
       };

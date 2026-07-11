@@ -57,19 +57,17 @@ describe("sandboxDocument", () => {
     assert.match(document, /event\.target instanceof HTMLImageElement/);
   });
 
-  it("turns eager YouTube embeds into click-to-play launchers", () => {
+  it("turns sandbox-blocked YouTube embeds into host-opened launchers", () => {
     const document = buildIframeDocument(
       '<iframe src="https://www.youtube.com/embed/abcdefghijk" title="Event video"></iframe>'
     );
 
     assert.match(document, /prepareYouTubeIframe/);
     assert.match(document, /streamui-video-launch/);
-    assert.match(document, /data-streamui-youtube-id/);
-    assert.match(document, /youtube\.com\/embed/);
-    assert.match(document, /autoplay=1/);
-    assert.match(document, /Playback blocked\? Open on YouTube/);
-    assert.match(document, /strict-origin-when-cross-origin/);
+    assert.match(document, /streamuiYoutubeId/);
     assert.match(document, /data-streamui-open-url/);
+    assert.match(document, /youtube\.com\/watch\?v=/);
+    assert.doesNotMatch(document, /Playback blocked\? Open on YouTube/);
   });
 
   it("routes external images through the same-origin raster proxy", () => {
@@ -187,6 +185,18 @@ describe("sandboxDocument", () => {
     assert.match(document, /actionType: "copy"/);
     assert.match(document, /actionType: "download"/);
     assert.match(document, /actionType: "open-url"/);
+  });
+
+  it("routes ordinary external anchors through the host open-link capability", () => {
+    const document = buildIframeDocument(
+      '<a href="https://www.youtube.com/watch?v=abcdefghijk">Watch</a>'
+    );
+
+    assert.match(document, /data-streamui-link-bridged/);
+    assert.match(
+      document,
+      /anchor\.setAttribute\("data-streamui-open-url", href\)/
+    );
   });
 
   it("bridges clipboard writes through the host", () => {
