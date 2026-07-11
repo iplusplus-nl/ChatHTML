@@ -23,6 +23,8 @@ async function startGateway(fetchImpl: typeof fetch, nodeEnv = "test") {
   app.get("/api/auth/me", gateway.handleAuthMe);
   app.get("/api/auth/start", gateway.handleOAuthStart);
   app.get("/api/auth/callback", gateway.handleOAuthCallback);
+  app.post("/api/auth/native/start", gateway.handleNativeOAuthStart);
+  app.post("/api/auth/native/callback", gateway.handleNativeOAuthCallback);
   app.post("/api/auth/logout", gateway.handleAuthLogout);
   app.post("/managed", gateway.injectManagedApiSettings, (req, res) => {
     res.json(req.body);
@@ -178,6 +180,99 @@ describe("ChatHTML Service gateway", () => {
     assert.equal(response.status, 400);
     assert.equal(calls, 0);
     assert.match(await response.text(), /invalid or expired/);
+  });
+
+  it("hands an app OAuth code back through a native deep-link bridge", async () => {
+    const token = "native_service_session_token_abcdefghijklmnopqrstuvwxyz";
+    let verifier = "";
+    const origin = await startGateway(async (input, init) => {
+      assert.equal(String(input), "http://service.test/v1/oauth/token");
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      assert.equal(body.grant_type, "authorization_code");
+      assert.equal(body.client_id, "chathtml");
+      assert.equal(body.redirect_uri, "chathtml://oauth/callback");
+      assert.equal(
+        body.code,
+        "native-one-time-authorization-code-abcdefghijklmnopqrstuvwxyz"
+      );
+      verifier = String(body.code_verifier ?? "");
+      return Response.json({
+        user: { id: "native-user-1", email: "app@example.com", role: "user" },
+        accessToken: token,
+        expiresAt: Date.now() + 60_000
+      });
+    }, "production");
+
+    const started = await fetch(`${origin}/api/auth/native/start`, {
+      method: "POST"
+    });
+    assert.equal(started.status, 200);
+    const startBody = (await started.json()) as {
+      authorizationUrl: string;
+      callbackScheme: string;
+    };
+    const authorizationUrl = new URL(startBody.authorizationUrl);
+    assert.equal(startBody.callbackScheme, "chathtml");
+    assert.equal(
+      authorizationUrl.searchParams.get("redirect_uri"),
+      "chathtml://oauth/callback"
+    );
+    assert.equal(authorizationUrl.searchParams.has("code_verifier"), false);
+    const transientCookies = started.headers.get("set-cookie") ?? "";
+    const state = authorizationUrl.searchParams.get("state") ?? "";
+    const stateCookie =
+      transientCookies.match(/chathtml_oauth_state=([^;]+)/)?.[1] ?? "";
+    const verifierCookie =
+      transientCookies.match(/chathtml_oauth_verifier=([^;]+)/)?.[1] ?? "";
+    assert.equal(stateCookie, state);
+    assert.ok(verifierCookie);
+
+    const callbackUrl = new URL("chathtml://oauth/callback");
+    callbackUrl.searchParams.set(
+      "code",
+      "native-one-time-authorization-code-abcdefghijklmnopqrstuvwxyz"
+    );
+    callbackUrl.searchParams.set("state", state);
+    const completed = await fetch(`${origin}/api/auth/native/callback`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `chathtml_oauth_state=${stateCookie}; chathtml_oauth_verifier=${verifierCookie}`
+      },
+      body: JSON.stringify({ callbackUrl: callbackUrl.toString() })
+    });
+
+    assert.equal(completed.status, 200);
+    assert.equal(verifier, verifierCookie);
+    assert.match(
+      completed.headers.get("set-cookie") ?? "",
+      /chathtml_service_session=/
+    );
+    const completedBody = (await completed.json()) as Record<string, unknown>;
+    assert.equal(
+      (completedBody.user as { email: string }).email,
+      "app@example.com"
+    );
+    assert.equal("accessToken" in completedBody, false);
+  });
+
+  it("rejects a native OAuth callback from another scheme", async () => {
+    let calls = 0;
+    const origin = await startGateway(async () => {
+      calls += 1;
+      throw new Error("Token exchange must not run.");
+    });
+    const response = await fetch(`${origin}/api/auth/native/callback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        callbackUrl: `https://attacker.example/callback?code=${"c".repeat(40)}&state=${"s".repeat(32)}`
+      })
+    });
+
+    assert.equal(response.status, 400);
+    assert.equal(calls, 0);
+    assert.match(await response.text(), /callback is invalid/);
   });
 
   it("injects the fixed service connection only for managed requests", async () => {

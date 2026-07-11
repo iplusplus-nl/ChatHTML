@@ -3,6 +3,8 @@ import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 export const DEFAULT_CHATHTML_SERVICE_BASE_URL =
   "https://service.aietheia.com/v1";
+export const DEFAULT_CHATHTML_APP_OAUTH_REDIRECT_URI =
+  "chathtml://oauth/callback";
 const SESSION_COOKIE_NAME = "chathtml_service_session";
 const OAUTH_STATE_COOKIE_NAME = "chathtml_oauth_state";
 const OAUTH_VERIFIER_COOKIE_NAME = "chathtml_oauth_verifier";
@@ -35,6 +37,7 @@ export type ChatHtmlServiceGatewayOptions = {
   fetchImpl?: typeof fetch;
   nodeEnv?: string;
   publicOrigin?: string;
+  appRedirectUri?: string;
 };
 
 class ServiceHttpError extends Error {
@@ -69,6 +72,25 @@ function normalizePublicOrigin(value: string): string {
     );
   }
   return url.origin;
+}
+
+function normalizeAppRedirectUri(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== "chathtml:" ||
+    url.hostname !== "oauth" ||
+    url.port ||
+    url.pathname !== "/callback" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      "CHATHTML_APP_OAUTH_REDIRECT_URI must be exactly chathtml://oauth/callback."
+    );
+  }
+  return url.toString();
 }
 
 function readCookie(req: Request, name: string): string {
@@ -280,6 +302,11 @@ export function createChatHtmlServiceGateway(
         : "http://127.0.0.1:5173")
   );
   const callbackUrl = `${publicOrigin}/api/auth/callback`;
+  const appRedirectUri = normalizeAppRedirectUri(
+    options.appRedirectUri ??
+      process.env.CHATHTML_APP_OAUTH_REDIRECT_URI ??
+      DEFAULT_CHATHTML_APP_OAUTH_REDIRECT_URI
+  );
   const serviceOrigin = new URL(baseUrl).origin;
 
   const serviceRequest = async (
@@ -329,7 +356,11 @@ export function createChatHtmlServiceGateway(
     }
   };
 
-  const handleOAuthStart: RequestHandler = (req, res) => {
+  const createOAuthAuthorization = (
+    req: Request,
+    res: Response,
+    redirectUri: string
+  ): URL => {
     const state = randomBytes(32).toString("base64url");
     const verifier = randomBytes(48).toString("base64url");
     const challenge = createHash("sha256")
@@ -339,7 +370,7 @@ export function createChatHtmlServiceGateway(
     const authorizationUrl = new URL("/oauth/authorize", serviceOrigin);
     authorizationUrl.searchParams.set("response_type", "code");
     authorizationUrl.searchParams.set("client_id", OAUTH_CLIENT_ID);
-    authorizationUrl.searchParams.set("redirect_uri", callbackUrl);
+    authorizationUrl.searchParams.set("redirect_uri", redirectUri);
     authorizationUrl.searchParams.set("state", state);
     authorizationUrl.searchParams.set("code_challenge", challenge);
     authorizationUrl.searchParams.set("code_challenge_method", "S256");
@@ -352,10 +383,28 @@ export function createChatHtmlServiceGateway(
       oauthTransientCookie(OAUTH_VERIFIER_COOKIE_NAME, verifier, secure)
     );
     res.setHeader("Cache-Control", "no-store");
+    return authorizationUrl;
+  };
+
+  const handleOAuthStart: RequestHandler = (req, res) => {
+    const authorizationUrl = createOAuthAuthorization(
+      req,
+      res,
+      callbackUrl
+    );
     res.redirect(302, authorizationUrl.toString());
   };
 
-  const handleOAuthCallback: RequestHandler = async (req, res) => {
+  const completeOAuth = async (
+    req: Request,
+    res: Response,
+    input: {
+      code: string;
+      state: string;
+      redirectUri: string;
+      respond(session: ServiceAuthSession): void;
+    }
+  ): Promise<void> => {
     const secure = useSecureCookie(req, nodeEnv);
     const clearOAuthCookies = () => {
       res.append(
@@ -367,16 +416,14 @@ export function createChatHtmlServiceGateway(
         oauthTransientCookie(OAUTH_VERIFIER_COOKIE_NAME, "", secure, 0)
       );
     };
-    const code = typeof req.query.code === "string" ? req.query.code : "";
-    const state = typeof req.query.state === "string" ? req.query.state : "";
     const expectedState = readCookie(req, OAUTH_STATE_COOKIE_NAME);
     const verifier = readCookie(req, OAUTH_VERIFIER_COOKIE_NAME);
     if (
-      !code ||
-      !state ||
+      !input.code ||
+      !input.state ||
       !expectedState ||
       !verifier ||
-      !equalSecret(state, expectedState)
+      !equalSecret(input.state, expectedState)
     ) {
       clearOAuthCookies();
       res
@@ -392,8 +439,8 @@ export function createChatHtmlServiceGateway(
         body: JSON.stringify({
           grant_type: "authorization_code",
           client_id: OAUTH_CLIENT_ID,
-          redirect_uri: callbackUrl,
-          code,
+          redirect_uri: input.redirectUri,
+          code: input.code,
           code_verifier: verifier
         })
       });
@@ -406,11 +453,67 @@ export function createChatHtmlServiceGateway(
         sessionCookie(session.accessToken, session.expiresAt, secure)
       );
       res.setHeader("Cache-Control", "no-store");
-      res.redirect(303, `${publicOrigin}/`);
+      input.respond(session);
     } catch (error) {
       clearOAuthCookies();
       sendGatewayError(res, error);
     }
+  };
+
+  const handleOAuthCallback: RequestHandler = async (req, res) => {
+    await completeOAuth(req, res, {
+      code: typeof req.query.code === "string" ? req.query.code : "",
+      state: typeof req.query.state === "string" ? req.query.state : "",
+      redirectUri: callbackUrl,
+      respond: () => res.redirect(303, `${publicOrigin}/`)
+    });
+  };
+
+  const handleNativeOAuthStart: RequestHandler = (req, res) => {
+    const authorizationUrl = createOAuthAuthorization(
+      req,
+      res,
+      appRedirectUri
+    );
+    res.json({
+      authorizationUrl: authorizationUrl.toString(),
+      callbackScheme: "chathtml"
+    });
+  };
+
+  const handleNativeOAuthCallback: RequestHandler = async (req, res) => {
+    const callbackValue =
+      typeof req.body?.callbackUrl === "string" ? req.body.callbackUrl : "";
+    let callback: URL;
+    try {
+      if (callbackValue.length > 2_048) {
+        throw new Error("Native OAuth callback is too long.");
+      }
+      callback = new URL(callbackValue);
+      const expected = new URL(appRedirectUri);
+      if (
+        callback.protocol !== expected.protocol ||
+        callback.host !== expected.host ||
+        callback.pathname !== expected.pathname ||
+        callback.username ||
+        callback.password ||
+        callback.hash ||
+        [...callback.searchParams.keys()].some(
+          (key) => key !== "code" && key !== "state"
+        )
+      ) {
+        throw new Error("Unexpected native OAuth callback.");
+      }
+    } catch {
+      res.status(400).json({ error: "The app OAuth callback is invalid." });
+      return;
+    }
+    await completeOAuth(req, res, {
+      code: callback.searchParams.get("code") ?? "",
+      state: callback.searchParams.get("state") ?? "",
+      redirectUri: appRedirectUri,
+      respond: (session) => res.json(authSummary(session.user))
+    });
   };
 
   const handleAuthLogout: RequestHandler = async (req, res) => {
@@ -485,6 +588,8 @@ export function createChatHtmlServiceGateway(
     handleAuthMe,
     handleOAuthStart,
     handleOAuthCallback,
+    handleNativeOAuthStart,
+    handleNativeOAuthCallback,
     handleAuthLogout,
     injectManagedApiSettings
   };

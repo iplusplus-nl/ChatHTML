@@ -28,6 +28,8 @@ billing surfaces.
 ```txt
 GET  /api/auth/start
 GET  /api/auth/callback
+POST /api/auth/native/start
+POST /api/auth/native/callback
 GET  /api/auth/me
 POST /api/auth/logout
 ```
@@ -67,6 +69,33 @@ When no valid session exists, `GET /api/auth/me` keeps the same response shape
 with `"user": null`, and the frontend shows sign-in entry points.
 `POST /api/auth/logout` revokes the Service session and clears the local
 HttpOnly cookie.
+
+### Native app authentication
+
+A WebView-only wrapper can use the normal web redirect flow. A wrapper that
+opens login in the system browser should inject this narrow bridge before the
+web app starts:
+
+```ts
+window.chathtmlNativeAuth = {
+  authorize(input: {
+    authorizationUrl: string;
+    callbackScheme: "chathtml";
+  }): Promise<{ callbackUrl: string }>;
+};
+```
+
+The bridge opens `authorizationUrl` in the system browser, waits for the OS to
+deliver one `chathtml://oauth/callback?...` deep link, and resolves with that
+full callback URL. ChatHTML then posts it to `/api/auth/native/callback` on its
+own origin. The backend validates the exact scheme, path, state cookie, and PKCE
+verifier before exchanging the code and setting the same HttpOnly session
+cookie used by the web version.
+
+The native shell must register the `chathtml` URL scheme and accept only
+`chathtml://oauth/callback`. It must not exchange the code itself, expose the
+PKCE verifier, or persist a Service token. Multiple sign-in clicks are
+coalesced while one native authorization is active.
 
 ## Billing
 

@@ -3,6 +3,7 @@ import type {
   AuthSummary,
   AuthUser
 } from "../../core/cloudAuth";
+import { startCloudAuthentication } from "../../core/cloudAuthLaunch";
 import {
   runCloudAuthLogout,
   runCloudAuthRefresh,
@@ -36,6 +37,7 @@ export function useCloudAuthController({
   const stableDependencies = dependenciesRef.current;
   const [summary, setSummary] = useState<AuthSummary | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const authLaunchRef = useRef<Promise<AuthSummary | null> | null>(null);
 
   useEffect(() => {
     if (!cloudEnabled) {
@@ -60,7 +62,26 @@ export function useCloudAuthController({
   }, [cloudEnabled, stableDependencies]);
 
   const open = useCallback(() => {
-    window.location.assign("/api/auth/start");
+    if (authLaunchRef.current) {
+      return;
+    }
+    const launch = startCloudAuthentication();
+    authLaunchRef.current = launch;
+    void launch
+      .then((nativeSummary) => {
+        if (nativeSummary) {
+          setSummary(nativeSummary);
+          setLoaded(true);
+        }
+      })
+      .catch((error) => {
+        console.warn("Could not complete ChatHTML authentication.", error);
+      })
+      .finally(() => {
+        if (authLaunchRef.current === launch) {
+          authLaunchRef.current = null;
+        }
+      });
   }, []);
   const close = useCallback(() => undefined, []);
   const updateUser = useCallback((user: AuthUser) => {

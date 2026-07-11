@@ -60,7 +60,10 @@ Authentication uses a Service-hosted OAuth flow: ChatHTML redirects the browser
 to the Service for email registration or login, then its backend exchanges a
 one-time PKCE-protected code and keeps the service session in an HttpOnly cookie.
 The Service URL is server configuration and is not exposed as a frontend
-setting. See `docs/cloud-api.md` for the HTTP contract.
+setting. Web builds use an HTTPS or loopback callback. Native wrappers can
+inject the documented `window.chathtmlNativeAuth` bridge to open the system
+browser and return through the fixed `chathtml://oauth/callback` deep link.
+See `docs/cloud-api.md` for the HTTP and native bridge contracts.
 
 ## Session Storage
 
