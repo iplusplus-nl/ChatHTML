@@ -13,6 +13,31 @@ export const mediaSource = `      const youtubeVideoIdFromEmbed = (value) => {
           return "";
         }
       };
+      const isYouTubeEmbedUrl = (value) => {
+        try {
+          const url = new URL(value, window.location.href);
+          return (
+            (url.hostname.toLowerCase().endsWith("youtube.com") ||
+              url.hostname.toLowerCase().endsWith("youtube-nocookie.com")) &&
+            url.pathname.includes("/embed/")
+          );
+        } catch {
+          return false;
+        }
+      };
+      const externalSourceUrlNearMedia = (media) => {
+        let scope = media?.parentElement || null;
+        while (scope && scope !== document.body) {
+          const links = Array.from(scope.querySelectorAll("a[href]"))
+            .map((anchor) => anchor.getAttribute("href") || "")
+            .filter((href) => /^https?:\\/\\//i.test(href));
+          if (links.length === 1) {
+            return links[0];
+          }
+          scope = scope.parentElement;
+        }
+        return "";
+      };
       const proxyExternalImage = (image) => {
         if (!image || image.dataset.streamuiImageProxied === "true") {
           return;
@@ -53,8 +78,16 @@ export const mediaSource = `      const youtubeVideoIdFromEmbed = (value) => {
         ) {
           return;
         }
-        const videoId = youtubeVideoIdFromEmbed(iframe.getAttribute("src") || "");
-        if (!videoId) {
+        const embedSource = iframe.getAttribute("src") || "";
+        if (!isYouTubeEmbedUrl(embedSource)) {
+          return;
+        }
+        const videoId = youtubeVideoIdFromEmbed(embedSource);
+        const nearbySourceUrl = externalSourceUrlNearMedia(iframe);
+        const targetUrl =
+          nearbySourceUrl ||
+          (videoId ? "https://www.youtube.com/watch?v=" + videoId : "");
+        if (!targetUrl) {
           return;
         }
         iframe.dataset.streamuiVideoPrepared = "true";
@@ -64,9 +97,9 @@ export const mediaSource = `      const youtubeVideoIdFromEmbed = (value) => {
         launch.dataset.streamuiYoutubeId = videoId;
         launch.setAttribute(
           "data-streamui-open-url",
-          "https://www.youtube.com/watch?v=" + videoId
+          targetUrl
         );
-        launch.setAttribute("data-streamui-label", "YouTube video");
+        launch.setAttribute("data-streamui-label", "External video");
         launch.setAttribute(
           "aria-label",
           "Open video: " + (iframe.getAttribute("title") || "YouTube video")

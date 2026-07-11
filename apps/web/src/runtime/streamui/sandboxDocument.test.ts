@@ -67,6 +67,8 @@ describe("sandboxDocument", () => {
     assert.match(document, /streamuiYoutubeId/);
     assert.match(document, /data-streamui-open-url/);
     assert.match(document, /youtube\.com\/watch\?v=/);
+    assert.match(document, /externalSourceUrlNearMedia/);
+    assert.match(document, /nearbySourceUrl \|\|/);
     assert.doesNotMatch(document, /Playback blocked\? Open on YouTube/);
   });
 
