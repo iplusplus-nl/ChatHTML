@@ -1,6 +1,6 @@
 .env
 node_modules/
 dist/
-sessions/
+/sessions/
 plan.md
 server.md

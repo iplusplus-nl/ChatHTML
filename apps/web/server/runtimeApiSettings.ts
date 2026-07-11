@@ -1,5 +1,9 @@
 import type { Request, Response } from "express";
 import { createRequire } from "node:module";
+import {
+  assertProviderCredentialEndpointTrusted,
+  type ProviderEndpointKind
+} from "./providerEndpointTrust.js";
 
 export type ApiKeySource = "environment" | "manual" | "managed";
 
@@ -17,6 +21,18 @@ export type RuntimeApiCredentials = {
   apiKeySource: ApiKeySource;
   apiKeyEnvironmentName: string;
   apiKey: string;
+};
+
+export type RuntimeApiCredentialDescriptor = Omit<
+  RuntimeApiCredentials,
+  "apiKey"
+> & {
+  manualApiKey: string;
+};
+
+export type RuntimeApiCredentialTarget = {
+  endpoint: string;
+  kind: ProviderEndpointKind;
 };
 
 export type RuntimeMemoryItem = {
@@ -407,7 +423,9 @@ export function getApiKeyEnvironmentName(
   return "STREAMUI_API_KEY";
 }
 
-export function readRuntimeApiCredentials(input: unknown): RuntimeApiCredentials {
+export function readRuntimeApiCredentialDescriptor(
+  input: unknown
+): RuntimeApiCredentialDescriptor {
   const defaults = getRuntimeApiDefaults();
   const object =
     typeof input === "object" && input !== null
@@ -430,7 +448,7 @@ export function readRuntimeApiCredentials(input: unknown): RuntimeApiCredentials
       baseUrl: defaults.baseUrl,
       apiKeySource: defaults.apiKeySource,
       apiKeyEnvironmentName,
-      apiKey: process.env[apiKeyEnvironmentName]?.trim() ?? ""
+      manualApiKey: ""
     };
   }
   const providerName =
@@ -446,18 +464,51 @@ export function readRuntimeApiCredentials(input: unknown): RuntimeApiCredentials
     effectiveBaseUrl,
     requestedProviderId
   );
-  const apiKey =
-    effectiveApiKeySource === "environment"
-      ? process.env[apiKeyEnvironmentName]?.trim() ?? ""
-      : typeof object.apiKey === "string"
-        ? object.apiKey.trim()
-        : "";
 
   return {
     providerName,
     baseUrl: effectiveBaseUrl,
     apiKeySource: effectiveApiKeySource,
     apiKeyEnvironmentName,
-    apiKey
+    manualApiKey:
+      effectiveApiKeySource === "manual" && typeof object.apiKey === "string"
+        ? object.apiKey.trim()
+        : ""
   };
+}
+
+export function resolveRuntimeApiCredentials(
+  descriptor: RuntimeApiCredentialDescriptor,
+  target: RuntimeApiCredentialTarget
+): RuntimeApiCredentials {
+  const credentials = {
+    providerName: descriptor.providerName,
+    baseUrl: descriptor.baseUrl,
+    apiKeySource: descriptor.apiKeySource,
+    apiKeyEnvironmentName: descriptor.apiKeyEnvironmentName
+  };
+  if (descriptor.apiKeySource === "manual") {
+    return {
+      ...credentials,
+      apiKey: descriptor.manualApiKey
+    };
+  }
+
+  assertProviderCredentialEndpointTrusted(
+    descriptor,
+    target.endpoint,
+    target.kind
+  );
+  return {
+    ...credentials,
+    apiKey: process.env[descriptor.apiKeyEnvironmentName]?.trim() ?? ""
+  };
+}
+
+export function readRuntimeApiCredentials(input: unknown): RuntimeApiCredentials {
+  const descriptor = readRuntimeApiCredentialDescriptor(input);
+  return resolveRuntimeApiCredentials(descriptor, {
+    endpoint: `${descriptor.baseUrl.replace(/\/+$/, "")}/responses`,
+    kind: "responses"
+  });
 }

@@ -1,19 +1,38 @@
 import { buildIframeDocument } from "../runtime/streamui/sandboxDocument";
 import type { PageThemeMode, RenderSnapshot } from "../runtime/streamui/types";
-import { htmlToTranscriptText } from "./artifactContext";
+import { inlineExternalSnapshotResources } from "./artifactExportResources";
+import {
+  getArtifactExportScale,
+  getSnapshotDiagnostics,
+  getSnapshotHtmlDocument,
+  getSnapshotSourceCode,
+  getSnapshotVisibleText,
+  normalizeSvgMarkup,
+  type ArtifactExportDiagnosticsOptions
+} from "./artifactExportModel";
+export {
+  createArtifactFilename,
+  getArtifactExportScale,
+  getSnapshotDiagnostics,
+  getSnapshotHtmlDocument,
+  getSnapshotSourceCode,
+  getSnapshotVisibleText,
+  normalizeSvgMarkup
+} from "./artifactExportModel";
+export type {
+  ArtifactExportDiagnosticsOptions,
+  ArtifactExtension
+} from "./artifactExportModel";
 
-const MAX_CANVAS_DIMENSION = 16_384;
-const MAX_CANVAS_PIXELS = 32_000_000;
 const EXPORT_FRAME_MIN_WIDTH = 280;
 const EXPORT_PREPARE_TIMEOUT_MS = 8_000;
 const EXPORT_ASSET_SETTLE_TIMEOUT_MS = 4_000;
 const EXPORT_RASTERIZE_TIMEOUT_MS = 8_000;
-const EXPORT_RESOURCE_ENDPOINT = "/api/export-resource";
 const SVG_MIME_TYPE = "image/svg+xml;charset=utf-8";
 const HTML_MIME_TYPE = "text/html;charset=utf-8";
 const PLAIN_TEXT_MIME_TYPE = "text/plain;charset=utf-8";
-const CSS_URL_PATTERN =
-  /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']+))\s*\)/gi;
+
+export const ARTIFACT_EXPORT_FRAME_SANDBOX = "allow-same-origin";
 
 type SnapshotDocumentOptions = {
   themeMode?: PageThemeMode;
@@ -26,25 +45,11 @@ type PreparedSnapshotDocument = {
   width: number;
 };
 
-type ArtifactExtension = "png" | "svg" | "html" | "txt";
-
 type PngExportResult = {
   blob: Blob;
   height: number;
   scale: number;
   width: number;
-};
-
-type ExportResourceDataUrlCache = Map<string, Promise<string | undefined>>;
-type CssResourceReplacement = {
-  end: number;
-  start: number;
-  value: string;
-};
-
-export type ArtifactExportDiagnosticsOptions = {
-  exportWidth?: number;
-  themeMode?: PageThemeMode;
 };
 
 function delay(timeoutMs: number): Promise<void> {
@@ -152,118 +157,12 @@ function measureDocument(document: Document) {
   };
 }
 
-export function getArtifactExportScale(width: number, height: number) {
-  const deviceScale = Math.min(
-    typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
-    2
-  );
-  const dimensionScale = Math.min(
-    MAX_CANVAS_DIMENSION / width,
-    MAX_CANVAS_DIMENSION / height
-  );
-  const pixelScale = Math.sqrt(MAX_CANVAS_PIXELS / (width * height));
-
-  return Math.max(0.1, Math.min(deviceScale, dimensionScale, pixelScale));
-}
-
-export function getSnapshotSourceCode(snapshot: RenderSnapshot): string {
-  const source =
-    snapshot.raw || snapshot.completedHtml || snapshot.iframeDocument || "";
-
-  return source.endsWith("\n") ? source : `${source}\n`;
-}
-
-export function getSnapshotVisibleText(snapshot: RenderSnapshot): string {
-  return htmlToTranscriptText(
-    snapshot.completedHtml || snapshot.iframeDocument || snapshot.raw
-  );
-}
-
-export function getSnapshotHtmlDocument(
-  snapshot: RenderSnapshot,
-  themeMode?: PageThemeMode
-): string {
-  const html = snapshot.completedHtml || snapshot.raw;
-  const document = html
-    ? buildIframeDocument(html, themeMode ?? "night")
-    : snapshot.iframeDocument;
-
-  return document.endsWith("\n") ? document : `${document}\n`;
-}
-
-export function createArtifactFilename(
-  baseName: string,
-  extension: ArtifactExtension
-): string {
-  const sanitized = baseName
-    .trim()
-    .replace(/\.[a-z0-9]+$/i, "")
-    .replace(/[^a-z0-9_-]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-
-  return `${sanitized || "chathtml-artifact"}.${extension}`;
-}
-
-export function normalizeSvgMarkup(markup: string): string {
-  const trimmed = markup.trim();
-
-  if (trimmed.startsWith("<?xml")) {
-    return `${trimmed}\n`;
-  }
-
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${trimmed}\n`;
-}
-
-export function getSnapshotDiagnostics(
-  snapshot: RenderSnapshot,
-  options: ArtifactExportDiagnosticsOptions = {}
-): string {
-  const visibleText = getSnapshotVisibleText(snapshot);
-  const lines = [
-    "ChatHTML Artifact Diagnostics",
-    `Generated: ${new Date().toISOString()}`,
-    `Status: ${snapshot.status}`,
-    `Theme mode: ${options.themeMode ?? "unknown"}`,
-    `Requested export width: ${options.exportWidth ?? "unknown"}`,
-    "",
-    "Source sizes:",
-    `- Raw source chars: ${snapshot.raw.length}`,
-    `- Completed HTML chars: ${snapshot.completedHtml.length}`,
-    `- Iframe document chars: ${snapshot.iframeDocument.length}`,
-    `- Visible text chars: ${visibleText.length}`,
-    "",
-    "Render errors:",
-    snapshot.errors.length
-      ? snapshot.errors
-          .map((error, index) => {
-            return `${index + 1}. ${error.kind}: ${error.message} (${new Date(
-              error.timestamp
-            ).toISOString()})`;
-          })
-          .join("\n")
-      : "- none",
-    "",
-    "Visible text:",
-    visibleText || "(none)",
-    "",
-    "Raw source:",
-    getSnapshotSourceCode(snapshot),
-    "",
-    "Completed HTML:",
-    snapshot.completedHtml || "(none)"
-  ];
-
-  return `${lines.join("\n")}\n`;
-}
-
 function createHiddenExportFrame(
   snapshot: RenderSnapshot,
   options: SnapshotDocumentOptions
 ): HTMLIFrameElement {
   const frame = document.createElement("iframe");
-  frame.sandbox.add("allow-scripts");
-  frame.sandbox.add("allow-same-origin");
+  frame.setAttribute("sandbox", ARTIFACT_EXPORT_FRAME_SANDBOX);
   frame.style.position = "fixed";
   frame.style.left = "-100000px";
   frame.style.top = "0";
@@ -382,280 +281,6 @@ function collectDocumentStyles(document: Document): string {
     })
     .filter(Boolean)
     .join("\n");
-}
-
-function getFirstSrcsetUrl(srcset: string | null): string | undefined {
-  return srcset
-    ?.split(",")
-    .map((candidate) => candidate.trim().split(/\s+/)[0])
-    .find(Boolean);
-}
-
-function getImageResourceSource(image: HTMLImageElement): string | undefined {
-  return (
-    image.currentSrc ||
-    image.src ||
-    image.getAttribute("src") ||
-    getFirstSrcsetUrl(image.getAttribute("srcset")) ||
-    getFirstSrcsetUrl(
-      image.closest("picture")?.querySelector("source[srcset]")?.getAttribute(
-        "srcset"
-      ) ?? null
-    )
-  );
-}
-
-function resolveExportResourceUrl(
-  value: string | undefined,
-  baseUrl: string
-): string | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed || trimmed.startsWith("#")) {
-    return undefined;
-  }
-
-  try {
-    return new URL(trimmed, baseUrl).toString();
-  } catch {
-    return undefined;
-  }
-}
-
-function getExportResourceProtocol(url: string): string | undefined {
-  try {
-    return new URL(url).protocol;
-  } catch {
-    return undefined;
-  }
-}
-
-function shouldInlineExportResource(url: string): boolean {
-  const protocol = getExportResourceProtocol(url);
-  return protocol === "http:" || protocol === "https:" || protocol === "blob:";
-}
-
-function getExportResourceFetchUrl(url: string): string {
-  const protocol = getExportResourceProtocol(url);
-  if (protocol === "http:" || protocol === "https:") {
-    return `${EXPORT_RESOURCE_ENDPOINT}?url=${encodeURIComponent(url)}`;
-  }
-
-  return url;
-}
-
-async function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener(
-      "load",
-      () => {
-        if (typeof reader.result === "string") {
-          resolve(reader.result);
-          return;
-        }
-        reject(new Error("Could not encode export resource."));
-      },
-      { once: true }
-    );
-    reader.addEventListener(
-      "error",
-      () => reject(reader.error ?? new Error("Could not read export resource.")),
-      { once: true }
-    );
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function fetchExportResourceAsDataUrl(
-  url: string,
-  cache: ExportResourceDataUrlCache
-): Promise<string | undefined> {
-  const cached = cache.get(url);
-  if (cached) {
-    return cached;
-  }
-
-  const promise = (async () => {
-    const response = await withTimeout(
-      fetch(getExportResourceFetchUrl(url), { credentials: "same-origin" }),
-      EXPORT_ASSET_SETTLE_TIMEOUT_MS,
-      "Timed out while fetching export resource."
-    );
-    if (!response.ok) {
-      return undefined;
-    }
-
-    const blob = await withTimeout(
-      response.blob(),
-      EXPORT_ASSET_SETTLE_TIMEOUT_MS,
-      "Timed out while reading export resource."
-    );
-
-    return blobToDataUrl(blob);
-  })().catch(() => undefined);
-
-  cache.set(url, promise);
-  return promise;
-}
-
-async function inlineImageResources(
-  root: Element,
-  baseUrl: string,
-  cache: ExportResourceDataUrlCache
-): Promise<void> {
-  const images = Array.from(root.querySelectorAll("img"));
-
-  await Promise.all(
-    images.map(async (image) => {
-      const source = getImageResourceSource(image);
-      const url = resolveExportResourceUrl(source ?? undefined, baseUrl);
-      if (!url || !shouldInlineExportResource(url)) {
-        return;
-      }
-
-      const dataUrl = await fetchExportResourceAsDataUrl(url, cache);
-      if (!dataUrl) {
-        return;
-      }
-
-      image.setAttribute("src", dataUrl);
-      image.removeAttribute("srcset");
-      image.removeAttribute("sizes");
-      image.removeAttribute("crossorigin");
-      image.closest("picture")?.querySelectorAll("source").forEach((source) => {
-        source.removeAttribute("srcset");
-        source.removeAttribute("sizes");
-      });
-    })
-  );
-}
-
-async function inlineSvgImageResources(
-  root: Element,
-  baseUrl: string,
-  cache: ExportResourceDataUrlCache
-): Promise<void> {
-  const images = Array.from(root.querySelectorAll("image"));
-
-  await Promise.all(
-    images.map(async (image) => {
-      const source =
-        image.getAttribute("href") || image.getAttribute("xlink:href");
-      const url = resolveExportResourceUrl(source ?? undefined, baseUrl);
-      if (!url || !shouldInlineExportResource(url)) {
-        return;
-      }
-
-      const dataUrl = await fetchExportResourceAsDataUrl(url, cache);
-      if (!dataUrl) {
-        return;
-      }
-
-      image.setAttribute("href", dataUrl);
-      image.removeAttribute("xlink:href");
-    })
-  );
-}
-
-async function inlineCssResourceUrls(
-  cssText: string,
-  baseUrl: string,
-  cache: ExportResourceDataUrlCache
-): Promise<string> {
-  const matches = Array.from(cssText.matchAll(CSS_URL_PATTERN));
-  if (!matches.length) {
-    return cssText;
-  }
-
-  const replacements = (
-    await Promise.all(
-      matches.map(async (match): Promise<CssResourceReplacement | undefined> => {
-        const rawUrl = match[1] ?? match[2] ?? match[3] ?? "";
-        const url = resolveExportResourceUrl(rawUrl, baseUrl);
-        if (
-          match.index === undefined ||
-          !url ||
-          !shouldInlineExportResource(url)
-        ) {
-          return undefined;
-        }
-
-        const dataUrl = await fetchExportResourceAsDataUrl(url, cache);
-        if (!dataUrl) {
-          return undefined;
-        }
-
-        return {
-          end: match.index + match[0].length,
-          start: match.index,
-          value: `url("${dataUrl}")`
-        };
-      })
-    )
-  )
-    .filter(
-      (replacement): replacement is CssResourceReplacement =>
-        replacement !== undefined
-    )
-    .sort((a, b) => a.start - b.start);
-
-  if (!replacements.length) {
-    return cssText;
-  }
-
-  let output = "";
-  let cursor = 0;
-  for (const replacement of replacements) {
-    output += cssText.slice(cursor, replacement.start);
-    output += replacement.value;
-    cursor = replacement.end;
-  }
-  output += cssText.slice(cursor);
-  return output;
-}
-
-async function inlineStyleResources(
-  root: Element,
-  baseUrl: string,
-  cache: ExportResourceDataUrlCache
-): Promise<void> {
-  const styleElements = Array.from(root.querySelectorAll("style"));
-  await Promise.all(
-    styleElements.map(async (style) => {
-      const text = style.textContent;
-      if (!text) {
-        return;
-      }
-      style.textContent = await inlineCssResourceUrls(text, baseUrl, cache);
-    })
-  );
-
-  const styledElements = [
-    ...(root.hasAttribute("style") ? [root] : []),
-    ...Array.from(root.querySelectorAll<HTMLElement>("[style]"))
-  ];
-  await Promise.all(
-    styledElements.map(async (element) => {
-      const style = element.getAttribute("style");
-      if (!style) {
-        return;
-      }
-      element.setAttribute(
-        "style",
-        await inlineCssResourceUrls(style, baseUrl, cache)
-      );
-    })
-  );
-}
-
-async function inlineExternalSnapshotResources(
-  root: Element,
-  baseUrl: string
-): Promise<void> {
-  const cache: ExportResourceDataUrlCache = new Map();
-  await inlineImageResources(root, baseUrl, cache);
-  await inlineSvgImageResources(root, baseUrl, cache);
-  await inlineStyleResources(root, baseUrl, cache);
 }
 
 async function renderPreparedDocumentToForeignObjectSvg(

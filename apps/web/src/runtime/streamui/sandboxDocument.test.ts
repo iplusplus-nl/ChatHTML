@@ -22,6 +22,18 @@ describe("sandboxDocument", () => {
     assert.match(document, /source: "streamui-runtime"/);
   });
 
+  it("composes a valid runtime and removes its token before artifact parsing", () => {
+    const document = buildIframeDocument("<p>Hello</p>");
+    const scripts = [...document.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
+
+    assert.equal(scripts.length, 2);
+    scripts.forEach((script) => {
+      assert.doesNotThrow(() => new Function(script[1]));
+    });
+    assert.match(scripts[1][1], /previousElementSibling\?\.remove/);
+    assert.doesNotMatch(scripts[0][1], /runtimeScriptElement/);
+  });
+
   it("includes lazy MathJax rendering for TeX formulas", () => {
     const document = buildIframeDocument("<p>\\(x + 1\\)</p>");
 
@@ -86,6 +98,23 @@ describe("sandboxDocument", () => {
     assert.match(document, /exitSelectionMode/);
     assert.match(document, /return part;/);
     assert.match(document, /legacyIdSelector/);
+    assert.match(document, /data\.documentEpoch !== HOST_DOCUMENT_EPOCH/);
+  });
+
+  it("keeps the outbound runtime secret separate from the inbound epoch", () => {
+    const document = buildIframeDocument(
+      "<main>Hello</main>",
+      "night",
+      true,
+      "outbound-secret",
+      "inbound-epoch"
+    );
+
+    assert.match(document, /HOST_CHANNEL_TOKEN = "outbound-secret"/);
+    assert.match(document, /HOST_DOCUMENT_EPOCH = "inbound-epoch"/);
+    assert.match(document, /channelToken: HOST_CHANNEL_TOKEN/);
+    assert.match(document, /data\.documentEpoch !== HOST_DOCUMENT_EPOCH/);
+    assert.doesNotMatch(document, /data\.channelToken !== HOST_CHANNEL_TOKEN/);
   });
 
   it("renders accented edit overlays with a diagonal busy sheen", () => {

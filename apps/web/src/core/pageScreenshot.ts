@@ -1,9 +1,22 @@
+import { getIframeCaptureSource } from "./iframeCaptureSource";
+import {
+  drawScreenshotLayers,
+  type ScreenshotOverlayLayer
+} from "./screenshotLayerComposition";
+
 const MAX_CANVAS_DIMENSION = 16_384;
 const MAX_CANVAS_PIXELS = 32_000_000;
 const SCREENSHOT_TIMEOUT_MS = 8_000;
 const SVG_MIME_TYPE = "image/svg+xml;charset=utf-8";
 
-type IframeOverlay = {
+type IframeOverlay = ScreenshotOverlayLayer<HTMLImageElement> & {
+  cleanup(): void;
+};
+
+type IframeCaptureContext = {
+  document: Document;
+  window: Window;
+  staticSource: boolean;
   cleanup(): void;
 };
 
@@ -232,7 +245,8 @@ async function rasterizeSvgToPngBlob(
   svg: string,
   width: number,
   height: number,
-  scale: number
+  scale: number,
+  overlays: readonly ScreenshotOverlayLayer[] = []
 ): Promise<Blob> {
   const url = URL.createObjectURL(new Blob([svg], { type: SVG_MIME_TYPE }));
   try {
@@ -246,8 +260,7 @@ async function rasterizeSvgToPngBlob(
       throw new Error("Could not create a canvas for the screenshot.");
     }
 
-    context.setTransform(scale, 0, 0, scale, 0, 0);
-    context.drawImage(image, 0, 0, width, height);
+    drawScreenshotLayers(context, image, width, height, scale, overlays);
     return await canvasToPngBlob(canvas);
   } finally {
     URL.revokeObjectURL(url);
@@ -259,15 +272,15 @@ async function renderDocumentAreaToDataUrl(
   x: number,
   y: number,
   width: number,
-  height: number
+  height: number,
+  inlineResources = false
 ): Promise<string> {
-  const svg = renderDocumentAreaToForeignObjectSvg(
-    document,
-    x,
-    y,
-    width,
-    height
-  );
+  const svg = inlineResources
+    ? await renderElementToSvgString(
+        document.documentElement,
+        createCaptureArea(document, x, y, width, height)
+      )
+    : renderDocumentAreaToForeignObjectSvg(document, x, y, width, height);
   const scale = getScreenshotScale(width, height);
   const blob = await rasterizeSvgToPngBlob(svg, width, height, scale);
 
@@ -299,65 +312,155 @@ function rectIntersectsViewport(rect: DOMRect): boolean {
   );
 }
 
-async function createIframeOverlay(iframe: HTMLIFrameElement): Promise<IframeOverlay | null> {
-  const frameDocument = iframe.contentDocument;
-  const frameWindow = iframe.contentWindow;
-  if (!frameDocument || !frameWindow) {
+function getDirectIframeCaptureContext(
+  iframe: HTMLIFrameElement
+): IframeCaptureContext | null {
+  try {
+    const frameDocument = iframe.contentDocument;
+    const frameWindow = iframe.contentWindow;
+    if (!frameDocument?.documentElement || !frameWindow) {
+      return null;
+    }
+    void frameWindow.scrollX;
+    return {
+      document: frameDocument,
+      window: frameWindow,
+      staticSource: false,
+      cleanup() {}
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function createStaticIframeCaptureContext(
+  iframe: HTMLIFrameElement,
+  rect: DOMRect
+): Promise<IframeCaptureContext | null> {
+  const source = getIframeCaptureSource(iframe) ?? iframe.srcdoc;
+  if (!source) {
     return null;
   }
 
+  const proxy = document.createElement("iframe");
+  proxy.setAttribute("aria-hidden", "true");
+  proxy.setAttribute("sandbox", "allow-same-origin");
+  proxy.style.position = "fixed";
+  proxy.style.left = "-100000px";
+  proxy.style.top = "0";
+  proxy.style.width = `${Math.max(1, rect.width)}px`;
+  proxy.style.height = `${Math.max(1, rect.height)}px`;
+  proxy.style.border = "0";
+  proxy.style.pointerEvents = "none";
+  proxy.srcdoc = source;
+
+  const loaded = new Promise<void>((resolve, reject) => {
+    proxy.addEventListener("load", () => resolve(), { once: true });
+    proxy.addEventListener(
+      "error",
+      () => reject(new Error("Could not load the static iframe capture.")),
+      { once: true }
+    );
+  });
+  document.body.appendChild(proxy);
+  try {
+    await withTimeout(
+      loaded,
+      SCREENSHOT_TIMEOUT_MS,
+      "Timed out while loading the static iframe capture."
+    );
+    const frameDocument = proxy.contentDocument;
+    const frameWindow = proxy.contentWindow;
+    if (!frameDocument?.documentElement || !frameWindow) {
+      proxy.remove();
+      return null;
+    }
+
+    return {
+      document: frameDocument,
+      window: frameWindow,
+      staticSource: true,
+      cleanup: () => proxy.remove()
+    };
+  } catch (error) {
+    proxy.remove();
+    throw error;
+  }
+}
+
+async function getIframeCaptureContext(
+  iframe: HTMLIFrameElement,
+  rect: DOMRect
+): Promise<IframeCaptureContext | null> {
+  return (
+    getDirectIframeCaptureContext(iframe) ??
+    (await createStaticIframeCaptureContext(iframe, rect))
+  );
+}
+
+async function createIframeOverlay(
+  iframe: HTMLIFrameElement
+): Promise<IframeOverlay | null> {
   const rect = iframe.getBoundingClientRect();
   if (!rectIntersectsViewport(rect)) {
     return null;
   }
 
-  const visibleLeft = Math.max(0, rect.left);
-  const visibleTop = Math.max(0, rect.top);
-  const visibleRight = Math.min(window.innerWidth, rect.right);
-  const visibleBottom = Math.min(window.innerHeight, rect.bottom);
-  const visibleWidth = Math.max(1, Math.round(visibleRight - visibleLeft));
-  const visibleHeight = Math.max(1, Math.round(visibleBottom - visibleTop));
-  const frameX = Math.max(0, visibleLeft - rect.left) + frameWindow.scrollX;
-  const frameY = Math.max(0, visibleTop - rect.top) + frameWindow.scrollY;
-  await settleWithin(frameDocument.fonts?.ready, 2_000);
-  await settleWithin(waitForDocumentImages(frameDocument), 2_000);
+  const capture = await getIframeCaptureContext(iframe, rect);
+  if (!capture) {
+    return null;
+  }
 
-  const dataUrl = await renderDocumentAreaToDataUrl(
-    frameDocument,
-    frameX,
-    frameY,
-    visibleWidth,
-    visibleHeight
-  );
-
-  const overlay = document.createElement("img");
-  overlay.alt = "";
-  overlay.setAttribute("aria-hidden", "true");
-  overlay.style.position = "fixed";
-  overlay.style.left = `${visibleLeft}px`;
-  overlay.style.top = `${visibleTop}px`;
-  overlay.style.width = `${visibleWidth}px`;
-  overlay.style.height = `${visibleHeight}px`;
-  overlay.style.objectFit = "fill";
-  overlay.style.pointerEvents = "none";
-  overlay.style.zIndex = "2147483000";
-  overlay.style.margin = "0";
-  overlay.style.border = "0";
-  overlay.style.maxWidth = "none";
-  overlay.style.maxHeight = "none";
-
+  let overlay: HTMLImageElement | null = null;
   const previousVisibility = iframe.style.visibility;
-  iframe.style.visibility = "hidden";
-  document.body.appendChild(overlay);
-  overlay.src = dataUrl;
-  await waitForImageElementReady(overlay);
+  let iframeHidden = false;
+  try {
+    const visibleLeft = Math.max(0, rect.left);
+    const visibleTop = Math.max(0, rect.top);
+    const visibleRight = Math.min(window.innerWidth, rect.right);
+    const visibleBottom = Math.min(window.innerHeight, rect.bottom);
+    const visibleWidth = Math.max(1, Math.round(visibleRight - visibleLeft));
+    const visibleHeight = Math.max(1, Math.round(visibleBottom - visibleTop));
+    const frameX =
+      Math.max(0, visibleLeft - rect.left) + capture.window.scrollX;
+    const frameY =
+      Math.max(0, visibleTop - rect.top) + capture.window.scrollY;
+    await settleWithin(capture.document.fonts?.ready, 2_000);
+    await settleWithin(waitForDocumentImages(capture.document), 2_000);
 
-  return {
-    cleanup() {
+    const dataUrl = await renderDocumentAreaToDataUrl(
+      capture.document,
+      frameX,
+      frameY,
+      visibleWidth,
+      visibleHeight,
+      capture.staticSource
+    );
+
+    overlay = document.createElement("img");
+    iframe.style.visibility = "hidden";
+    iframeHidden = true;
+    overlay.src = dataUrl;
+    await waitForImageElementReady(overlay);
+
+    return {
+      image: overlay,
+      left: visibleLeft,
+      top: visibleTop,
+      width: visibleWidth,
+      height: visibleHeight,
+      cleanup() {
+        iframe.style.visibility = previousVisibility;
+        capture.cleanup();
+      }
+    };
+  } catch (error) {
+    if (iframeHidden) {
       iframe.style.visibility = previousVisibility;
-      overlay.remove();
     }
-  };
+    capture.cleanup();
+    throw error;
+  }
 }
 
 async function createVisibleIframeOverlays(): Promise<IframeOverlay[]> {
@@ -389,7 +492,7 @@ export async function captureCurrentPageScreenshotBlob(): Promise<Blob> {
       captureArea
     );
     const scale = getScreenshotScale(width, height);
-    return await rasterizeSvgToPngBlob(svg, width, height, scale);
+    return await rasterizeSvgToPngBlob(svg, width, height, scale, overlays);
   } finally {
     overlays.forEach((overlay) => overlay.cleanup());
   }

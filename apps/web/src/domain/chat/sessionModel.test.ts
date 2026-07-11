@@ -144,6 +144,86 @@ describe("sessionModel", () => {
     assert.equal(message?.hasStreamUi, true);
   });
 
+  it("normalizes and serializes durable generation outcomes", () => {
+    const cancelled = normalizeStoredMessage({
+      id: "a1",
+      role: "assistant",
+      content: "Partial",
+      generationRunId: "run-1",
+      generationOutcome: "cancelled",
+      status: "complete"
+    });
+    const invalid = normalizeStoredMessage({
+      id: "a2",
+      role: "assistant",
+      content: "Done",
+      generationOutcome: "unknown",
+      status: "complete"
+    });
+    assert.equal(cancelled?.generationOutcome, "cancelled");
+    assert.equal(invalid?.generationOutcome, undefined);
+
+    const serialized = serializeSessions([
+      {
+        id: "s1",
+        title: "Saved",
+        createdAt: 1,
+        updatedAt: 1,
+        messages: [cancelled!],
+        files: []
+      }
+    ]);
+    assert.equal(
+      serialized[0].messages[0].generationOutcome,
+      "cancelled"
+    );
+  });
+
+  it("normalizes and serializes durable branch run rollback metadata", () => {
+    const message = normalizeStoredMessage({
+      id: "a1",
+      role: "assistant",
+      content: "",
+      branchRunRollback: {
+        runId: " run-1 ",
+        groupId: " group-1 ",
+        variantId: " variant-2 ",
+        fallbackVariantId: " variant-1 "
+      }
+    });
+    const invalid = normalizeStoredMessage({
+      id: "a2",
+      role: "assistant",
+      content: "",
+      branchRunRollback: {
+        runId: "run-2",
+        groupId: "",
+        variantId: "variant-2"
+      }
+    });
+
+    assert.deepEqual(message?.branchRunRollback, {
+      runId: "run-1",
+      groupId: "group-1",
+      variantId: "variant-2",
+      fallbackVariantId: "variant-1"
+    });
+    assert.equal(invalid?.branchRunRollback, undefined);
+    assert.deepEqual(
+      serializeSessions([
+        {
+          id: "s1",
+          title: "Saved",
+          createdAt: 1,
+          updatedAt: 1,
+          messages: [message!],
+          files: []
+        }
+      ])[0].messages[0].branchRunRollback,
+      message?.branchRunRollback
+    );
+  });
+
   it("lists streaming run ids for a single session", () => {
     const session: ChatSession = {
       id: "s1",
@@ -962,6 +1042,66 @@ describe("sessionModel", () => {
     assert.equal(message?.artifactEdits?.[0]?.status, "pending");
     assert.equal(message?.artifactEdits?.[0]?.error, undefined);
     assert.equal(message?.artifactEdits?.[0]?.variants[0]?.status, "pending");
+  });
+
+  it("round-trips pending artifact operation ids through persistence", () => {
+    const timestamp = Date.now();
+    const serialized = serializeSessions([
+      {
+        id: "s1",
+        title: "Pending edit",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        files: [],
+        messages: [
+          {
+            id: "a1",
+            role: "assistant",
+            content: "Artifact",
+            rawStream: "<chat></chat><streamui><p>Original</p></streamui>",
+            artifactEdits: [
+              {
+                id: "edit-1",
+                createdAt: timestamp,
+                prompt: "Still pending",
+                references: [],
+                activeVariantId: "variant-1",
+                variants: [
+                  {
+                    id: "variant-1",
+                    operationId: "artifact-edit-operation-1",
+                    createdAt: timestamp,
+                    status: "pending"
+                  }
+                ],
+                status: "pending"
+              }
+            ],
+            activeArtifactEditId: "edit-1"
+          }
+        ]
+      }
+    ]);
+    const reloaded = normalizeStoredSessionState(
+      JSON.parse(
+        JSON.stringify({
+          activeSessionId: "s1",
+          sessions: serialized
+        })
+      ),
+      timestamp,
+      { rebuildSnapshots: false }
+    );
+
+    assert.equal(
+      reloaded.sessions[0].messages[0].artifactEdits?.[0].variants[0]
+        .operationId,
+      "artifact-edit-operation-1"
+    );
+    assert.equal(
+      reloaded.sessions[0].messages[0].artifactEdits?.[0].variants[0].status,
+      "pending"
+    );
   });
 
   it("does not interrupt recently restored pending artifact edits", () => {

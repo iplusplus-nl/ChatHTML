@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  ARTIFACT_EXPORT_FRAME_SANDBOX,
   createArtifactFilename,
   getSnapshotDiagnostics,
   getSnapshotHtmlDocument,
@@ -23,6 +24,15 @@ function makeSnapshot(patch: Partial<RenderSnapshot>): RenderSnapshot {
 }
 
 describe("artifactExport", () => {
+  it("prepares exports without executing model-authored scripts", () => {
+    const sandboxTokens = new Set(
+      ARTIFACT_EXPORT_FRAME_SANDBOX.split(/\s+/).filter(Boolean)
+    );
+
+    assert.equal(sandboxTokens.has("allow-same-origin"), true);
+    assert.equal(sandboxTokens.has("allow-scripts"), false);
+  });
+
   it("uses the raw artifact as copied source code when available", () => {
     const snapshot = makeSnapshot({
       raw: "<section><p>Raw source</p></section>",

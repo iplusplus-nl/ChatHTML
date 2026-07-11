@@ -76,13 +76,6 @@ export const REQUIRED_MODEL_OPTIONS = [
   "z-ai/glm-5.2"
 ] as const;
 
-const DEFAULT_LEGACY_USER_PREFERENCES: LegacyUserPreferences = {
-  responseTone: "",
-  interfaceStyle: "",
-  defaultTechnicalPreferences: "",
-  longTermMemory: ""
-};
-
 export const API_PROVIDER_PRESETS: ApiProviderPreset[] = [
   {
     id: "openrouter",
