@@ -18,6 +18,16 @@ import {
   type RuntimeSearchProviderStatus,
   type RuntimeSettingsSummary
 } from "../../core/runtimeSettings";
+import { SettingsSelect } from "./SettingsSelect";
+
+const SEARCH_PROVIDER_DESCRIPTIONS: Record<SearchProvider, string> = {
+  auto: "Choose the best configured search provider",
+  brave: "Fast general web search with a Brave API key",
+  tavily: "Search results optimized for AI retrieval",
+  serper: "Google-style results through Serper",
+  duckduckgo: "Keyless fallback with limited reliability",
+  none: "Disable external web search"
+};
 
 function getSearchEnvironmentKeyNames(provider: SearchProvider): string[] {
   if (provider === "auto") {
@@ -170,13 +180,18 @@ export function SearchSettingsSection({
         </div>
       </div>
 
-      <label className="settings-row">
+      <div className="settings-row">
         <span>Provider</span>
         <div className="settings-control-stack">
-          <select
+          <SettingsSelect
+            ariaLabel="Search Provider"
             value={settings.provider}
-            onChange={(event) => {
-              const provider = event.target.value as SearchProvider;
+            options={SEARCH_PROVIDER_OPTIONS.map((option) => ({
+              ...option,
+              description: SEARCH_PROVIDER_DESCRIPTIONS[option.value]
+            }))}
+            onChange={(value) => {
+              const provider = value as SearchProvider;
               onSettingsChange({
                 provider,
                 apiKeySource: searchProviderNeedsApiKey(provider)
@@ -184,13 +199,7 @@ export function SearchSettingsSection({
                   : "environment"
               });
             }}
-          >
-            {SEARCH_PROVIDER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
           {selectedProviderCapability &&
           settings.apiKeySource === "environment" ? (
             <span
@@ -202,24 +211,26 @@ export function SearchSettingsSection({
             </span>
           ) : null}
         </div>
-      </label>
+      </div>
 
-      <label className="settings-row">
+      <div className="settings-row">
         <span>API Key Source</span>
-        <select
+        <SettingsSelect
+          ariaLabel="Search API Key Source"
           value={settings.apiKeySource}
           disabled={!allowsManualKey}
-          onChange={(event) =>
-            onSettingsChange({ apiKeySource: event.target.value as ApiKeySource })
+          options={API_KEY_SOURCE_OPTIONS.map((option) => ({
+            ...option,
+            description:
+              option.value === "manual"
+                ? "Store a search key in this browser"
+                : "Read search keys from the ChatHTML server"
+          }))}
+          onChange={(value) =>
+            onSettingsChange({ apiKeySource: value as ApiKeySource })
           }
-        >
-          {API_KEY_SOURCE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+        />
+      </div>
 
       <label className="settings-row">
         <span>API Key</span>
@@ -283,23 +294,25 @@ export function SearchSettingsSection({
         />
       </label>
 
-      <label className="settings-row">
+      <div className="settings-row">
         <span>Fetch Engine</span>
         <div className="settings-control-stack">
-          <select
+          <SettingsSelect
+            ariaLabel="Fetch Engine"
             value={settings.browserEngine}
-            onChange={(event) =>
+            options={SEARCH_BROWSER_ENGINE_OPTIONS.map((option) => ({
+              ...option,
+              description:
+                option.value === "fetch"
+                  ? "Fast HTTP retrieval for ordinary pages"
+                  : "Browser rendering for JavaScript-heavy pages"
+            }))}
+            onChange={(value) =>
               onSettingsChange({
-                browserEngine: event.target.value as SearchBrowserEngine
+                browserEngine: value as SearchBrowserEngine
               })
             }
-          >
-            {SEARCH_BROWSER_ENGINE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          />
           {selectedBrowserCapability ? (
             <span
               className={`settings-hint settings-env-status ${
@@ -312,7 +325,7 @@ export function SearchSettingsSection({
             </span>
           ) : null}
         </div>
-      </label>
+      </div>
 
       <label className="settings-row">
         <span>Results</span>

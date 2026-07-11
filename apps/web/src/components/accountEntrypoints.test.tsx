@@ -61,12 +61,15 @@ function renderNavigation(authenticated: boolean): string {
 }
 
 describe("account entry points", () => {
-  it("shows sign-in actions beside the sidebar avatar and at settings bottom", () => {
+  it("shows a single sidebar sign-in button without a signed-out avatar", () => {
     const sidebar = renderSidebar(false);
     const settings = renderNavigation(false);
 
     assert.match(sidebar, /aria-label="Sign in to ChatHTML"/);
+    assert.match(sidebar, /class="sidebar-sign-in-button"/);
     assert.match(sidebar, />Sign in</);
+    assert.doesNotMatch(sidebar, /aria-label="Open personal settings"/);
+    assert.doesNotMatch(sidebar, /profile-avatar/);
     assert.match(settings, /class="settings-auth-entry"/);
     assert.match(settings, />Sign in</);
     assert.equal(settings.match(/>Sign in</g)?.length, 1);
@@ -79,6 +82,7 @@ describe("account entry points", () => {
     assert.doesNotMatch(sidebar, /aria-label="Sign in to ChatHTML"/);
     assert.doesNotMatch(settings, /class="settings-auth-entry"/);
     assert.match(sidebar, /user@example\.com/);
+    assert.match(sidebar, /profile-avatar/);
     assert.match(settings, /settings-auth-entry is-authenticated/);
     assert.match(settings, /user@example\.com/);
   });

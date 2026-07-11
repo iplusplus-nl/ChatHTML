@@ -20,6 +20,23 @@ import {
   type EnvironmentKeyStatus,
   type RuntimeSettingsSummary
 } from "../../core/runtimeSettings";
+import { SettingsSelect } from "./SettingsSelect";
+
+const PROVIDER_DESCRIPTIONS: Record<ApiProviderId, string> = {
+  openrouter: "Use your own OpenRouter API key",
+  "chathtml-cloud": "Managed by ChatHTML · sign-in required",
+  openai: "Connect directly with an OpenAI API key",
+  local: "Use an OpenAI-compatible service on this device",
+  custom: "Connect any OpenAI-compatible endpoint"
+};
+
+const REASONING_DESCRIPTIONS: Partial<Record<ReasoningEffort, string>> = {
+  none: "Fastest, without a reasoning budget",
+  low: "A short reasoning pass",
+  medium: "Balanced depth and response time",
+  high: "More time for difficult tasks",
+  xhigh: "Maximum available reasoning effort"
+};
 
 function formatEnvironmentStatus(
   name: string,
@@ -84,21 +101,19 @@ export function ApiSettingsSection({
 
   return (
     <>
-      <label className="settings-row">
+      <div className="settings-row">
         <span>Provider</span>
-        <select
+        <SettingsSelect
+          ariaLabel="Provider"
           value={settings.providerId}
-          onChange={(event) =>
-            onProviderChange(event.target.value as ApiProviderId)
-          }
-        >
-          {providerPresets.map((preset) => (
-            <option key={preset.id} value={preset.id}>
-              {preset.label}
-            </option>
-          ))}
-        </select>
-      </label>
+          options={providerPresets.map((preset) => ({
+            value: preset.id,
+            label: preset.label,
+            description: PROVIDER_DESCRIPTIONS[preset.id]
+          }))}
+          onChange={(value) => onProviderChange(value as ApiProviderId)}
+        />
+      </div>
 
       {isManagedProvider ? (
         <div className="settings-row">
@@ -120,23 +135,25 @@ export function ApiSettingsSection({
             />
           </label>
 
-          <label className="settings-row">
+          <div className="settings-row">
             <span>API Key Source</span>
-            <select
+            <SettingsSelect
+              ariaLabel="API Key Source"
               value={settings.apiKeySource}
-              onChange={(event) =>
-                onSettingsChange({
-                  apiKeySource: event.target.value as ApiKeySource
-                })
+              options={apiKeySourceOptions.map((option) => ({
+                ...option,
+                description:
+                  option.value === "manual"
+                    ? "Store a provider key in this browser"
+                    : option.value === "environment"
+                      ? "Read the key from the ChatHTML server"
+                      : "Use the authenticated managed service"
+              }))}
+              onChange={(value) =>
+                onSettingsChange({ apiKeySource: value as ApiKeySource })
               }
-            >
-              {apiKeySourceOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            />
+          </div>
 
           <label className="settings-row">
             <span>API Key</span>
@@ -173,25 +190,24 @@ export function ApiSettingsSection({
         </>
       )}
 
-      <label className="settings-row">
+      <div className="settings-row">
         <span>Default Model</span>
         <div className="settings-control-stack">
-          <select
+          <SettingsSelect
+            ariaLabel="Default Model"
             value={settings.model}
-            onChange={(event) => onSettingsChange({ model: event.target.value })}
-          >
-            {selectableModels.length ? (
-              selectableModels.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))
-            ) : (
-              <option value="">No saved models</option>
-            )}
-          </select>
+            options={
+              selectableModels.length
+                ? selectableModels.map((model) => ({
+                    value: model,
+                    label: model
+                  }))
+                : [{ value: "", label: "No saved models", disabled: true }]
+            }
+            onChange={(model) => onSettingsChange({ model })}
+          />
         </div>
-      </label>
+      </div>
 
       {!isManagedProvider ? (
         <label className="settings-row">
@@ -263,41 +279,41 @@ export function ApiSettingsSection({
         </div>
       </div>
 
-      <label className="settings-row">
+      <div className="settings-row">
         <span>Reasoning</span>
-        <select
+        <SettingsSelect
+          ariaLabel="Reasoning"
           value={settings.reasoningEffort}
-          onChange={(event) =>
-            onSettingsChange({
-              reasoningEffort: event.target.value as ReasoningEffort
-            })
+          options={REASONING_EFFORT_OPTIONS.map((option) => ({
+            ...option,
+            description: REASONING_DESCRIPTIONS[option.value]
+          }))}
+          onChange={(value) =>
+            onSettingsChange({ reasoningEffort: value as ReasoningEffort })
           }
-        >
-          {REASONING_EFFORT_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+        />
+      </div>
 
-      <label className="settings-row">
+      <div className="settings-row">
         <span>UI complexity</span>
-        <select
-          value={getUiComplexityLevel(settings.uiComplexity).value}
-          onChange={(event) =>
-            onSettingsChange({
-              uiComplexity: normalizeUiComplexity(event.target.value)
-            })
+        <SettingsSelect
+          ariaLabel="UI complexity"
+          value={String(getUiComplexityLevel(settings.uiComplexity).value)}
+          options={UI_COMPLEXITY_LEVEL_OPTIONS.map((option) => ({
+            value: String(option.value),
+            label: option.label,
+            description:
+              option.value < 50
+                ? "Cleaner, simpler generated interfaces"
+                : option.value > 50
+                  ? "Richer layouts and visual detail"
+                  : "Balanced structure and visual detail"
+          }))}
+          onChange={(value) =>
+            onSettingsChange({ uiComplexity: normalizeUiComplexity(value) })
           }
-        >
-          {UI_COMPLEXITY_LEVEL_OPTIONS.map((option) => (
-            <option key={option.label} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+        />
+      </div>
     </>
   );
 }

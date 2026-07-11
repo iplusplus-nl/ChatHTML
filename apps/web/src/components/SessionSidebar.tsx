@@ -60,6 +60,7 @@ type SessionSidebarProps = {
   onLoginRequest?(): void;
   onLogout?(): void;
   onBugReportOpen(): void;
+  providerSettingsRequestVersion?: number;
 };
 
 export function SessionSidebar({
@@ -85,7 +86,8 @@ export function SessionSidebar({
   onAuthUserChange,
   onLoginRequest,
   onLogout,
-  onBugReportOpen
+  onBugReportOpen,
+  providerSettingsRequestVersion = 0
 }: SessionSidebarProps) {
   const [isCompactSidebar, setIsCompactSidebar] = useState(
     getInitialSidebarCollapsed
@@ -118,6 +120,14 @@ export function SessionSidebar({
       setOpenSessionMenuId(null);
     }
   }, [isSending]);
+
+  useEffect(() => {
+    if (providerSettingsRequestVersion <= 0) {
+      return;
+    }
+    setSettingsSection("api");
+    setIsSettingsOpen(true);
+  }, [providerSettingsRequestVersion]);
 
   return (
     <aside
@@ -156,15 +166,27 @@ export function SessionSidebar({
           </div>
           <div className="collapsed-sidebar-spacer" />
           <div className="collapsed-sidebar-bottom">
-            <button
-              className="sidebar-profile-button is-collapsed"
-              type="button"
-              aria-label="Open personal settings"
-              title="Personal settings"
-              onClick={() => setIsSettingsOpen(true)}
-            >
-              <ProfileAvatar avatarDataUrl={profileSettings.avatarDataUrl} />
-            </button>
+            {cloudEnabled && !authUser && onLoginRequest ? (
+              <button
+                className="sidebar-sign-in-button is-collapsed"
+                type="button"
+                aria-label="Sign in to ChatHTML"
+                title="Sign in"
+                onClick={onLoginRequest}
+              >
+                <LogIn size={18} strokeWidth={2.1} aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                className="sidebar-profile-button is-collapsed"
+                type="button"
+                aria-label="Open personal settings"
+                title="Personal settings"
+                onClick={() => setIsSettingsOpen(true)}
+              >
+                <ProfileAvatar avatarDataUrl={profileSettings.avatarDataUrl} />
+              </button>
+            )}
             <button
               className="collapsed-sidebar-button"
               type="button"
@@ -270,18 +292,28 @@ export function SessionSidebar({
           </nav>
 
           <div className="sidebar-footer">
-            <div className="sidebar-account-entry">
+            {cloudEnabled && !authUser && onLoginRequest ? (
               <button
-                className="sidebar-profile-button"
+                className="sidebar-sign-in-button"
                 type="button"
-                aria-label="Open personal settings"
-                title={authUser?.email || "Personal settings"}
-                onClick={() => setIsSettingsOpen(true)}
+                aria-label="Sign in to ChatHTML"
+                onClick={onLoginRequest}
               >
-                <ProfileAvatar avatarDataUrl={profileSettings.avatarDataUrl} />
+                <LogIn size={16} strokeWidth={2.1} aria-hidden="true" />
+                <span>Sign in</span>
               </button>
-              {cloudEnabled ? (
-                authUser ? (
+            ) : (
+              <div className="sidebar-account-entry">
+                <button
+                  className="sidebar-profile-button"
+                  type="button"
+                  aria-label="Open personal settings"
+                  title={authUser?.email || "Personal settings"}
+                  onClick={() => setIsSettingsOpen(true)}
+                >
+                  <ProfileAvatar avatarDataUrl={profileSettings.avatarDataUrl} />
+                </button>
+                {cloudEnabled && authUser ? (
                   <button
                     className="sidebar-account-label"
                     type="button"
@@ -294,19 +326,9 @@ export function SessionSidebar({
                   >
                     {authUser.email}
                   </button>
-                ) : onLoginRequest ? (
-                  <button
-                    className="sidebar-account-label is-sign-in"
-                    type="button"
-                    aria-label="Sign in to ChatHTML"
-                    onClick={onLoginRequest}
-                  >
-                    <LogIn size={15} strokeWidth={2.1} aria-hidden="true" />
-                    <span>Sign in</span>
-                  </button>
-                ) : null
-              ) : null}
-            </div>
+                ) : null}
+              </div>
+            )}
             <button
               className="sidebar-icon-button"
               type="button"

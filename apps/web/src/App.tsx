@@ -11,6 +11,7 @@ import {
   type AppendMessage
 } from "@assistant-ui/react";
 import { ChatShell } from "./components/ChatShell";
+import { AuthChoiceDialog } from "./components/AuthChoiceDialog";
 import { BugReportDialog } from "./components/BugReportDialog";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { createId } from "./domain/chat/sessionModel";
@@ -114,12 +115,18 @@ export default function App() {
   } = useAppSettings();
   const {
     user: authenticatedUser,
-    open: openAuthOverlay,
+    open: startOAuthAuthentication,
     close: closeAuthOverlay,
     updateUser: handleAuthUserChange,
     refresh: refreshAuthSummary,
     logout: logoutCloudAccount
   } = useCloudAuthController({ cloudEnabled });
+  const [isAuthChoiceOpen, setIsAuthChoiceOpen] = useState(false);
+  const [providerSettingsRequestVersion, setProviderSettingsRequestVersion] =
+    useState(0);
+  const openAuthChoice = useCallback(() => {
+    setIsAuthChoiceOpen(true);
+  }, []);
   const [isSending, setIsSending] = useState(false);
   const {
     activeSession,
@@ -180,8 +187,23 @@ export default function App() {
   sessionSelectionBlockedRef.current = hasComposerAttachmentDrafts;
   const handleAuthOverlayRequest = useCallback(() => {
     pendingVisualRepairSlot.clear();
-    openManualAuth(pendingManagedRequestSlot, openAuthOverlay);
-  }, [openAuthOverlay, pendingManagedRequestSlot, pendingVisualRepairSlot]);
+    openManualAuth(pendingManagedRequestSlot, openAuthChoice);
+  }, [openAuthChoice, pendingManagedRequestSlot, pendingVisualRepairSlot]);
+  const handleAuthChoiceClose = useCallback(() => {
+    setIsAuthChoiceOpen(false);
+    pendingManagedRequestSlot.clear();
+    pendingVisualRepairSlot.clear();
+  }, [pendingManagedRequestSlot, pendingVisualRepairSlot]);
+  const handleAuthChoiceSignIn = useCallback(() => {
+    setIsAuthChoiceOpen(false);
+    startOAuthAuthentication();
+  }, [startOAuthAuthentication]);
+  const handleContinueLocal = useCallback(() => {
+    setIsAuthChoiceOpen(false);
+    pendingManagedRequestSlot.clear();
+    pendingVisualRepairSlot.clear();
+    setProviderSettingsRequestVersion((current) => current + 1);
+  }, [pendingManagedRequestSlot, pendingVisualRepairSlot]);
   const handleLogout = useCallback(async () => {
     try {
       await logoutCloudAccount();
@@ -356,7 +378,7 @@ export default function App() {
     mutateMessage: mutateArtifactEditMessage,
     tryAcquireBusy: generationActivity.tryAcquireLocal,
     clearSelections: clearArtifactSelectionsForTarget,
-    openAuthentication: openAuthOverlay,
+    openAuthentication: openAuthChoice,
     saveNow: saveCurrentSessionStateNow,
     refreshAuthentication: refreshAuthSummary
   });
@@ -392,7 +414,7 @@ export default function App() {
     generationActivity,
     chatRunRuntimeRegistry,
     pendingManagedRequestSlot,
-    openAuthOverlay,
+    openAuthOverlay: openAuthChoice,
     refreshAuthSummary,
     handleMemoryStreamEvent,
     updateAssistantMessageInSession,
@@ -487,7 +509,7 @@ export default function App() {
     tryAcquireLocal: generationActivity.tryAcquireLocal,
     promoteLocalToChat: generationActivity.promoteLocalToChat,
     startGeneratedBatch: startGeneratedArtifactBatch,
-    openAuthentication: openAuthOverlay
+    openAuthentication: openAuthChoice
   });
 
   const handleVisualRepairAssistant = useCallback(
@@ -707,6 +729,7 @@ export default function App() {
               onLoginRequest={handleAuthOverlayRequest}
               onLogout={handleLogout}
               onBugReportOpen={() => void handleBugReportOpen()}
+              providerSettingsRequestVersion={providerSettingsRequestVersion}
             />
           }
         >
@@ -741,6 +764,14 @@ export default function App() {
           />
         </ChatShell>
       </AssistantRuntimeProvider>
+      {isAuthChoiceOpen ? (
+        <AuthChoiceDialog
+          themeMode={themeMode}
+          onClose={handleAuthChoiceClose}
+          onSignIn={handleAuthChoiceSignIn}
+          onContinueLocal={handleContinueLocal}
+        />
+      ) : null}
       {isBugReportOpen && bugReportSession ? (
         <BugReportDialog
           draft={bugReportDraft}
