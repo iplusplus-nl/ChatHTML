@@ -63,9 +63,10 @@ never placed in browser URLs or exposed to frontend JavaScript.
 }
 ```
 
-When no valid session exists, `GET /api/auth/me` responds with `401` and the
-frontend shows sign-in entry points. `POST /api/auth/logout` revokes the Service
-session and clears the local HttpOnly cookie.
+When no valid session exists, `GET /api/auth/me` keeps the same response shape
+with `"user": null`, and the frontend shows sign-in entry points.
+`POST /api/auth/logout` revokes the Service session and clears the local
+HttpOnly cookie.
 
 ## Billing
 
