@@ -6,7 +6,6 @@ import type { SearchSettings } from "../../core/searchSettings";
 export type SettingsSection =
   | "profile"
   | "api"
-  | "billing"
   | "display"
   | "search";
 
@@ -27,20 +26,12 @@ export type SettingsCommitters = {
 const SETTINGS_SECTION_TITLES: Record<SettingsSection, string> = {
   profile: "Personal",
   api: "Providers",
-  billing: "Billing",
   display: "Display",
   search: "Web Search"
 };
 
 export function getSettingsSectionTitle(section: SettingsSection): string {
   return SETTINGS_SECTION_TITLES[section];
-}
-
-export function coerceSettingsSection(
-  section: SettingsSection,
-  cloudEnabled: boolean
-): SettingsSection {
-  return section === "billing" && !cloudEnabled ? "profile" : section;
 }
 
 export function commitSettingsDrafts(

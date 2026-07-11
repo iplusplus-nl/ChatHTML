@@ -58,7 +58,6 @@ type SessionSidebarProps = {
   onSearchSettingsChange(settings: SearchSettings): void;
   onDisplaySettingsChange(settings: DisplaySettings): void;
   onProfileSettingsChange(settings: ProfileSettings): void;
-  onAuthUserChange?(user: AuthUser): void;
   onLoginRequest?(): void;
   onLogout?(): void;
   onBugReportOpen(): void;
@@ -86,7 +85,6 @@ export function SessionSidebar({
   onSearchSettingsChange,
   onDisplaySettingsChange,
   onProfileSettingsChange,
-  onAuthUserChange,
   onLoginRequest,
   onLogout,
   onBugReportOpen,
@@ -331,19 +329,6 @@ export function SessionSidebar({
                   >
                     {authUser.email}
                   </button>
-                ) : accountMode === "local" ? (
-                  <button
-                    className="sidebar-account-label"
-                    type="button"
-                    title="Local profile"
-                    aria-label="Open local profile settings"
-                    onClick={() => {
-                      setSettingsSection("profile");
-                      setIsSettingsOpen(true);
-                    }}
-                  >
-                    Local profile
-                  </button>
                 ) : null}
               </div>
             )}
@@ -378,8 +363,6 @@ export function SessionSidebar({
           onSearchSettingsChange={onSearchSettingsChange}
           onDisplaySettingsChange={onDisplaySettingsChange}
           onProfileSettingsChange={onProfileSettingsChange}
-          onAuthUserChange={onAuthUserChange}
-          onLoginRequest={onLoginRequest}
           onLogout={onLogout}
         />
       ) : null}

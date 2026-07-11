@@ -11,10 +11,9 @@ import {
 } from "../core/apiSettings";
 import type { AccountMode } from "../core/accountMode";
 import type { AuthUser } from "../core/cloudAuth";
-import { topUpBalance } from "../core/cloudBilling";
 import type { DisplaySettings } from "../core/displaySettings";
+import { compressProfileAvatar } from "../core/profileAvatarImage";
 import {
-  MAX_PROFILE_AVATAR_BYTES,
   normalizeProfileSettings,
   type ProfileSettings
 } from "../core/profileSettings";
@@ -34,17 +33,12 @@ import {
   toggleSettingsModelSelection
 } from "../features/settings/settingsDraftModel";
 import {
-  coerceSettingsSection,
   commitSettingsDrafts,
   getSettingsSectionTitle,
   type SettingsSection
 } from "../features/settings/settingsDialogModel";
 import { ModelImportDialog } from "./ModelImportDialog";
 import { ApiSettingsSection } from "./settings/ApiSettingsSection";
-import {
-  BillingSettingsSection,
-  type TopUpFeedback
-} from "./settings/BillingSettingsSection";
 import { DisplaySettingsSection } from "./settings/DisplaySettingsSection";
 import { ProfileSettingsSection } from "./settings/ProfileSettingsSection";
 import { SearchSettingsSection } from "./settings/SearchSettingsSection";
@@ -67,8 +61,6 @@ export type SettingsDialogProps = {
   onSearchSettingsChange(settings: SearchSettings): void;
   onDisplaySettingsChange(settings: DisplaySettings): void;
   onProfileSettingsChange(settings: ProfileSettings): void;
-  onAuthUserChange?(user: AuthUser): void;
-  onLoginRequest?(): void;
   onLogout?(): void;
 };
 
@@ -89,8 +81,6 @@ export function SettingsDialog({
   onSearchSettingsChange,
   onDisplaySettingsChange,
   onProfileSettingsChange,
-  onAuthUserChange,
-  onLoginRequest,
   onLogout
 }: SettingsDialogProps) {
   const [draftApiSettings, setDraftApiSettings] = useState(apiSettings);
@@ -109,9 +99,6 @@ export function SettingsDialog({
     null
   );
   const [avatarError, setAvatarError] = useState<string | null>(null);
-  const [topUpAmount, setTopUpAmount] = useState("10");
-  const [isTopUpLoading, setIsTopUpLoading] = useState(false);
-  const [topUpFeedback, setTopUpFeedback] = useState<TopUpFeedback | null>(null);
   const preferenceFileInputRef = useRef<HTMLInputElement>(null);
   const avatarFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -122,15 +109,7 @@ export function SettingsDialog({
     setDraftProfileSettings(profileSettings);
     setPreferenceImportError(null);
     setAvatarError(null);
-    setTopUpFeedback(null);
   }, [apiSettings, displaySettings, profileSettings, searchSettings]);
-
-  useEffect(() => {
-    const availableSection = coerceSettingsSection(section, cloudEnabled);
-    if (availableSection !== section) {
-      onSectionChange(availableSection);
-    }
-  }, [cloudEnabled, onSectionChange, section]);
 
   const updateApiDraft = (patch: Partial<ApiSettings>) => {
     setDraftApiSettings((current) =>
@@ -144,34 +123,25 @@ export function SettingsDialog({
     );
   };
 
-  const handleAvatarChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) {
       return;
     }
-    if (!/image\/(?:png|jpeg|webp|gif)/i.test(file.type)) {
-      setAvatarError("Choose a PNG, JPEG, WebP, or GIF image.");
-      return;
-    }
-    if (file.size > MAX_PROFILE_AVATAR_BYTES) {
-      setAvatarError("Choose an image smaller than 1 MB.");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const avatarDataUrl = typeof reader.result === "string" ? reader.result : "";
+    setAvatarError(null);
+    try {
+      const avatarDataUrl = await compressProfileAvatar(file);
       const normalized = normalizeProfileSettings({ avatarDataUrl });
       if (!normalized.avatarDataUrl) {
-        setAvatarError("This image could not be used.");
-        return;
+        throw new Error("This image could not be used.");
       }
       setDraftProfileSettings(normalized);
-      setAvatarError(null);
-    };
-    reader.onerror = () => setAvatarError("This image could not be read.");
-    reader.readAsDataURL(file);
+    } catch (error) {
+      setAvatarError(
+        error instanceof Error ? error.message : "This image could not be used."
+      );
+    }
   };
 
   const handleAddMemoryItem = () => {
@@ -240,35 +210,6 @@ export function SettingsDialog({
     }
   };
 
-  const handleTopUp = async () => {
-    if (!authUser || isTopUpLoading) {
-      return;
-    }
-
-    setIsTopUpLoading(true);
-    setTopUpFeedback(null);
-    try {
-      const result = await topUpBalance(topUpAmount.trim());
-      onAuthUserChange?.({
-        ...authUser,
-        balanceMicros: result.balanceMicros,
-        balanceUsd: result.balanceUsd
-      });
-      setTopUpAmount(result.amountUsd);
-      setTopUpFeedback({
-        type: "success",
-        message: `Added $${result.amountUsd}. Balance is $${result.balanceUsd}.`
-      });
-    } catch (error) {
-      setTopUpFeedback({
-        type: "error",
-        message: error instanceof Error ? error.message : "Could not add credit."
-      });
-    } finally {
-      setIsTopUpLoading(false);
-    }
-  };
-
   const handleSave = () => {
     commitSettingsDrafts(
       {
@@ -310,12 +251,7 @@ export function SettingsDialog({
       >
         <SettingsNavigation
           section={section}
-          cloudEnabled={cloudEnabled}
-          accountMode={accountMode}
-          profileSettings={profileSettings}
-          authUser={authUser}
           onSectionChange={onSectionChange}
-          onLoginRequest={onLoginRequest}
           onClose={onClose}
         />
 
@@ -354,19 +290,6 @@ export function SettingsDialog({
                     removeSettingsModelOption(current, modelId)
                   )
                 }
-              />
-            ) : section === "billing" ? (
-              <BillingSettingsSection
-                authUser={authUser}
-                topUpAmount={topUpAmount}
-                isTopUpLoading={isTopUpLoading}
-                topUpFeedback={topUpFeedback}
-                onTopUpAmountChange={(value) => {
-                  setTopUpAmount(value);
-                  setTopUpFeedback(null);
-                }}
-                onTopUp={() => void handleTopUp()}
-                onLoginRequest={onLoginRequest}
               />
             ) : section === "profile" ? (
               <ProfileSettingsSection

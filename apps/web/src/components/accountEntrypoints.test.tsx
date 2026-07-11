@@ -49,24 +49,11 @@ function renderSidebar(
   );
 }
 
-function renderNavigation(
-  authenticated: boolean,
-  accountMode: AccountMode = "unselected",
-  cloudEnabled = true
-): string {
+function renderNavigation(): string {
   return renderToStaticMarkup(
     <SettingsNavigation
       section="profile"
-      cloudEnabled={cloudEnabled}
-      accountMode={accountMode}
-      profileSettings={DEFAULT_PROFILE_SETTINGS}
-      authUser={
-        authenticated
-          ? { id: "user-1", email: "user@example.com", role: "user" }
-          : null
-      }
       onSectionChange={() => undefined}
-      onLoginRequest={() => undefined}
       onClose={() => undefined}
     />
   );
@@ -75,51 +62,51 @@ function renderNavigation(
 describe("account entry points", () => {
   it("shows a single sidebar sign-in button without a signed-out avatar", () => {
     const sidebar = renderSidebar(false);
-    const settings = renderNavigation(false);
+    const settings = renderNavigation();
 
     assert.match(sidebar, /aria-label="Sign in to ChatHTML"/);
     assert.match(sidebar, /class="sidebar-sign-in-button"/);
     assert.match(sidebar, />Sign in</);
     assert.doesNotMatch(sidebar, /aria-label="Open personal settings"/);
     assert.doesNotMatch(sidebar, /profile-avatar/);
-    assert.match(settings, /class="settings-auth-entry"/);
-    assert.match(settings, />Sign in</);
-    assert.equal(settings.match(/>Sign in</g)?.length, 1);
+    assert.doesNotMatch(settings, /settings-auth-entry/);
+    assert.doesNotMatch(settings, />Sign in</);
+    assert.doesNotMatch(settings, />Billing</);
   });
 
   it("replaces sign-in actions with the account email after authentication", () => {
     const sidebar = renderSidebar(true);
-    const settings = renderNavigation(true);
+    const settings = renderNavigation();
 
     assert.doesNotMatch(sidebar, /aria-label="Sign in to ChatHTML"/);
     assert.doesNotMatch(settings, /class="settings-auth-entry"/);
     assert.match(sidebar, /user@example\.com/);
     assert.match(sidebar, /profile-avatar/);
-    assert.match(settings, /settings-auth-entry is-authenticated/);
-    assert.match(settings, /user@example\.com/);
+    assert.doesNotMatch(settings, /settings-auth-entry/);
+    assert.doesNotMatch(settings, /user@example\.com/);
   });
 
-  it("replaces sign-in actions with the local profile after choosing local mode", () => {
+  it("replaces sign-in actions with only the avatar after choosing local mode", () => {
     const sidebar = renderSidebar(false, "local");
-    const settings = renderNavigation(false, "local");
+    const settings = renderNavigation();
 
     assert.doesNotMatch(sidebar, /aria-label="Sign in to ChatHTML"/);
     assert.doesNotMatch(settings, />Sign in</);
     assert.match(sidebar, /profile-avatar/);
-    assert.match(sidebar, />Local profile</);
-    assert.match(settings, /settings-auth-entry is-authenticated is-local/);
-    assert.match(settings, /profile-avatar/);
-    assert.match(settings, />Local profile</);
+    assert.doesNotMatch(sidebar, />Local profile</);
+    assert.doesNotMatch(settings, /settings-auth-entry/);
+    assert.doesNotMatch(settings, /profile-avatar/);
+    assert.doesNotMatch(settings, />Local profile</);
   });
 
-  it("keeps the local profile visible when cloud features are disabled", () => {
+  it("keeps the local avatar visible when cloud features are disabled", () => {
     const sidebar = renderSidebar(false, "local", false);
-    const settings = renderNavigation(false, "local", false);
+    const settings = renderNavigation();
 
     assert.match(sidebar, /profile-avatar/);
-    assert.match(sidebar, />Local profile</);
-    assert.match(settings, /profile-avatar/);
-    assert.match(settings, />Local profile</);
+    assert.doesNotMatch(sidebar, />Local profile</);
+    assert.doesNotMatch(settings, /profile-avatar/);
+    assert.doesNotMatch(settings, />Local profile</);
     assert.doesNotMatch(settings, />Sign in</);
   });
 });

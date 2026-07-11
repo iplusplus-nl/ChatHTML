@@ -122,7 +122,6 @@ export default function App() {
     user: authenticatedUser,
     open: startOAuthAuthentication,
     close: closeAuthOverlay,
-    updateUser: handleAuthUserChange,
     refresh: refreshAuthSummary,
     logout: logoutCloudAccount
   } = useCloudAuthController({ cloudEnabled });
@@ -734,7 +733,6 @@ export default function App() {
               onSearchSettingsChange={handleSearchSettingsChange}
               onDisplaySettingsChange={handleDisplaySettingsChange}
               onProfileSettingsChange={handleProfileSettingsChange}
-              onAuthUserChange={handleAuthUserChange}
               onLoginRequest={handleAuthOverlayRequest}
               onLogout={handleLogout}
               onBugReportOpen={() => void handleBugReportOpen()}

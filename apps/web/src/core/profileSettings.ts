@@ -3,7 +3,6 @@ export type ProfileSettings = {
 };
 
 export const PROFILE_SETTINGS_STORAGE_KEY = "streamui.profileSettings.v1";
-export const MAX_PROFILE_AVATAR_BYTES = 1_000_000;
 
 export const DEFAULT_PROFILE_SETTINGS: ProfileSettings = {
   avatarDataUrl: ""

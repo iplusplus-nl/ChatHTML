@@ -5,22 +5,14 @@ import { DEFAULT_DISPLAY_SETTINGS } from "../../core/displaySettings";
 import { DEFAULT_PROFILE_SETTINGS } from "../../core/profileSettings";
 import { DEFAULT_SEARCH_SETTINGS } from "../../core/searchSettings";
 import {
-  coerceSettingsSection,
   commitSettingsDrafts,
   getSettingsSectionTitle
 } from "./settingsDialogModel";
 
 describe("settings dialog model", () => {
-  it("keeps billing available only while cloud features are enabled", () => {
-    assert.equal(coerceSettingsSection("billing", true), "billing");
-    assert.equal(coerceSettingsSection("billing", false), "profile");
-    assert.equal(coerceSettingsSection("search", false), "search");
-  });
-
   it("provides the stable section headings used by the dialog", () => {
     assert.equal(getSettingsSectionTitle("profile"), "Personal");
     assert.equal(getSettingsSectionTitle("api"), "Providers");
-    assert.equal(getSettingsSectionTitle("billing"), "Billing");
     assert.equal(getSettingsSectionTitle("display"), "Display");
     assert.equal(getSettingsSectionTitle("search"), "Web Search");
   });
