@@ -45,7 +45,7 @@ test("Tavily converts site operators and current visual cues into native filters
       2026
     ),
     {
-      query: "North Harbor Festival 2026 videos",
+      query: "North Harbor Festival 2026 videos live event action",
       includeDomains: ["instagram.com", "youtube.com"],
       timeRange: "week"
     }
@@ -53,6 +53,11 @@ test("Tavily converts site operators and current visual cues into native filters
   assert.deepEqual(tavilyQueryOptions("North Harbor Festival archive", 2026), {
     query: "North Harbor Festival archive",
     includeDomains: []
+  });
+  assert.deepEqual(tavilyQueryOptions("current phone photos", 2026), {
+    query: "current phone photos",
+    includeDomains: [],
+    timeRange: "week"
   });
 });
 

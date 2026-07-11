@@ -167,13 +167,20 @@ export function tavilyQueryOptions(
     /\b(?:current|recent|latest|live|today|tonight|yesterday|this\s+(?:week|weekend|month|year))\b/i;
   const currentVisualCue = new RegExp(`\\b${currentYear}\\b`, "i").test(query) &&
     /\b(?:gallery|galleries|image|images|photo|photos|picture|pictures|video|videos|reel|reels|posts?)\b/i.test(query);
+  const freshnessFiltered = explicitFreshnessCue.test(query) || currentVisualCue;
+  const eventVisualCue =
+    /\b(?:event|festival|rally|race|concert|match|tournament|conference|parade|show)\b/i.test(
+      query
+    );
+  const focusedQuery =
+    freshnessFiltered && eventVisualCue && !/\baction\b/i.test(effectiveQuery)
+      ? `${effectiveQuery} live event action`
+      : effectiveQuery;
 
   return {
-    query: effectiveQuery || query,
+    query: focusedQuery || query,
     includeDomains,
-    ...(explicitFreshnessCue.test(query) || currentVisualCue
-      ? { timeRange: "week" as const }
-      : {})
+    ...(freshnessFiltered ? { timeRange: "week" as const } : {})
   };
 }
 
