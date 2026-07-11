@@ -1,4 +1,6 @@
 .env
+.DS_Store
+.codex/
 node_modules/
 dist/
 /sessions/
