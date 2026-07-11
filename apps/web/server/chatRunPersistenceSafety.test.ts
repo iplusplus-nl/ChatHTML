@@ -9,7 +9,7 @@ import {
   buildChatRunMessagePatch,
   canPersistChatRunMessage,
   normalizeSessionMessageInput
-} from "./openrouter.js";
+} from "./chatRunRequestModel.js";
 import { selectPresentSessionMessagePatch } from "./sessions.js";
 
 function pendingMessage(operationId = "operation-1", createdAt = 10) {
@@ -167,6 +167,12 @@ describe("existing message initial persistence", () => {
       rawStream: "",
       artifactEdits: pendingMessage().artifactEdits,
       activeArtifactEditId: "edit-1",
+      branchRunRollback: {
+        runId: " run-1 ",
+        groupId: " group-1 ",
+        variantId: " variant-2 ",
+        fallbackVariantId: " variant-1 "
+      },
       generationOutcome: "complete"
     });
     assert.ok(normalized);
@@ -177,6 +183,12 @@ describe("existing message initial persistence", () => {
     assert.equal(Object.hasOwn(normalized, "branchGroupId"), false);
     assert.equal(Object.hasOwn(normalized, "branchVariantId"), false);
     assert.equal(Object.hasOwn(normalized, "branchAnchor"), false);
+    assert.deepEqual(normalized.branchRunRollback, {
+      runId: "run-1",
+      groupId: "group-1",
+      variantId: "variant-2",
+      fallbackVariantId: "variant-1"
+    });
     assert.equal(Object.hasOwn(normalized, "fileIds"), false);
     assert.equal(Object.hasOwn(normalized, "artifactContext"), false);
     assert.equal(Object.hasOwn(normalized, "runtimeErrors"), false);
@@ -206,6 +218,11 @@ describe("existing message initial persistence", () => {
       branchGroupId: "branch-group",
       branchVariantId: "branch-variant",
       branchAnchor: true,
+      branchRunRollback: {
+        runId: "run-1",
+        groupId: "branch-group",
+        variantId: "branch-variant"
+      },
       fileIds: ["file-1"],
       artifactContext: { textSummary: "Existing artifact" },
       runtimeErrors: [{ message: "Existing runtime error" }]
@@ -220,6 +237,7 @@ describe("existing message initial persistence", () => {
     assert.equal(patch.generationOutcome, undefined);
     assert.equal(merged.branchGroupId, "branch-group");
     assert.equal(merged.branchVariantId, "branch-variant");
+    assert.deepEqual(merged.branchRunRollback, current.branchRunRollback);
     assert.deepEqual(merged.fileIds, ["file-1"]);
     assert.deepEqual(merged.artifactContext, {
       textSummary: "Existing artifact"
@@ -227,5 +245,38 @@ describe("existing message initial persistence", () => {
     assert.deepEqual(merged.runtimeErrors, [
       { message: "Existing runtime error" }
     ]);
+  });
+
+  it("keeps branch rollback metadata when terminal stream patches merge", () => {
+    const branchRunRollback = {
+      runId: "run-1",
+      groupId: "group-1",
+      variantId: "variant-2",
+      fallbackVariantId: "variant-1"
+    };
+    const terminalPatch = buildChatRunMessagePatch(
+      "partial",
+      "",
+      "complete",
+      5,
+      "run-1",
+      undefined,
+      "cancelled"
+    );
+    const merged = {
+      id: "assistant-1",
+      role: "assistant" as const,
+      content: "",
+      generationRunId: "run-1",
+      branchRunRollback,
+      ...terminalPatch
+    };
+
+    assert.equal(
+      Object.hasOwn(terminalPatch, "branchRunRollback"),
+      false
+    );
+    assert.deepEqual(merged.branchRunRollback, branchRunRollback);
+    assert.equal(merged.generationOutcome, "cancelled");
   });
 });

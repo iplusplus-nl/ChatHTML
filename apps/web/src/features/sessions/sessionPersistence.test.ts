@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SessionState } from "../../domain/chat/sessionModel";
 import {
+  advanceSessionSaveRevisionFloor,
   clearLegacyLocalSessions,
   loadCachedSessionListPreview,
   loadLegacyLocalSessionState,
   loadSessionClientId,
+  nextSessionSaveRevision,
   normalizeSessionListPreview,
   saveCachedSessionListPreview,
   serializeSessionStateForSave,
@@ -83,6 +85,38 @@ describe("session persistence", () => {
     assert.deepEqual(
       serialized.sessions.map((session: { id: string }) => session.id),
       ["saved"]
+    );
+
+    const revisioned = JSON.parse(
+      serializeSessionStateForSave(state(), "client-1", ["deleted"], 42)
+    );
+    assert.equal(revisioned.saveRevision, 42);
+    assert.equal(
+      "saveRevision" in
+        JSON.parse(
+          serializeSessionStateForSave(
+            state(),
+            "client-1",
+            ["deleted"],
+            Number.NaN
+          )
+        ),
+      false
+    );
+  });
+
+  it("keeps save revisions monotonic across clock rollback and reload", () => {
+    const clientId = "client-reload-watermark";
+    const storage = memoryStorage({
+      [`streamui.sessionSaveRevision.v1:${clientId}`]: "900000"
+    });
+
+    assert.equal(nextSessionSaveRevision(clientId, storage, () => 100), 900001);
+    advanceSessionSaveRevisionFloor(clientId, 950000, storage);
+    assert.equal(nextSessionSaveRevision(clientId, storage, () => 50), 950001);
+    assert.equal(
+      nextSessionSaveRevision("client-time-floor", memoryStorage(), () => 1234),
+      1_234_000
     );
   });
 

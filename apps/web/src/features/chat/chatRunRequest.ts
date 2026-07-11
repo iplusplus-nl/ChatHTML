@@ -1,5 +1,6 @@
 import type { ImageAttachment } from "../../core/imageAttachments";
 import type {
+  BranchRunRollback,
   ChatSession,
   ClientMessage
 } from "../../domain/chat/sessionModel";
@@ -41,11 +42,7 @@ export type SendStreamUiRequestOptions = {
     groupId: string;
     variantId: string;
   };
-  cancelBranchVariant?: {
-    groupId: string;
-    variantId: string;
-    fallbackVariantId?: string;
-  };
+  branchRunRollback?: Omit<BranchRunRollback, "runId">;
   insertMessages?: (
     messages: ClientMessage[],
     userMessage: ClientMessage,

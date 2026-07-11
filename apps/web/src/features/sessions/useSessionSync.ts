@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import type { SessionState } from "../../domain/chat/sessionModel";
 import {
+  createSingleFlightSessionPoll,
   runInitialSessionLoad,
   runSessionPoll,
   type SessionStateUpdater,
@@ -64,6 +65,9 @@ export function useSessionSync({
         onApplied: markSessionsHydrated,
         getDeletedSessionIds: () => deletedSessionIdsRef.current,
         getTransientEmptySessionId: () => transientEmptySessionIdRef.current,
+        hasActiveRuns: () => runConnectionsRef.current.size > 0,
+        hasRecentCancellations: () =>
+          cancelledRunIdsRef.current.size > 0,
         hasAttachmentDrafts: () => attachmentDraftsRef.current
       },
       dependencies
@@ -86,9 +90,11 @@ export function useSessionSync({
   }, [
     deletedSessionIdsRef,
     attachmentDraftsRef,
+    cancelledRunIdsRef,
     dependencies,
     sessionClientIdRef,
     markSessionsHydrated,
+    runConnectionsRef,
     sessionsLoadedRef,
     setSessionsLoaded,
     transientEmptySessionIdRef,
@@ -101,35 +107,39 @@ export function useSessionSync({
     }
 
     let cancelled = false;
-    const syncSessions = () => {
-      void runSessionPoll(
-        {
-          clientId: sessionClientIdRef.current,
-          isCancelled: () => cancelled,
-          getState: () => sessionStateRef.current,
-          updateState,
-          onApplied: markSessionsHydrated,
-          getDeletedSessionIds: () => deletedSessionIdsRef.current,
-          getTransientEmptySessionId: () =>
-            transientEmptySessionIdRef.current,
-          hasActiveRuns: () => runConnectionsRef.current.size > 0,
-          hasRecentCancellations: () =>
-            cancelledRunIdsRef.current.size > 0,
-          hasAttachmentDrafts: () => attachmentDraftsRef.current
-        },
-        dependencies
-      ).catch((error) => {
+    const poll = createSingleFlightSessionPoll(
+      async () => {
+        await runSessionPoll(
+          {
+            clientId: sessionClientIdRef.current,
+            isCancelled: () => cancelled,
+            getState: () => sessionStateRef.current,
+            updateState,
+            onApplied: markSessionsHydrated,
+            getDeletedSessionIds: () => deletedSessionIdsRef.current,
+            getTransientEmptySessionId: () =>
+              transientEmptySessionIdRef.current,
+            hasActiveRuns: () => runConnectionsRef.current.size > 0,
+            hasRecentCancellations: () =>
+              cancelledRunIdsRef.current.size > 0,
+            hasAttachmentDrafts: () => attachmentDraftsRef.current
+          },
+          dependencies
+        );
+      },
+      (error) => {
         if (!cancelled) {
           console.warn("Could not sync ChatHTML sessions.", error);
         }
-      });
-    };
+      }
+    );
 
-    const intervalId = window.setInterval(syncSessions, intervalMs);
-    syncSessions();
+    const intervalId = window.setInterval(() => poll.trigger(), intervalMs);
+    poll.trigger();
 
     return () => {
       cancelled = true;
+      poll.cancel();
       window.clearInterval(intervalId);
     };
   }, [

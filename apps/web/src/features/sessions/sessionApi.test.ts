@@ -113,12 +113,18 @@ describe("session API", () => {
 
   it("saves state with PUT and flushes through beacon when available", async () => {
     const saved = mockFetch(new Response(null, { status: 204 }));
-    await saveSerializedSessionState("{\"sessions\":[]}", "client-1", undefined, saved.fetchImpl);
+    const revisionedState = "{\"sessions\":[],\"saveRevision\":42}";
+    await saveSerializedSessionState(
+      revisionedState,
+      "client-1",
+      undefined,
+      saved.fetchImpl
+    );
     assert.equal(saved.calls[0].init?.method, "PUT");
-    assert.equal(saved.calls[0].init?.body, "{\"sessions\":[]}");
+    assert.equal(saved.calls[0].init?.body, revisionedState);
 
     const beaconCalls: Array<{ url: string; data: BodyInit }> = [];
-    saveSessionStateOnPageExit("{\"sessions\":[]}", "client-1", {
+    saveSessionStateOnPageExit(revisionedState, "client-1", {
       fetch: async () => {
         throw new Error("fetch should not run when beacon succeeds");
       },
@@ -131,6 +137,7 @@ describe("session API", () => {
     assert.equal(beaconCalls.length, 1);
     assert.equal(beaconCalls[0].url, "/api/sessions");
     assert.ok(beaconCalls[0].data instanceof Blob);
+    assert.equal(await (beaconCalls[0].data as Blob).text(), revisionedState);
   });
 
   it("falls back to a keepalive PUT when the exit beacon declines", () => {

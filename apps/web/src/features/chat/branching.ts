@@ -12,6 +12,30 @@ export type MessageBranchInfo = {
   nextVariantId?: string;
 };
 
+function getCancelledBranchRunRollbacks(
+  messages: ClientMessage[],
+  groupId: string
+) {
+  const rollbacks = new Map<
+    string,
+    NonNullable<ClientMessage["branchRunRollback"]>
+  >();
+  for (const message of messages) {
+    const rollback = message.branchRunRollback;
+    if (
+      !rollback ||
+      message.role !== "assistant" ||
+      message.generationOutcome !== "cancelled" ||
+      message.generationRunId !== rollback.runId ||
+      rollback.groupId !== groupId
+    ) {
+      continue;
+    }
+    rollbacks.set(rollback.variantId, rollback);
+  }
+  return rollbacks;
+}
+
 export function getMessageBranchGroup(
   message: ClientMessage
 ): string | undefined {
@@ -27,11 +51,13 @@ export function getBranchVariantOrder(
 ): string[] {
   const seen = new Set<string>();
   const variants: string[] = [];
+  const cancelledVariants = getCancelledBranchRunRollbacks(messages, groupId);
 
   for (const message of messages) {
     if (
       message.branchGroupId !== groupId ||
       !message.branchVariantId ||
+      cancelledVariants.has(message.branchVariantId) ||
       (options.anchorsOnly && !(message.role === "assistant" && message.branchAnchor))
     ) {
       continue;
@@ -84,13 +110,28 @@ export function getSelectedBranchVariant(
   }
 
   const selected = session.branchSelections?.[groupId];
-  return selected && variants.includes(selected) ? selected : variants[0];
+  if (selected && variants.includes(selected)) {
+    return selected;
+  }
+
+  const fallback = selected
+    ? getCancelledBranchRunRollbacks(session.messages, groupId).get(selected)
+        ?.fallbackVariantId
+    : undefined;
+  return fallback && variants.includes(fallback) ? fallback : variants[0];
 }
 
 export function isMessageVisibleInSession(
   session: ChatSession,
   message: ClientMessage
 ): boolean {
+  if (
+    message.role === "assistant" &&
+    message.generationOutcome === "cancelled" &&
+    message.generationRunId === message.branchRunRollback?.runId
+  ) {
+    return false;
+  }
   const groupId = getMessageBranchGroup(message);
   if (!groupId || !message.branchVariantId) {
     return true;

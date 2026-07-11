@@ -1,11 +1,25 @@
 import type { Request, Response } from "express";
+import {
+  fetchWithValidatedRedirects,
+  type RetrievalHttpDependencies
+} from "./retrievalHttpClient.js";
+import { RetrievalUrlPolicyError } from "./retrievalUrlPolicy.js";
 
-const EXPORT_RESOURCE_MAX_BYTES = 10 * 1024 * 1024;
+export const EXPORT_RESOURCE_MAX_BYTES = 10 * 1024 * 1024;
 const EXPORT_RESOURCE_TIMEOUT_MS = 10_000;
 const EXPORT_RESOURCE_USER_AGENT =
   "ChatHTML-Export/0.1 (+https://localhost; local artifact export service)";
+const EXPORT_RESOURCE_URL_POLICY = { allowPrivateUrls: false } as const;
+const EXPORTABLE_IMAGE_CONTENT_TYPES = new Set([
+  "image/apng",
+  "image/avif",
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp"
+]);
 
-class ExportResourceError extends Error {
+export class ExportResourceError extends Error {
   constructor(
     readonly status: number,
     message: string
@@ -19,6 +33,11 @@ type ExportResource = {
   contentType: string;
   finalUrl: string;
 };
+
+export type ExportResourceFetchDependencies = Pick<
+  RetrievalHttpDependencies,
+  "fetchImpl" | "lookup" | "maxRedirects" | "pinnedFetchImpl"
+>;
 
 function getSingleQueryValue(value: unknown): string | undefined {
   if (typeof value === "string") {
@@ -49,8 +68,16 @@ export function normalizeExportResourceUrl(value: unknown): string | undefined {
 }
 
 export function isExportableImageContentType(value: string | null): boolean {
+  return normalizeExportableImageContentType(value) !== undefined;
+}
+
+function normalizeExportableImageContentType(
+  value: string | null
+): string | undefined {
   const contentType = value?.split(";")[0]?.trim().toLowerCase();
-  return Boolean(contentType?.startsWith("image/"));
+  return contentType && EXPORTABLE_IMAGE_CONTENT_TYPES.has(contentType)
+    ? contentType
+    : undefined;
 }
 
 function getContentLength(response: globalThis.Response): number | undefined {
@@ -65,51 +92,91 @@ function getContentLength(response: globalThis.Response): number | undefined {
 
 async function readLimitedBody(response: globalThis.Response): Promise<Buffer> {
   const contentLength = getContentLength(response);
-  if (contentLength && contentLength > EXPORT_RESOURCE_MAX_BYTES) {
+  if (
+    contentLength !== undefined &&
+    contentLength > EXPORT_RESOURCE_MAX_BYTES
+  ) {
+    await response.body?.cancel().catch(() => undefined);
     throw new ExportResourceError(413, "Export resource is too large.");
   }
 
-  const body = Buffer.from(await response.arrayBuffer());
-  if (body.byteLength > EXPORT_RESOURCE_MAX_BYTES) {
-    throw new ExportResourceError(413, "Export resource is too large.");
+  if (!response.body) {
+    return Buffer.alloc(0);
   }
 
-  return body;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      return Buffer.concat(chunks, received);
+    }
+
+    if (received + value.byteLength > EXPORT_RESOURCE_MAX_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new ExportResourceError(413, "Export resource is too large.");
+    }
+
+    chunks.push(value);
+    received += value.byteLength;
+  }
 }
 
-async function fetchExportResource(url: string): Promise<ExportResource> {
-  const response = await fetch(url, {
-    redirect: "follow",
-    signal: AbortSignal.timeout(EXPORT_RESOURCE_TIMEOUT_MS),
-    headers: {
-      Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.1",
-      "User-Agent": EXPORT_RESOURCE_USER_AGENT
-    }
-  });
-  const contentType =
-    response.headers.get("content-type") ?? "application/octet-stream";
+async function cancelResponseBody(response: globalThis.Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
+export async function fetchExportResource(
+  url: string,
+  dependencies: ExportResourceFetchDependencies = {}
+): Promise<ExportResource> {
+  const { response, finalUrl } = await fetchWithValidatedRedirects(
+    url,
+    {
+      signal: AbortSignal.timeout(EXPORT_RESOURCE_TIMEOUT_MS),
+      headers: {
+        Accept:
+          "image/avif,image/webp,image/apng,image/png,image/jpeg,image/gif;q=0.9,*/*;q=0.1",
+        "User-Agent": EXPORT_RESOURCE_USER_AGENT
+      }
+    },
+    EXPORT_RESOURCE_URL_POLICY,
+    dependencies
+  );
+  const responseContentType = response.headers.get("content-type");
 
   if (!response.ok) {
+    await cancelResponseBody(response);
     throw new ExportResourceError(
       502,
       `Export resource fetch failed with HTTP ${response.status}.`
     );
   }
 
-  if (!isExportableImageContentType(contentType)) {
-    throw new ExportResourceError(415, "Export resource is not an image.");
+  const contentType = normalizeExportableImageContentType(responseContentType);
+  if (!contentType) {
+    await cancelResponseBody(response);
+    throw new ExportResourceError(
+      415,
+      "Export resource is not a supported raster image."
+    );
   }
 
   return {
     body: await readLimitedBody(response),
     contentType,
-    finalUrl: response.url || url
+    finalUrl
   };
 }
 
 function getErrorStatus(error: unknown): number {
   if (error instanceof ExportResourceError) {
     return error.status;
+  }
+  if (error instanceof RetrievalUrlPolicyError) {
+    return 400;
   }
   if (error instanceof Error && error.name === "TimeoutError") {
     return 504;
@@ -118,32 +185,44 @@ function getErrorStatus(error: unknown): number {
 }
 
 function getErrorMessage(error: unknown): string {
+  if (error instanceof RetrievalUrlPolicyError) {
+    return "Export resource URL is not allowed.";
+  }
   if (error instanceof Error) {
     return error.message;
   }
   return "Could not fetch export resource.";
 }
 
-export async function handleExportResourceRequest(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const url = normalizeExportResourceUrl(req.query.url);
-  if (!url) {
-    res.status(400).json({ error: "A valid http or https URL is required." });
-    return;
-  }
+export function createExportResourceRequestHandler(
+  dependencies: ExportResourceFetchDependencies = {}
+): (req: Request, res: Response) => Promise<void> {
+  return async (req, res) => {
+    const url = normalizeExportResourceUrl(req.query.url);
+    if (!url) {
+      res.status(400).json({ error: "A valid http or https URL is required." });
+      return;
+    }
 
-  try {
-    const resource = await fetchExportResource(url);
-    res.status(200);
-    res.setHeader("Cache-Control", "private, max-age=86400");
-    res.setHeader("Content-Type", resource.contentType);
-    res.setHeader("Content-Length", String(resource.body.byteLength));
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("X-Export-Resource-Url", resource.finalUrl);
-    res.send(resource.body);
-  } catch (error) {
-    res.status(getErrorStatus(error)).json({ error: getErrorMessage(error) });
-  }
+    try {
+      const resource = await fetchExportResource(url, dependencies);
+      res.status(200);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="export-resource"'
+      );
+      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+      res.setHeader("Content-Type", resource.contentType);
+      res.setHeader("Content-Length", String(resource.body.byteLength));
+      res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("X-Export-Resource-Url", resource.finalUrl);
+      res.send(resource.body);
+    } catch (error) {
+      res.status(getErrorStatus(error)).json({ error: getErrorMessage(error) });
+    }
+  };
 }
+
+export const handleExportResourceRequest = createExportResourceRequestHandler();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { SessionState } from "../../domain/chat/sessionModel";
 import {
   createSessionSaveCoordinator,
+  type SessionSaveOutcome,
   type SessionSaveCoordinator,
   type SessionSaveDependencies
 } from "./sessionSaveCoordinator";
@@ -28,7 +29,7 @@ export function useSessionSave({
   sessionClientIdRef,
   deletedSessionIdsRef,
   dependencies
-}: UseSessionSaveInput): () => void {
+}: UseSessionSaveInput): () => Promise<SessionSaveOutcome> {
   const coordinatorRef = useRef<SessionSaveCoordinator | null>(null);
   if (!coordinatorRef.current) {
     coordinatorRef.current = createSessionSaveCoordinator(
@@ -60,25 +61,25 @@ export function useSessionSave({
     const flushSessions = () => {
       coordinator.flushPageExit();
     };
-    const flushWhenHidden = () => {
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         flushSessions();
+        return;
       }
+      void coordinator.saveNow();
     };
 
     window.addEventListener("pagehide", flushSessions);
     window.addEventListener("beforeunload", flushSessions);
-    document.addEventListener("visibilitychange", flushWhenHidden);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       window.removeEventListener("pagehide", flushSessions);
       window.removeEventListener("beforeunload", flushSessions);
-      document.removeEventListener("visibilitychange", flushWhenHidden);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       coordinator.dispose();
     };
   }, [coordinator]);
 
-  return useCallback(() => {
-    void coordinator.saveNow();
-  }, [coordinator]);
+  return useCallback(() => coordinator.saveNow(), [coordinator]);
 }

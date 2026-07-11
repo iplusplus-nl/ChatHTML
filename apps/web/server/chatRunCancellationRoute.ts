@@ -12,6 +12,7 @@ export type ChatRunCancellationTarget = {
 
 export function createChatRunCancellationHandler(options: {
   findRun(runId: string): ChatRunCancellationTarget | undefined;
+  registerUnknownRunCancellation?(runId: string): boolean;
   warn?(message: string, error: unknown): void;
 }) {
   return async function handleCancelChatRun(
@@ -24,6 +25,19 @@ export function createChatRunCancellationHandler(options: {
       : "";
     const run = options.findRun(runId);
     if (!run) {
+      if (runId && options.registerUnknownRunCancellation) {
+        try {
+          const transitioned = options.registerUnknownRunCancellation(runId);
+          res.json({ runId, outcome: "cancelled", transitioned });
+        } catch (error) {
+          (options.warn ?? console.warn)(
+            `[chat:${runId}] could not register cancellation intent`,
+            error
+          );
+          res.status(500).json({ error: "Could not register chat cancellation." });
+        }
+        return;
+      }
       res.status(404).json({ error: "Chat run not found." });
       return;
     }

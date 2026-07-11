@@ -28,6 +28,7 @@ export type ChatRunStateEvent =
       sequence?: number;
     }
   | { type: "server"; message: ClientMessage }
+  | { type: "authoritative-cancel" }
   | { type: "cancel" }
   | { type: "eof" };
 
@@ -92,7 +93,7 @@ function reduceServerMessage(
 ): ChatRunStateResult {
   if (
     message.role !== "assistant" ||
-    (message.generationRunId && message.generationRunId !== state.runId) ||
+    message.generationRunId !== state.runId ||
     state.terminal?.source === "server" ||
     state.terminal?.source === "cancel"
   ) {
@@ -178,6 +179,25 @@ export function reduceChatRunState(
       accepted: !state.transportEnded,
       abortConnection: false,
       eofDisposition: state.terminal ? "terminal" : "detached"
+    };
+  }
+
+  if (event.type === "authoritative-cancel") {
+    if (state.terminal?.source === "server") {
+      return rejected(state);
+    }
+    return {
+      state: {
+        ...state,
+        terminal: {
+          source: "server",
+          phase: "cancelled",
+          error: ""
+        }
+      },
+      accepted: true,
+      phase: "cancelled",
+      abortConnection: true
     };
   }
 

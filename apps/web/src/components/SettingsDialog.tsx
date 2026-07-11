@@ -1,0 +1,482 @@
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { createPortal } from "react-dom";
+import { Check } from "lucide-react";
+import {
+  REQUIRED_MODEL_OPTIONS,
+  createMemoryItemId,
+  normalizeApiSettings,
+  type ApiProviderId,
+  type ApiSettings,
+  type MemoryItem
+} from "../core/apiSettings";
+import type { AuthUser } from "../core/cloudAuth";
+import { topUpBalance } from "../core/cloudBilling";
+import type { DisplaySettings } from "../core/displaySettings";
+import {
+  MAX_PROFILE_AVATAR_BYTES,
+  normalizeProfileSettings,
+  type ProfileSettings
+} from "../core/profileSettings";
+import {
+  normalizeSearchSettings,
+  type SearchSettings
+} from "../core/searchSettings";
+import type { RuntimeSettingsSummary } from "../core/runtimeSettings";
+import { fetchModelCatalog } from "../features/settings/modelCatalog";
+import {
+  addSettingsModelOptions,
+  applyImportedUserPreferences,
+  changeSettingsBaseUrl,
+  changeSettingsProvider,
+  getExportedUserPreferences,
+  removeSettingsModelOption,
+  toggleSettingsModelSelection
+} from "../features/settings/settingsDraftModel";
+import {
+  coerceSettingsSection,
+  commitSettingsDrafts,
+  getSettingsSectionTitle,
+  type SettingsSection
+} from "../features/settings/settingsDialogModel";
+import { ModelImportDialog } from "./ModelImportDialog";
+import { ApiSettingsSection } from "./settings/ApiSettingsSection";
+import {
+  BillingSettingsSection,
+  type TopUpFeedback
+} from "./settings/BillingSettingsSection";
+import { DisplaySettingsSection } from "./settings/DisplaySettingsSection";
+import { ProfileSettingsSection } from "./settings/ProfileSettingsSection";
+import { SearchSettingsSection } from "./settings/SearchSettingsSection";
+import { SettingsNavigation } from "./settings/SettingsNavigation";
+
+export type SettingsDialogProps = {
+  section: SettingsSection;
+  themeMode: "day" | "night";
+  apiSettings: ApiSettings;
+  searchSettings: SearchSettings;
+  displaySettings: DisplaySettings;
+  profileSettings: ProfileSettings;
+  runtimeSettings: RuntimeSettingsSummary | null;
+  cloudEnabled: boolean;
+  authUser?: AuthUser | null;
+  onClose(): void;
+  onSectionChange(section: SettingsSection): void;
+  onApiSettingsChange(settings: ApiSettings): void;
+  onSearchSettingsChange(settings: SearchSettings): void;
+  onDisplaySettingsChange(settings: DisplaySettings): void;
+  onProfileSettingsChange(settings: ProfileSettings): void;
+  onAuthUserChange?(user: AuthUser): void;
+  onLoginRequest?(): void;
+  onLogout?(): void;
+};
+
+export function SettingsDialog({
+  section,
+  themeMode,
+  apiSettings,
+  searchSettings,
+  displaySettings,
+  profileSettings,
+  runtimeSettings,
+  cloudEnabled,
+  authUser,
+  onClose,
+  onSectionChange,
+  onApiSettingsChange,
+  onSearchSettingsChange,
+  onDisplaySettingsChange,
+  onProfileSettingsChange,
+  onAuthUserChange,
+  onLoginRequest,
+  onLogout
+}: SettingsDialogProps) {
+  const [draftApiSettings, setDraftApiSettings] = useState(apiSettings);
+  const [draftSearchSettings, setDraftSearchSettings] = useState(searchSettings);
+  const [draftDisplaySettings, setDraftDisplaySettings] =
+    useState(displaySettings);
+  const [draftProfileSettings, setDraftProfileSettings] =
+    useState(profileSettings);
+  const [isModelImportOpen, setIsModelImportOpen] = useState(false);
+  const [isModelImportLoading, setIsModelImportLoading] = useState(false);
+  const [modelImportError, setModelImportError] = useState<string | null>(null);
+  const [modelImportQuery, setModelImportQuery] = useState("");
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [selectedFetchedModels, setSelectedFetchedModels] = useState<string[]>([]);
+  const [preferenceImportError, setPreferenceImportError] = useState<string | null>(
+    null
+  );
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [topUpAmount, setTopUpAmount] = useState("10");
+  const [isTopUpLoading, setIsTopUpLoading] = useState(false);
+  const [topUpFeedback, setTopUpFeedback] = useState<TopUpFeedback | null>(null);
+  const preferenceFileInputRef = useRef<HTMLInputElement>(null);
+  const avatarFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setDraftApiSettings(apiSettings);
+    setDraftSearchSettings(searchSettings);
+    setDraftDisplaySettings(displaySettings);
+    setDraftProfileSettings(profileSettings);
+    setPreferenceImportError(null);
+    setAvatarError(null);
+    setTopUpFeedback(null);
+  }, [apiSettings, displaySettings, profileSettings, searchSettings]);
+
+  useEffect(() => {
+    const availableSection = coerceSettingsSection(section, cloudEnabled);
+    if (availableSection !== section) {
+      onSectionChange(availableSection);
+    }
+  }, [cloudEnabled, onSectionChange, section]);
+
+  const updateApiDraft = (patch: Partial<ApiSettings>) => {
+    setDraftApiSettings((current) =>
+      normalizeApiSettings({ ...current, ...patch })
+    );
+  };
+
+  const updateSearchDraft = (patch: Partial<SearchSettings>) => {
+    setDraftSearchSettings((current) =>
+      normalizeSearchSettings({ ...current, ...patch })
+    );
+  };
+
+  const handleAvatarChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    if (!/image\/(?:png|jpeg|webp|gif)/i.test(file.type)) {
+      setAvatarError("Choose a PNG, JPEG, WebP, or GIF image.");
+      return;
+    }
+    if (file.size > MAX_PROFILE_AVATAR_BYTES) {
+      setAvatarError("Choose an image smaller than 1 MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const avatarDataUrl = typeof reader.result === "string" ? reader.result : "";
+      const normalized = normalizeProfileSettings({ avatarDataUrl });
+      if (!normalized.avatarDataUrl) {
+        setAvatarError("This image could not be used.");
+        return;
+      }
+      setDraftProfileSettings(normalized);
+      setAvatarError(null);
+    };
+    reader.onerror = () => setAvatarError("This image could not be read.");
+    reader.readAsDataURL(file);
+  };
+
+  const handleAddMemoryItem = () => {
+    const item: MemoryItem = {
+      id: createMemoryItemId(),
+      text: "New memory item"
+    };
+    setDraftApiSettings((current) => ({
+      ...current,
+      memoryItems: [...current.memoryItems, item]
+    }));
+  };
+
+  const handleFetchModels = async () => {
+    setIsModelImportOpen(true);
+    setIsModelImportLoading(true);
+    setModelImportError(null);
+    setModelImportQuery("");
+    setSelectedFetchedModels([]);
+
+    try {
+      setFetchedModels(await fetchModelCatalog(draftApiSettings));
+    } catch (error) {
+      setFetchedModels([]);
+      setModelImportError(
+        error instanceof Error ? error.message : "Unable to fetch model list."
+      );
+    } finally {
+      setIsModelImportLoading(false);
+    }
+  };
+
+  const handleExportPreferences = () => {
+    const preferences = getExportedUserPreferences(draftApiSettings);
+    const blob = new Blob([JSON.stringify(preferences, null, 2)], {
+      type: "application/json;charset=utf-8"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "chathtml-preferences.json";
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  };
+
+  const handleImportPreferences = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      setDraftApiSettings((current) =>
+        applyImportedUserPreferences(current, parsed)
+      );
+      setPreferenceImportError(null);
+    } catch {
+      setPreferenceImportError("Could not import preferences.");
+    }
+  };
+
+  const handleTopUp = async () => {
+    if (!authUser || isTopUpLoading) {
+      return;
+    }
+
+    setIsTopUpLoading(true);
+    setTopUpFeedback(null);
+    try {
+      const result = await topUpBalance(topUpAmount.trim());
+      onAuthUserChange?.({
+        ...authUser,
+        balanceMicros: result.balanceMicros,
+        balanceUsd: result.balanceUsd
+      });
+      setTopUpAmount(result.amountUsd);
+      setTopUpFeedback({
+        type: "success",
+        message: `Added $${result.amountUsd}. Balance is $${result.balanceUsd}.`
+      });
+    } catch (error) {
+      setTopUpFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "Could not add credit."
+      });
+    } finally {
+      setIsTopUpLoading(false);
+    }
+  };
+
+  const handleSave = () => {
+    commitSettingsDrafts(
+      {
+        api: draftApiSettings,
+        search: draftSearchSettings,
+        display: draftDisplaySettings,
+        profile: draftProfileSettings
+      },
+      {
+        onApiSettingsChange,
+        onSearchSettingsChange,
+        onDisplaySettingsChange,
+        onProfileSettingsChange
+      }
+    );
+    onClose();
+  };
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className="settings-overlay"
+      data-theme={themeMode}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <section
+        className="settings-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-panel-title"
+      >
+        <SettingsNavigation
+          section={section}
+          cloudEnabled={cloudEnabled}
+          onSectionChange={onSectionChange}
+          onClose={onClose}
+        />
+
+        <div className="settings-content">
+          <header className="settings-content-header">
+            <h2 id="settings-panel-title">{getSettingsSectionTitle(section)}</h2>
+          </header>
+
+          <form
+            className="settings-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleSave();
+            }}
+          >
+            {section === "api" ? (
+              <ApiSettingsSection
+                settings={draftApiSettings}
+                runtimeSettings={runtimeSettings}
+                cloudEnabled={cloudEnabled}
+                isModelImportLoading={isModelImportLoading}
+                onSettingsChange={updateApiDraft}
+                onProviderChange={(providerId: ApiProviderId) =>
+                  setDraftApiSettings((current) =>
+                    changeSettingsProvider(current, providerId)
+                  )
+                }
+                onBaseUrlChange={(baseUrl) =>
+                  setDraftApiSettings((current) =>
+                    changeSettingsBaseUrl(current, baseUrl)
+                  )
+                }
+                onFetchModels={() => void handleFetchModels()}
+                onRemoveModel={(modelId) =>
+                  setDraftApiSettings((current) =>
+                    removeSettingsModelOption(current, modelId)
+                  )
+                }
+              />
+            ) : section === "billing" ? (
+              <BillingSettingsSection
+                authUser={authUser}
+                topUpAmount={topUpAmount}
+                isTopUpLoading={isTopUpLoading}
+                topUpFeedback={topUpFeedback}
+                onTopUpAmountChange={(value) => {
+                  setTopUpAmount(value);
+                  setTopUpFeedback(null);
+                }}
+                onTopUp={() => void handleTopUp()}
+                onLoginRequest={onLoginRequest}
+              />
+            ) : section === "profile" ? (
+              <ProfileSettingsSection
+                apiSettings={draftApiSettings}
+                profileSettings={draftProfileSettings}
+                cloudEnabled={cloudEnabled}
+                authUser={authUser}
+                avatarError={avatarError}
+                preferenceImportError={preferenceImportError}
+                avatarFileInputRef={avatarFileInputRef}
+                preferenceFileInputRef={preferenceFileInputRef}
+                onAvatarChange={handleAvatarChange}
+                onRemoveAvatar={() => {
+                  setDraftProfileSettings({ avatarDataUrl: "" });
+                  setAvatarError(null);
+                }}
+                onUserPreferencePromptChange={(value) =>
+                  setDraftApiSettings((current) =>
+                    normalizeApiSettings({
+                      ...current,
+                      userPreferencePrompt: value
+                    })
+                  )
+                }
+                onMemoryItemChange={(id, text) =>
+                  setDraftApiSettings((current) => ({
+                    ...current,
+                    memoryItems: current.memoryItems.map((item) =>
+                      item.id === id ? { ...item, text } : item
+                    )
+                  }))
+                }
+                onAddMemoryItem={handleAddMemoryItem}
+                onDeleteMemoryItem={(id) =>
+                  setDraftApiSettings((current) => ({
+                    ...current,
+                    memoryItems: current.memoryItems.filter(
+                      (item) => item.id !== id
+                    )
+                  }))
+                }
+                onImportPreferences={(event) =>
+                  void handleImportPreferences(event)
+                }
+                onExportPreferences={handleExportPreferences}
+                onClearPreferences={() => {
+                  setDraftApiSettings((current) => ({
+                    ...current,
+                    userPreferencePrompt: "",
+                    memoryItems: []
+                  }));
+                  setPreferenceImportError(null);
+                }}
+                onLoginRequest={onLoginRequest}
+                onLogout={onLogout}
+              />
+            ) : section === "display" ? (
+              <DisplaySettingsSection
+                settings={draftDisplaySettings}
+                onSettingsChange={(patch) =>
+                  setDraftDisplaySettings((current) => ({
+                    ...current,
+                    ...patch
+                  }))
+                }
+              />
+            ) : (
+              <SearchSettingsSection
+                settings={draftSearchSettings}
+                runtimeSettings={runtimeSettings}
+                onSettingsChange={updateSearchDraft}
+              />
+            )}
+
+            <div className="settings-actions">
+              <button
+                className="settings-secondary-button"
+                type="button"
+                onClick={onClose}
+              >
+                Cancel
+              </button>
+              <button className="settings-primary-button" type="submit">
+                <Check size={16} strokeWidth={2.1} aria-hidden="true" />
+                <span>Done</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+      {isModelImportOpen ? (
+        <ModelImportDialog
+          models={fetchedModels}
+          selectedModels={selectedFetchedModels}
+          requiredModels={[...REQUIRED_MODEL_OPTIONS]}
+          query={modelImportQuery}
+          isLoading={isModelImportLoading}
+          error={modelImportError}
+          onQueryChange={setModelImportQuery}
+          onToggleModel={(modelId) =>
+            setSelectedFetchedModels((current) =>
+              toggleSettingsModelSelection(current, modelId)
+            )
+          }
+          onClose={() => setIsModelImportOpen(false)}
+          onAddSelected={() => {
+            if (!selectedFetchedModels.length) {
+              return;
+            }
+            setDraftApiSettings((current) =>
+              addSettingsModelOptions(current, selectedFetchedModels)
+            );
+            setIsModelImportOpen(false);
+          }}
+        />
+      ) : null}
+    </div>,
+    document.body
+  );
+}

@@ -5,6 +5,7 @@ import type {
   SessionState
 } from "../../domain/chat/sessionModel";
 import {
+  createSingleFlightSessionPoll,
   runInitialSessionLoad,
   runSessionPoll,
   type SessionStateUpdater,
@@ -230,6 +231,47 @@ describe("session sync controller", () => {
     assert.equal(hydrationSignals, 0);
   });
 
+  it("skips a pending initial result when a run or cancellation starts", async () => {
+    for (const blocker of ["run", "cancellation"] as const) {
+      const pending = deferred<Response>();
+      let activeRuns = false;
+      let recentCancellations = false;
+      let normalized = false;
+      let updated = false;
+      const loading = runInitialSessionLoad(
+        {
+          clientId: "client-1",
+          isCancelled: () => false,
+          updateState: () => {
+            updated = true;
+          },
+          getDeletedSessionIds: () => [],
+          getTransientEmptySessionId: () => null,
+          hasActiveRuns: () => activeRuns,
+          hasRecentCancellations: () => recentCancellations
+        },
+        dependencies({
+          requestSessions: async () => pending.promise,
+          normalizeServerState: () => {
+            normalized = true;
+            return state("server", [session("server", 1, "Server")]);
+          }
+        })
+      );
+
+      if (blocker === "run") {
+        activeRuns = true;
+      } else {
+        recentCancellations = true;
+      }
+      pending.resolve(responseFor(state("server", [session("server", 1)])));
+
+      assert.equal(await loading, "skipped", blocker);
+      assert.equal(normalized, false, blocker);
+      assert.equal(updated, false, blocker);
+    }
+  });
+
   it("surfaces initial and polling HTTP failures with their original messages", async () => {
     let hydrationSignals = 0;
     const common = {
@@ -348,7 +390,7 @@ describe("session sync controller", () => {
     assert.equal(hydrationSignals, 0);
   });
 
-  it("merges a pending poll with the latest state and tombstones", async () => {
+  it("does not apply an in-flight poll after a run starts", async () => {
     const pending = deferred<Response>();
     let current = state("local-a", [session("local-a", 1, "Local A")]);
     const deletedIds = new Set<string>();
@@ -385,13 +427,82 @@ describe("session sync controller", () => {
     activeRuns = true;
     pending.resolve(responseFor(state("remote", [session("remote", 4, "Remote")])));
 
+    assert.equal(await polling, "skipped");
+    assert.equal(current.sessions.some((item) => item.id === "local-b"), true);
+    assert.equal(current.sessions.some((item) => item.id === "remote"), false);
+    assert.equal(hydrationSignals, 0);
+  });
+
+  it("does not apply an in-flight poll after a cancellation barrier starts", async () => {
+    const pending = deferred<Response>();
+    const current = state("local", [session("local", 1, "Local")]);
+    let hasRecentCancellations = false;
+    let updates = 0;
+    const polling = runSessionPoll(
+      {
+        clientId: "client-1",
+        isCancelled: () => false,
+        getState: () => current,
+        updateState: () => {
+          updates += 1;
+        },
+        getDeletedSessionIds: () => [],
+        getTransientEmptySessionId: () => null,
+        hasActiveRuns: () => false,
+        hasRecentCancellations: () => hasRecentCancellations
+      },
+      dependencies({ requestSessions: async () => pending.promise })
+    );
+
+    hasRecentCancellations = true;
+    pending.resolve(responseFor(current));
+
+    assert.equal(await polling, "skipped");
+    assert.equal(updates, 0);
+  });
+
+  it("merges a pending poll with the latest ungated state and tombstones", async () => {
+    const pending = deferred<Response>();
+    let current = state("local-a", [session("local-a", 1, "Local A")]);
+    const deletedIds = new Set<string>();
+    let hydrationSignals = 0;
+
+    const polling = runSessionPoll(
+      {
+        clientId: "client-1",
+        isCancelled: () => false,
+        getState: () => current,
+        updateState: stateUpdater(
+          () => current,
+          (next) => {
+            current = next;
+          }
+        ),
+        onApplied: () => {
+          hydrationSignals += 1;
+        },
+        getDeletedSessionIds: () => deletedIds,
+        getTransientEmptySessionId: () => null,
+        hasActiveRuns: () => false,
+        hasRecentCancellations: () => false
+      },
+      dependencies({ requestSessions: async () => pending.promise })
+    );
+
+    current = state("local-b", [
+      session("local-a", 1, "Local A"),
+      session("local-b", 5, "Local B")
+    ]);
+    deletedIds.add("remote");
+    pending.resolve(responseFor(state("remote", [session("remote", 4, "Remote")])));
+
     assert.equal(await polling, "applied");
     assert.equal(current.sessions.some((item) => item.id === "local-b"), true);
     assert.equal(current.sessions.some((item) => item.id === "remote"), false);
     assert.equal(hydrationSignals, 1);
   });
 
-  it("normalizes but does not apply a cancelled poll response", async () => {
+  it("does not normalize or apply a cancelled poll response", async () => {
     let normalized = false;
     let updated = false;
     let hydrationSignals = 0;
@@ -422,7 +533,7 @@ describe("session sync controller", () => {
     );
 
     assert.equal(outcome, "cancelled");
-    assert.equal(normalized, true);
+    assert.equal(normalized, false);
     assert.equal(updated, false);
     assert.equal(hydrationSignals, 0);
   });
@@ -464,5 +575,40 @@ describe("session sync controller", () => {
     ]);
     assert.equal(updateCount, 2);
     assert.equal(stateValue, current);
+  });
+
+  it("coalesces overlapping poll ticks so responses cannot apply out of order", async () => {
+    const first = deferred<void>();
+    const second = deferred<void>();
+    const started: number[] = [];
+    const completed: number[] = [];
+    const errors: unknown[] = [];
+    const pending = [first, second];
+    const poll = createSingleFlightSessionPoll(async () => {
+      const index = started.length;
+      started.push(index);
+      await pending[index].promise;
+      completed.push(index);
+    }, (error) => errors.push(error));
+
+    poll.trigger();
+    poll.trigger();
+    poll.trigger();
+    await Promise.resolve();
+    assert.deepEqual(started, [0]);
+
+    first.resolve();
+    for (let index = 0; index < 5; index += 1) {
+      await Promise.resolve();
+    }
+    assert.deepEqual(started, [0, 1]);
+    assert.deepEqual(completed, [0]);
+
+    second.resolve();
+    for (let index = 0; index < 5; index += 1) {
+      await Promise.resolve();
+    }
+    assert.deepEqual(completed, [0, 1]);
+    assert.deepEqual(errors, []);
   });
 });

@@ -3,13 +3,46 @@ import {
   copyTextToClipboard,
   downloadTextFile
 } from "../core/artifactExport";
+import {
+  clearIframeCaptureSource,
+  setIframeCaptureSource
+} from "../core/iframeCaptureSource";
 import { isIgnoredRuntimeError } from "../core/ignoredRuntimeErrors";
 import type { ArtifactSelectionPayload } from "../core/artifactSelection";
 import {
-  applyIframeTheme,
-  buildIframeBodyHtml,
-  buildIframeDocument
-} from "../runtime/streamui/sandboxDocument";
+  normalizeCapabilityLabel,
+  normalizeCapabilityText,
+  normalizeOpenUrl,
+  sanitizeDownloadFilename,
+  sanitizeMimeType,
+  type PreviewCapabilityAction
+} from "../features/artifacts/previewCapabilityModel";
+import {
+  ArtifactCapabilityPanel,
+  type ArtifactCapabilityStatus
+} from "./ArtifactCapabilityPanel";
+import {
+  normalizeArtifactSelectionPayload,
+  type PreviewSelectionTarget
+} from "../features/artifacts/previewSelectionPayload";
+import {
+  PREVIEW_HEIGHT_SHRINK_SETTLE_MS,
+  applyPreviewHeightMeasurement,
+  settlePendingPreviewHeight,
+  type PendingPreviewHeightShrink,
+  type PreviewHeightDecision
+} from "../features/artifacts/previewHeightModel";
+import {
+  PREVIEW_IFRAME_SANDBOX,
+  createPreviewChannelToken,
+  createPreviewHostRenderMessage
+} from "../features/artifacts/previewFrameSandbox";
+import {
+  createPreviewFrameDocument,
+  previewFrameDocumentMatches,
+  type PreviewFrameDocumentMode
+} from "../features/artifacts/previewFrameDocumentModel";
+import { buildIframeDocument } from "../runtime/streamui/sandboxDocument";
 import type {
   PageThemeMode,
   RenderError,
@@ -29,187 +62,6 @@ type PreviewFrameProps = {
   onSelectionModeChange?(enabled: boolean): void;
 };
 
-type CapabilityAction =
-  | Extract<StreamUiAction, { type: "copy" }>
-  | Extract<StreamUiAction, { type: "download" }>
-  | Extract<StreamUiAction, { type: "open-url" }>;
-
-type CapabilityStatus = {
-  kind: "success" | "error";
-  message: string;
-};
-
-type PreviewSelectionTarget = Pick<
-  ArtifactSelectionPayload,
-  "key" | "kind" | "selector"
-> &
-  Partial<Pick<ArtifactSelectionPayload, "label" | "preview">>;
-
-const MAX_CAPABILITY_TEXT_CHARS = 1_000_000;
-const MAX_SELECTION_KEY_CHARS = 700;
-const MAX_SELECTION_SELECTOR_CHARS = 1200;
-const MAX_SELECTION_LABEL_CHARS = 220;
-const MAX_SELECTION_PREVIEW_CHARS = 420;
-const MAX_SELECTION_TEXT_CHARS = 2200;
-const MAX_SELECTION_HTML_CHARS = 12500;
-const MIN_PREVIEW_HEIGHT = 32;
-const HEIGHT_EPSILON = 6;
-const SMALL_SHRINK_PX = 12;
-const SHRINK_SETTLE_MS = 700;
-
-function normalizeCapabilityText(value: unknown): string {
-  return String(value ?? "").slice(0, MAX_CAPABILITY_TEXT_CHARS);
-}
-
-function normalizeCapabilityLabel(value: unknown): string | undefined {
-  const label = String(value ?? "").trim().slice(0, 200);
-  return label || undefined;
-}
-
-function sanitizeDownloadFilename(value: unknown): string {
-  const filename = String(value ?? "")
-    .trim()
-    .replace(/[<>:"/\\|?*\x00-\x1f]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120);
-
-  return filename || "chathtml-export.txt";
-}
-
-function sanitizeMimeType(value: unknown): string {
-  const mimeType = String(value ?? "").trim().slice(0, 120);
-  return mimeType || "text/plain;charset=utf-8";
-}
-
-function normalizeOpenUrl(value: unknown): string {
-  const raw = String(value ?? "").trim();
-  if (!raw) {
-    throw new Error("No URL was provided.");
-  }
-
-  const url = new URL(raw, window.location.href);
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("Only http and https URLs can be opened.");
-  }
-
-  return url.href;
-}
-
-function getCapabilityTitle(action: CapabilityAction): string {
-  if (action.type === "copy") {
-    return "Copy from artifact";
-  }
-  if (action.type === "download") {
-    return "Download from artifact";
-  }
-  return "Open link from artifact";
-}
-
-function getCapabilityConfirmLabel(action: CapabilityAction): string {
-  if (action.type === "copy") {
-    return "Copy";
-  }
-  if (action.type === "download") {
-    return "Download";
-  }
-  return "Open";
-}
-
-function getCapabilityPreview(action: CapabilityAction): string {
-  if (action.type === "open-url") {
-    return action.url;
-  }
-
-  return action.text;
-}
-
-function normalizeSelectionString(value: unknown, limit: number): string {
-  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
-}
-
-function isDomLikeSelectionLabel(value: string): boolean {
-  return /^[a-z][a-z0-9-]*(?:[#.:\[][^\s]*)?$/i.test(value);
-}
-
-function getSelectionPreviewFromHtml(html: string): string {
-  if (!html || typeof document === "undefined") {
-    return "";
-  }
-
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  template.content
-    .querySelectorAll("script,style,template,noscript,[aria-hidden='true']")
-    .forEach((element) => element.remove());
-
-  const root = template.content.firstElementChild;
-  if (!root) {
-    return normalizeSelectionString(template.content.textContent, MAX_SELECTION_PREVIEW_CHARS);
-  }
-
-  const controlValue =
-    root instanceof HTMLInputElement ||
-    root instanceof HTMLTextAreaElement ||
-    root instanceof HTMLSelectElement
-      ? root.value
-      : "";
-  return (
-    normalizeSelectionString(controlValue, MAX_SELECTION_PREVIEW_CHARS) ||
-    normalizeSelectionString(root.getAttribute("aria-label"), MAX_SELECTION_PREVIEW_CHARS) ||
-    normalizeSelectionString(root.getAttribute("title"), MAX_SELECTION_PREVIEW_CHARS) ||
-    normalizeSelectionString(root.textContent, MAX_SELECTION_PREVIEW_CHARS)
-  );
-}
-
-function normalizeArtifactSelectionPayload(
-  value: unknown
-): ArtifactSelectionPayload | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const input = value as Record<string, unknown>;
-  const kind = input.kind === "text" ? "text" : input.kind === "element" ? "element" : null;
-  const key = normalizeSelectionString(input.key, MAX_SELECTION_KEY_CHARS);
-  const selector = normalizeSelectionString(
-    input.selector,
-    MAX_SELECTION_SELECTOR_CHARS
-  );
-  if (!kind || !key || !selector) {
-    return null;
-  }
-
-  const label =
-    normalizeSelectionString(input.label, MAX_SELECTION_LABEL_CHARS) ||
-    (kind === "text" ? "Selected text" : "Selected element");
-  const tagName = normalizeSelectionString(input.tagName, 80).toLowerCase();
-  const text = normalizeSelectionString(input.text, MAX_SELECTION_TEXT_CHARS);
-  const html = String(input.html ?? "").slice(0, MAX_SELECTION_HTML_CHARS);
-  const inputPreview = normalizeSelectionString(
-    input.preview,
-    MAX_SELECTION_PREVIEW_CHARS
-  );
-  const htmlPreview =
-    kind === "element" &&
-    (!inputPreview ||
-      inputPreview === label ||
-      isDomLikeSelectionLabel(inputPreview))
-      ? getSelectionPreviewFromHtml(html)
-      : "";
-  const preview = htmlPreview || inputPreview || label;
-
-  return {
-    kind,
-    key,
-    selector,
-    label,
-    preview,
-    ...(tagName ? { tagName } : {}),
-    ...(text ? { text } : {}),
-    ...(html ? { html } : {})
-  };
-}
-
 export function PreviewFrame({
   snapshot,
   themeMode,
@@ -222,27 +74,30 @@ export function PreviewFrame({
   onSelectionModeChange
 }: PreviewFrameProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const initialSrcDocRef = useRef<string | null>(null);
-  const lastLoadedFullDocumentRef = useRef("");
+  const channelTokenRef = useRef("");
   const lastAppliedBodyHtmlRef = useRef("");
-  const pendingShrinkRef = useRef<{ height: number; startedAt: number } | null>(
-    null
-  );
+  const lastAppliedThemeModeRef = useRef<PageThemeMode | null>(null);
+  const pendingShrinkRef = useRef<PendingPreviewHeightShrink | null>(null);
   const pendingShrinkTimerRef = useRef<number | null>(null);
   const [height, setHeight] = useState(96);
   const [capabilityAction, setCapabilityAction] =
-    useState<CapabilityAction | null>(null);
+    useState<PreviewCapabilityAction | null>(null);
   const [capabilityStatus, setCapabilityStatus] =
-    useState<CapabilityStatus | null>(null);
+    useState<ArtifactCapabilityStatus | null>(null);
   const artifactActionsEnabled = snapshot.status === "complete";
-
-  if (initialSrcDocRef.current === null) {
-    initialSrcDocRef.current = buildIframeDocument("", themeMode, false);
-  }
+  const [frameDocument, setFrameDocument] = useState(() =>
+    createPreviewFrameDocument({
+      epoch: 0,
+      mode: artifactActionsEnabled ? "complete" : "streaming",
+      completedHtml: snapshot.completedHtml,
+      themeMode,
+      channelToken: createPreviewChannelToken(),
+      documentEpoch: createPreviewChannelToken()
+    })
+  );
+  channelTokenRef.current = frameDocument.channelToken;
 
   const applyMeasuredHeight = useCallback((value: number) => {
-    const nextHeight = Math.max(MIN_PREVIEW_HEIGHT, Math.ceil(value));
-    const now = performance.now();
     const clearPendingShrinkTimer = () => {
       if (pendingShrinkTimerRef.current !== null) {
         window.clearTimeout(pendingShrinkTimerRef.current);
@@ -252,63 +107,39 @@ export function PreviewFrame({
     const schedulePendingShrink = (startedAt: number) => {
       clearPendingShrinkTimer();
       const elapsed = performance.now() - startedAt;
-      const delay = Math.max(0, SHRINK_SETTLE_MS - elapsed) + 20;
+      const delay = Math.max(0, PREVIEW_HEIGHT_SHRINK_SETTLE_MS - elapsed) + 20;
       pendingShrinkTimerRef.current = window.setTimeout(() => {
         pendingShrinkTimerRef.current = null;
         setHeight((currentHeight) => {
-          const pending = pendingShrinkRef.current;
-          if (!pending) {
-            return currentHeight;
-          }
-
-          if (performance.now() - pending.startedAt < SHRINK_SETTLE_MS) {
-            schedulePendingShrink(pending.startedAt);
-            return currentHeight;
-          }
-
-          pendingShrinkRef.current = null;
-          return Math.abs(pending.height - currentHeight) > HEIGHT_EPSILON
-            ? pending.height
-            : currentHeight;
+          const decision = settlePendingPreviewHeight(
+            currentHeight,
+            pendingShrinkRef.current,
+            performance.now()
+          );
+          applyDecision(decision);
+          return decision.height;
         });
       }, delay);
     };
 
-    setHeight((currentHeight) => {
-      if (
-        nextHeight >= currentHeight ||
-        currentHeight - nextHeight <= SMALL_SHRINK_PX
-      ) {
-        pendingShrinkRef.current = null;
+    const applyDecision = (decision: PreviewHeightDecision) => {
+      pendingShrinkRef.current = decision.pending;
+      if (decision.scheduleStartedAt !== null) {
+        schedulePendingShrink(decision.scheduleStartedAt);
+      } else {
         clearPendingShrinkTimer();
-        return Math.abs(nextHeight - currentHeight) > HEIGHT_EPSILON
-          ? nextHeight
-          : currentHeight;
       }
+    };
 
-      const pending = pendingShrinkRef.current;
-      if (
-        !pending ||
-        Math.abs(pending.height - nextHeight) > HEIGHT_EPSILON
-      ) {
-        pendingShrinkRef.current = {
-          height: nextHeight,
-          startedAt: now
-        };
-        schedulePendingShrink(now);
-        return currentHeight;
-      }
-
-      if (now - pending.startedAt < SHRINK_SETTLE_MS) {
-        schedulePendingShrink(pending.startedAt);
-        return currentHeight;
-      }
-
-      pendingShrinkRef.current = null;
-      clearPendingShrinkTimer();
-      return Math.abs(nextHeight - currentHeight) > HEIGHT_EPSILON
-        ? nextHeight
-        : currentHeight;
+    setHeight((currentHeight) => {
+      const decision = applyPreviewHeightMeasurement(
+        currentHeight,
+        pendingShrinkRef.current,
+        value,
+        performance.now()
+      );
+      applyDecision(decision);
+      return decision.height;
     });
   }, []);
 
@@ -322,17 +153,26 @@ export function PreviewFrame({
     []
   );
 
+  useEffect(() => {
+    pendingShrinkRef.current = null;
+    if (pendingShrinkTimerRef.current !== null) {
+      window.clearTimeout(pendingShrinkTimerRef.current);
+      pendingShrinkTimerRef.current = null;
+    }
+  }, [frameDocument.epoch]);
+
   const requestFrameMeasure = useCallback(() => {
     window.requestAnimationFrame(() => {
       frameRef.current?.contentWindow?.postMessage(
         {
           source: "streamui-host",
+          documentEpoch: frameDocument.documentEpoch,
           kind: "measure"
         },
         "*"
       );
     });
-  }, []);
+  }, [frameDocument.documentEpoch]);
 
   const postSelectionState = useCallback(() => {
     const frameWindow = frameRef.current?.contentWindow;
@@ -343,6 +183,7 @@ export function PreviewFrame({
     frameWindow.postMessage(
       {
         source: "streamui-host",
+        documentEpoch: frameDocument.documentEpoch,
         kind: "selection-mode",
         enabled: Boolean(selectionModeActive && artifactActionsEnabled)
       },
@@ -351,6 +192,7 @@ export function PreviewFrame({
     frameWindow.postMessage(
       {
         source: "streamui-host",
+        documentEpoch: frameDocument.documentEpoch,
         kind: "selection-targets",
         targets: selectedSelections.map((selection) => ({
           key: selection.key,
@@ -365,6 +207,7 @@ export function PreviewFrame({
     frameWindow.postMessage(
       {
         source: "streamui-host",
+        documentEpoch: frameDocument.documentEpoch,
         kind: "selection-busy-targets",
         targets: busySelections.map((selection) => ({
           key: selection.key,
@@ -377,47 +220,86 @@ export function PreviewFrame({
   }, [
     artifactActionsEnabled,
     busySelections,
+    frameDocument.documentEpoch,
     selectedSelections,
     selectionModeActive
   ]);
 
   const applySnapshotToFrame = useCallback(() => {
     const frame = frameRef.current;
-    const document = frame?.contentDocument;
-    if (!frame || !document?.body) {
+    if (!frame) {
       return;
     }
 
-    if (snapshot.status === "complete") {
-      const fullDocument = buildIframeDocument(
+    const desiredMode: PreviewFrameDocumentMode = artifactActionsEnabled
+      ? "complete"
+      : "streaming";
+    if (
+      !previewFrameDocumentMatches(
+        frameDocument,
+        desiredMode,
         snapshot.completedHtml,
-        themeMode,
-        true
-      );
-      if (lastLoadedFullDocumentRef.current !== fullDocument) {
-        lastLoadedFullDocumentRef.current = fullDocument;
-        lastAppliedBodyHtmlRef.current = "";
-        frame.srcdoc = fullDocument;
-        return;
-      }
+        themeMode
+      )
+    ) {
+      lastAppliedBodyHtmlRef.current = "";
+      lastAppliedThemeModeRef.current = null;
+      setFrameDocument((current) => {
+        if (
+          previewFrameDocumentMatches(
+            current,
+            desiredMode,
+            snapshot.completedHtml,
+            themeMode
+          )
+        ) {
+          return current;
+        }
 
+        return createPreviewFrameDocument({
+          epoch: current.epoch + 1,
+          mode: desiredMode,
+          completedHtml: snapshot.completedHtml,
+          themeMode,
+          channelToken: createPreviewChannelToken(),
+          documentEpoch: createPreviewChannelToken()
+        });
+      });
+      return;
+    }
+
+    if (desiredMode === "complete") {
       requestFrameMeasure();
       return;
     }
 
-    lastLoadedFullDocumentRef.current = "";
-    applyIframeTheme(document, themeMode);
-    document.body.dataset.streamuiActionsEnabled = "false";
-
-    const bodyHtml = buildIframeBodyHtml(snapshot.completedHtml);
-    if (lastAppliedBodyHtmlRef.current !== bodyHtml) {
-      document.body.innerHTML = bodyHtml;
-      document.body.dataset.streamuiActionsEnabled = "false";
-      lastAppliedBodyHtmlRef.current = bodyHtml;
+    const message = createPreviewHostRenderMessage(
+      snapshot.completedHtml,
+      themeMode,
+      frameDocument.documentEpoch
+    );
+    if (
+      lastAppliedBodyHtmlRef.current !== message.bodyHtml ||
+      lastAppliedThemeModeRef.current !== themeMode
+    ) {
+      const frameWindow = frame.contentWindow;
+      if (!frameWindow) {
+        return;
+      }
+      frameWindow.postMessage(message, "*");
+      lastAppliedBodyHtmlRef.current = message.bodyHtml;
+      lastAppliedThemeModeRef.current = themeMode;
+      return;
     }
 
     requestFrameMeasure();
-  }, [requestFrameMeasure, snapshot.completedHtml, snapshot.status, themeMode]);
+  }, [
+    artifactActionsEnabled,
+    frameDocument,
+    requestFrameMeasure,
+    snapshot.completedHtml,
+    themeMode
+  ]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -427,6 +309,7 @@ export function PreviewFrame({
 
       const data = event.data as {
         source?: string;
+        channelToken?: string;
         kind?:
           | RenderError["kind"]
           | "resize"
@@ -450,7 +333,10 @@ export function PreviewFrame({
         selection?: unknown;
       };
 
-      if (data?.source !== "streamui-runtime") {
+      if (
+        data?.source !== "streamui-runtime" ||
+        data.channelToken !== channelTokenRef.current
+      ) {
         return;
       }
 
@@ -546,7 +432,7 @@ export function PreviewFrame({
             ...(typeof data.capabilityId === "string" && data.capabilityId
               ? { capabilityId: data.capabilityId }
               : {}),
-            url: normalizeOpenUrl(data.url),
+            url: normalizeOpenUrl(data.url, window.location.href),
             ...(normalizeCapabilityLabel(data.label)
               ? { label: normalizeCapabilityLabel(data.label) }
               : {})
@@ -597,11 +483,28 @@ export function PreviewFrame({
   }, [applySnapshotToFrame]);
 
   useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) {
+      return undefined;
+    }
+
+    setIframeCaptureSource(
+      frame,
+      buildIframeDocument(
+        snapshot.completedHtml,
+        themeMode,
+        snapshot.status === "complete"
+      )
+    );
+    return () => clearIframeCaptureSource(frame);
+  }, [snapshot.completedHtml, snapshot.status, themeMode]);
+
+  useEffect(() => {
     postSelectionState();
   }, [postSelectionState]);
 
   const sendCapabilityResult = useCallback(
-    (action: CapabilityAction, ok: boolean, message = "") => {
+    (action: PreviewCapabilityAction, ok: boolean, message = "") => {
       if (!action.capabilityId) {
         return;
       }
@@ -609,6 +512,7 @@ export function PreviewFrame({
       frameRef.current?.contentWindow?.postMessage(
         {
           source: "streamui-host",
+          documentEpoch: frameDocument.documentEpoch,
           kind: "capability-result",
           capabilityId: action.capabilityId,
           ok,
@@ -617,7 +521,7 @@ export function PreviewFrame({
         "*"
       );
     },
-    []
+    [frameDocument.documentEpoch]
   );
 
   useEffect(() => {
@@ -691,50 +595,26 @@ export function PreviewFrame({
   return (
     <>
       <iframe
+        key={frameDocument.epoch}
         ref={frameRef}
         className="preview-frame"
         title="ChatHTML artifact preview"
-        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-        srcDoc={initialSrcDocRef.current}
+        sandbox={PREVIEW_IFRAME_SANDBOX}
+        srcDoc={frameDocument.source}
         onLoad={() => {
+          lastAppliedBodyHtmlRef.current = "";
+          lastAppliedThemeModeRef.current = null;
           applySnapshotToFrame();
           postSelectionState();
         }}
         style={{ height }}
       />
-      {capabilityAction ? (
-        <div className="artifact-capability-panel" role="dialog" aria-modal="false">
-          <strong>{getCapabilityTitle(capabilityAction)}</strong>
-          {capabilityAction.label ? <span>{capabilityAction.label}</span> : null}
-          <code>{getCapabilityPreview(capabilityAction)}</code>
-          <div className="artifact-capability-actions">
-            <button
-              className="artifact-capability-secondary"
-              type="button"
-              onClick={cancelCapabilityAction}
-            >
-              Cancel
-            </button>
-            <button
-              className="artifact-capability-primary"
-              type="button"
-              onClick={() => {
-                void runCapabilityAction();
-              }}
-            >
-              {getCapabilityConfirmLabel(capabilityAction)}
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {capabilityStatus ? (
-        <div
-          className={`artifact-capability-status is-${capabilityStatus.kind}`}
-          role={capabilityStatus.kind === "error" ? "alert" : "status"}
-        >
-          {capabilityStatus.message}
-        </div>
-      ) : null}
+      <ArtifactCapabilityPanel
+        action={capabilityAction}
+        status={capabilityStatus}
+        onCancel={cancelCapabilityAction}
+        onConfirm={() => void runCapabilityAction()}
+      />
     </>
   );
 }

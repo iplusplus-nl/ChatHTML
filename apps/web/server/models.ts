@@ -1,8 +1,27 @@
 import type { Request, Response } from "express";
-import { readRuntimeApiCredentials } from "./runtimeApiSettings.js";
+import { createProviderAuthorizationHeaders } from "./providerEndpointTrust.js";
+import {
+  readRuntimeApiCredentialDescriptor,
+  resolveRuntimeApiCredentials
+} from "./runtimeApiSettings.js";
 
 const MAX_MODEL_IDS = 1_000;
 const MAX_MODEL_ID_LENGTH = 180;
+const DEFAULT_MODELS_TIMEOUT_MS = 10_000;
+const DEFAULT_MODELS_RESPONSE_MAX_BYTES = 1_048_576;
+
+export type ModelsHandlerOptions = {
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  responseMaxBytes?: number;
+};
+
+class ModelsResponseTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Models endpoint response exceeds the ${maxBytes} byte limit.`);
+    this.name = "ModelsResponseTooLargeError";
+  }
+}
 
 function normalizeModelsEndpoint(value: unknown, baseUrl: string): string {
   const input = typeof value === "string" ? value.trim() : "";
@@ -98,67 +117,148 @@ function extractModelIds(payload: unknown): string[] {
   return modelIds;
 }
 
-export async function handleModelsRequest(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const body = req.body as { apiSettings?: unknown };
-  const object =
-    typeof body.apiSettings === "object" && body.apiSettings !== null
-      ? (body.apiSettings as Record<string, unknown>)
-      : {};
-  const credentials = readRuntimeApiCredentials(object);
-  if (credentials.apiKeySource === "managed") {
-    res.status(501).json({
-      error:
-        "Managed ChatHTML Cloud models require a hosted ChatHTML Cloud backend."
-    });
-    return;
+async function readBoundedResponseText(
+  response: globalThis.Response,
+  maxBytes: number
+): Promise<string> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ModelsResponseTooLargeError(maxBytes);
   }
-  const endpoint = normalizeModelsEndpoint(
-    object.modelsEndpoint,
-    credentials.baseUrl
-  );
-  const missing: string[] = [];
-
-  if (!endpoint) {
-    missing.push("Models endpoint");
-  }
-  if (!credentials.apiKey) {
-    missing.push(
-      credentials.apiKeySource === "environment"
-        ? credentials.apiKeyEnvironmentName
-        : "API key"
-    );
+  if (!response.body) {
+    return "";
   }
 
-  if (missing.length) {
-    res.status(400).json({ error: `API settings missing: ${missing.join(", ")}.` });
-    return;
-  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
 
   try {
-    const response = await fetch(endpoint, {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${credentials.apiKey}`
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
       }
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(
-        `Models endpoint returned ${response.status}: ${text.slice(0, 500)}`
-      );
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new ModelsResponseTooLargeError(maxBytes);
+      }
+      text += decoder.decode(value, { stream: true });
     }
-
-    const payload = (await response.json()) as unknown;
-    const models = extractModelIds(payload);
-
-    res.json({ models });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to fetch model list.";
-    res.status(502).json({ error: message });
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
   }
 }
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+export function createModelsHandler(options: ModelsHandlerOptions = {}) {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const timeoutMs = Math.max(1, options.timeoutMs ?? DEFAULT_MODELS_TIMEOUT_MS);
+  const responseMaxBytes = Math.max(
+    1,
+    options.responseMaxBytes ?? DEFAULT_MODELS_RESPONSE_MAX_BYTES
+  );
+
+  return async function handleModelsRequest(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const body =
+      req.body && typeof req.body === "object"
+        ? (req.body as { apiSettings?: unknown })
+        : {};
+    const object =
+      typeof body.apiSettings === "object" && body.apiSettings !== null
+        ? (body.apiSettings as Record<string, unknown>)
+        : {};
+
+    let endpoint: string;
+    let credentials: ReturnType<typeof resolveRuntimeApiCredentials>;
+    try {
+      const descriptor = readRuntimeApiCredentialDescriptor(object);
+      endpoint = normalizeModelsEndpoint(object.modelsEndpoint, descriptor.baseUrl);
+      credentials = resolveRuntimeApiCredentials(descriptor, {
+        endpoint,
+        kind: "models"
+      });
+    } catch (error) {
+      res.status(400).json({
+        error: errorMessage(error, "API settings are invalid.")
+      });
+      return;
+    }
+
+    const missing: string[] = [];
+    if (!endpoint) {
+      missing.push("Models endpoint");
+    }
+    if (!credentials.apiKey) {
+      missing.push(
+        credentials.apiKeySource === "environment"
+          ? credentials.apiKeyEnvironmentName
+          : "API key"
+      );
+    }
+    if (missing.length) {
+      res
+        .status(400)
+        .json({ error: `API settings missing: ${missing.join(", ")}.` });
+      return;
+    }
+
+    const abortController = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+    }, timeoutMs);
+
+    try {
+      const response = await fetchImpl(endpoint, {
+        headers: {
+          Accept: "application/json",
+          ...createProviderAuthorizationHeaders(
+            credentials,
+            endpoint,
+            "models"
+          )
+        },
+        redirect: "error",
+        signal: abortController.signal
+      });
+      const text = await readBoundedResponseText(response, responseMaxBytes);
+
+      if (!response.ok) {
+        throw new Error(
+          `Models endpoint returned ${response.status}: ${text.slice(0, 500)}`
+        );
+      }
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        throw new Error("Models endpoint returned invalid JSON.");
+      }
+      res.json({ models: extractModelIds(payload) });
+    } catch (error) {
+      res.status(timedOut ? 504 : 502).json({
+        error: timedOut
+          ? `Models endpoint timed out after ${timeoutMs}ms.`
+          : errorMessage(error, "Unable to fetch model list.")
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+}
+
+export const handleModelsRequest = createModelsHandler();

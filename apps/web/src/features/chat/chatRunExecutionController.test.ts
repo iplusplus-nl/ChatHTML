@@ -486,6 +486,132 @@ describe("chat run execution controller", () => {
     assert.equal(fixture.aborts, 1);
   });
 
+  it("settles an authoritative cancellation before aborting transport", async () => {
+    const effects: string[] = [];
+    const fixture = createFixture({
+      applyAssistant: (patch, phase) => {
+        effects.push(`apply:${phase}:${patch.generationOutcome}`);
+        return true;
+      },
+      abortConnection: () => effects.push("abort")
+    });
+    fixture.controller.handleLine(
+      JSON.stringify({ type: "content", text: "partial", seq: 1 })
+    );
+
+    const settlement = await fixture.controller.settleAuthoritative({
+      outcome: "cancelled"
+    });
+    fixture.controller.handleLine(
+      JSON.stringify({ type: "content", text: "late", seq: 2 })
+    );
+
+    assert.equal(settlement.kind, "applied");
+    assert.equal(
+      settlement.kind === "applied" ? settlement.applied : undefined,
+      true
+    );
+    assert.deepEqual(effects, [
+      "apply:streaming:undefined",
+      "apply:cancelled:cancelled",
+      "abort"
+    ]);
+    assert.deepEqual(fixture.controller.getState().terminal, {
+      source: "server",
+      phase: "cancelled",
+      error: ""
+    });
+    assert.equal(fixture.controller.getState().raw, "partial");
+  });
+
+  it("applies exact complete and error messages as authoritative terminals", async () => {
+    for (const outcome of ["complete", "error"] as const) {
+      const fixture = createFixture();
+      const message = assistant({
+        content: outcome === "complete" ? "Done" : "Failed",
+        status: outcome,
+        generationOutcome: outcome,
+        error: outcome === "error" ? "Provider failed" : undefined,
+        streamSequence: 2
+      });
+
+      const settlement = await fixture.controller.settleAuthoritative({
+        outcome,
+        message
+      });
+
+      assert.equal(settlement.kind, "applied");
+      assert.equal(fixture.controller.getState().terminal?.source, "server");
+      assert.equal(fixture.controller.getState().terminal?.phase, outcome);
+      assert.equal(fixture.applied.at(-1)?.phase, outcome);
+      assert.equal(fixture.aborts, 1);
+    }
+  });
+
+  it("requires an exact terminal message for authoritative complete and error", async () => {
+    const cases = [
+      { outcome: "complete" as const, message: undefined },
+      {
+        outcome: "complete" as const,
+        message: assistant({ generationRunId: "run-2", status: "complete" })
+      },
+      {
+        outcome: "error" as const,
+        message: assistant({ status: "streaming", generationOutcome: undefined })
+      },
+      {
+        outcome: "error" as const,
+        message: assistant({ status: "complete", generationOutcome: "complete" })
+      }
+    ];
+
+    for (const input of cases) {
+      const fixture = createFixture();
+      const settlement = await fixture.controller.settleAuthoritative(input);
+
+      assert.equal(settlement.kind, "deferred");
+      assert.equal(fixture.controller.getState().terminal, undefined);
+      assert.deepEqual(fixture.applied, []);
+      assert.equal(fixture.aborts, 0);
+    }
+  });
+
+  it("uses an exact durable cancelled message when one is available", async () => {
+    const fixture = createFixture();
+    const message = assistant({
+      content: "Server partial",
+      rawStream: "server partial",
+      status: "complete",
+      generationOutcome: "cancelled",
+      streamSequence: 4
+    });
+
+    const settlement = await fixture.controller.settleAuthoritative({
+      outcome: "cancelled",
+      message
+    });
+
+    assert.equal(settlement.kind, "applied");
+    assert.equal(fixture.applied.at(-1)?.phase, "cancelled");
+    assert.equal(fixture.applied.at(-1)?.patch.content, "Server partial");
+    assert.equal(fixture.applied.at(-1)?.patch.generationOutcome, "cancelled");
+    assert.equal(fixture.aborts, 1);
+  });
+
+  it("does not settle an authoritative result through a replaced execution", async () => {
+    const fixture = createFixture();
+    fixture.setActive(false);
+
+    const settlement = await fixture.controller.settleAuthoritative({
+      outcome: "cancelled"
+    });
+
+    assert.equal(settlement.kind, "stale");
+    assert.equal(fixture.controller.getState().terminal, undefined);
+    assert.deepEqual(fixture.applied, []);
+    assert.equal(fixture.aborts, 0);
+  });
+
   it("isolates completion-effect failures and skips them for unapplied patches", async () => {
     const failure = new Error("upload failed");
     let completionCalls = 0;

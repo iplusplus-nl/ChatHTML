@@ -333,6 +333,107 @@ describe("server session merge", () => {
     assert.equal(nextRun.sessions[0].messages[0].status, "streaming");
   });
 
+  it("does not let a stale prior run replace a currently active run", () => {
+    const active = {
+      id: "a1",
+      role: "assistant" as const,
+      content: "New run partial",
+      generationRunId: "run-2",
+      streamSequence: 2,
+      status: "streaming" as const
+    };
+    const stale = {
+      ...active,
+      content: "Old run terminal",
+      generationRunId: "run-1",
+      streamSequence: 99,
+      generationOutcome: "complete" as const,
+      status: "complete" as const
+    };
+
+    const merged = mergeClientSaveState(
+      {
+        sessions: [session("active", 5, [active])],
+        activeSessionId: "active"
+      },
+      {
+        sessions: [session("active", 6, [stale])],
+        activeSessionId: "active"
+      }
+    );
+
+    assert.equal(merged.sessions[0].messages[0].generationRunId, "run-2");
+    assert.equal(merged.sessions[0].messages[0].status, "streaming");
+    assert.equal(merged.sessions[0].messages[0].content, "New run partial");
+  });
+
+  it("preserves a cancelled branch tombstone and its hidden variant against stale saves", () => {
+    const original = {
+      id: "a-original",
+      role: "assistant" as const,
+      content: "Original",
+      branchGroupId: "group-1",
+      branchVariantId: "variant-1",
+      branchAnchor: true
+    };
+    const cancelledUser = {
+      id: "u-cancelled",
+      role: "user" as const,
+      content: "Retry",
+      branchGroupId: "group-1",
+      branchVariantId: "variant-2"
+    };
+    const tombstone = {
+      id: "a-cancelled",
+      role: "assistant" as const,
+      content: "Generation stopped.",
+      branchGroupId: "group-1",
+      branchVariantId: "variant-2",
+      branchAnchor: true,
+      branchRunRollback: {
+        runId: "run-2",
+        groupId: "group-1",
+        variantId: "variant-2",
+        fallbackVariantId: "variant-1"
+      },
+      generationRunId: "run-2",
+      generationOutcome: "cancelled" as const,
+      status: "complete" as const
+    };
+    const current = {
+      sessions: [
+        {
+          ...session("active", 5, [original, cancelledUser, tombstone]),
+          branchSelections: { "group-1": "variant-2" }
+        }
+      ],
+      activeSessionId: "active"
+    };
+    const staleIncoming = {
+      sessions: [session("active", 6, [original])],
+      activeSessionId: "active"
+    };
+
+    const merged = mergeClientSaveState(current, staleIncoming);
+
+    assert.deepEqual(
+      merged.sessions[0].messages.map((message) => message.id),
+      ["a-original", "a-cancelled"]
+    );
+    assert.equal(
+      merged.sessions[0].messages[1].generationOutcome,
+      "cancelled"
+    );
+    assert.deepEqual(
+      merged.sessions[0].messages[1].branchRunRollback,
+      tombstone.branchRunRollback
+    );
+    assert.equal(
+      merged.sessions[0].branchSelections?.["group-1"],
+      "variant-1"
+    );
+  });
+
   it("keeps completed artifact edits when an older client save arrives later", () => {
     const current = {
       sessions: [

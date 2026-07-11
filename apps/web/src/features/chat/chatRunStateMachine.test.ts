@@ -346,6 +346,48 @@ describe("chat run state machine", () => {
     assert.equal(cancelled.state.terminal?.source, "server");
   });
 
+  it("lets an authoritative cancellation replace local and stream terminals", () => {
+    const initial = createChatRunState({
+      runId: "run-1",
+      raw: "partial",
+      streamSequence: 4
+    });
+    const streamComplete = reduceChatRunState(initial, {
+      type: "done",
+      status: "complete",
+      error: "",
+      sequence: 5
+    }).state;
+    const localCancel = reduceChatRunState(initial, { type: "cancel" }).state;
+
+    for (const state of [initial, streamComplete, localCancel]) {
+      const result = reduceChatRunState(state, {
+        type: "authoritative-cancel"
+      });
+
+      assert.equal(result.accepted, true);
+      assert.equal(result.abortConnection, true);
+      assert.deepEqual(result.state.terminal, {
+        source: "server",
+        phase: "cancelled",
+        error: ""
+      });
+    }
+  });
+
+  it("makes repeated authoritative cancellation idempotent", () => {
+    const first = reduceChatRunState(
+      createChatRunState({ runId: "run-1" }),
+      { type: "authoritative-cancel" }
+    );
+    const repeated = reduceChatRunState(first.state, {
+      type: "authoritative-cancel"
+    });
+
+    assert.equal(repeated.accepted, false);
+    assert.equal(repeated.state, first.state);
+  });
+
   it("rejects foreign runs, users, and stale server streaming snapshots", () => {
     const initial = createChatRunState({
       runId: "run-1",
@@ -379,7 +421,7 @@ describe("chat run state machine", () => {
     );
   });
 
-  it("accepts legacy server messages without a run id", () => {
+  it("rejects server messages without an exact run id", () => {
     const result = reduceChatRunState(
       createChatRunState({ runId: "run-1" }),
       {
@@ -391,7 +433,7 @@ describe("chat run state machine", () => {
       }
     );
 
-    assert.equal(result.accepted, true);
-    assert.equal(result.state.streamSequence, 1);
+    assert.equal(result.accepted, false);
+    assert.equal(result.state.streamSequence, 0);
   });
 });

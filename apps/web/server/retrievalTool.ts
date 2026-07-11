@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { rethrowIfRetrievalAborted } from "./retrievalAbort.js";
 import {
   buildRetrievalContextPrompt,
   collectRetrievalContext,
@@ -59,6 +60,7 @@ type CreateRetrievalToolsOptions = {
   searchSettings?: unknown;
   onStatus?: (message: string) => void;
   stats?: RetrievalToolStats;
+  signal?: AbortSignal;
 };
 
 function compactText(value: string | undefined): string {
@@ -154,7 +156,8 @@ export function createRetrievalTools({
   messages,
   searchSettings,
   onStatus,
-  stats
+  stats,
+  signal
 }: CreateRetrievalToolsOptions) {
   return {
     retrieve: tool({
@@ -190,12 +193,14 @@ export function createRetrievalTools({
               forceSearch: shouldForceSearch(input),
               forceFetch: shouldForceFetch(input),
               searchSettings,
-              onStatus
+              onStatus,
+              signal
             }
           );
           stats?.contexts.push(context);
           return buildRetrievalContextPrompt(context, searchSettings);
         } catch (error) {
+          rethrowIfRetrievalAborted(error, signal);
           if (stats) {
             stats.errors += 1;
           }

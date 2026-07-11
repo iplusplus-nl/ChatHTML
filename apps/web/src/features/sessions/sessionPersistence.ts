@@ -13,6 +13,9 @@ const LEGACY_SESSION_STORAGE_KEY = "streamui.sessions.v1";
 const LEGACY_ACTIVE_SESSION_STORAGE_KEY = "streamui.activeSession.v1";
 const SESSION_CLIENT_ID_STORAGE_KEY = "streamui.clientId.v1";
 const SESSION_INDEX_CACHE_KEY = "streamui.sessionIndex.v1";
+const SESSION_SAVE_REVISION_STORAGE_PREFIX = "streamui.sessionSaveRevision.v1:";
+
+const lastSessionSaveRevisionByClientId = new Map<string, number>();
 
 export type SessionListPreview = {
   activeSessionId: string;
@@ -22,7 +25,92 @@ export type SessionListPreview = {
 export type SessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 function browserLocalStorage(): SessionStorage | undefined {
-  return typeof window === "undefined" ? undefined : window.localStorage;
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeSessionSaveRevision(input: unknown): number | undefined {
+  return typeof input === "number" &&
+    Number.isSafeInteger(input) &&
+    input > 0
+    ? input
+    : undefined;
+}
+
+function readStoredSessionSaveRevision(
+  storage: SessionStorage | undefined,
+  storageKey: string
+): number {
+  if (!storage) {
+    return 0;
+  }
+
+  try {
+    return normalizeSessionSaveRevision(Number(storage.getItem(storageKey))) ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function advanceSessionSaveRevisionFloor(
+  clientId: string,
+  saveRevision: unknown,
+  storage: SessionStorage | undefined = browserLocalStorage()
+): void {
+  const revision = normalizeSessionSaveRevision(saveRevision);
+  if (revision === undefined) {
+    return;
+  }
+
+  const storageKey = `${SESSION_SAVE_REVISION_STORAGE_PREFIX}${clientId}`;
+  const floor = Math.max(
+    revision,
+    lastSessionSaveRevisionByClientId.get(clientId) ?? 0,
+    readStoredSessionSaveRevision(storage, storageKey)
+  );
+  lastSessionSaveRevisionByClientId.set(clientId, floor);
+  if (storage) {
+    try {
+      storage.setItem(storageKey, String(floor));
+    } catch {
+      // Saving sessions must still work when browser storage is unavailable.
+    }
+  }
+}
+
+export function nextSessionSaveRevision(
+  clientId: string,
+  storage: SessionStorage | undefined = browserLocalStorage(),
+  now: () => number = Date.now
+): number {
+  const storageKey = `${SESSION_SAVE_REVISION_STORAGE_PREFIX}${clientId}`;
+  const storedRevision = readStoredSessionSaveRevision(storage, storageKey);
+
+  const inMemoryRevision = lastSessionSaveRevisionByClientId.get(clientId) ?? 0;
+  const currentRevision = Math.max(storedRevision, inMemoryRevision);
+  const timestamp = now();
+  const timestampFloor = Number.isFinite(timestamp)
+    ? Math.min(
+        Number.MAX_SAFE_INTEGER,
+        Math.max(1, Math.floor(timestamp) * 1_000)
+      )
+    : 1;
+  const incrementedRevision =
+    currentRevision < Number.MAX_SAFE_INTEGER
+      ? currentRevision + 1
+      : Number.MAX_SAFE_INTEGER;
+  const revision = Math.max(timestampFloor, incrementedRevision);
+
+  advanceSessionSaveRevisionFloor(clientId, revision, storage);
+
+  return revision;
 }
 
 export function normalizeSessionListPreview(
@@ -172,12 +260,16 @@ export function loadSessionClientId(
 export function serializeSessionStateForSave(
   state: SessionState,
   clientId: string,
-  deletedSessionIds: string[] = []
+  deletedSessionIds: string[] = [],
+  saveRevision?: number
 ): string {
   const compactedState = compactEmptySessions(state);
 
   return JSON.stringify({
     clientId,
+    ...(normalizeSessionSaveRevision(saveRevision) !== undefined
+      ? { saveRevision }
+      : {}),
     deletedSessionIds,
     sessions: serializeSessions(compactedState.sessions),
     activeSessionId: compactedState.activeSessionId

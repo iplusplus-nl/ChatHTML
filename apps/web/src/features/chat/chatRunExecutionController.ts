@@ -1,6 +1,10 @@
 import type { ClientMessage } from "../../domain/chat/sessionModel";
 import type { StreamingRenderer } from "../../runtime/streamui/types";
-import { isAbortError } from "./chatErrors";
+import type { ChatRunCancellationOutcome } from "./chatApi";
+import {
+  createCancelledAssistantPatch,
+  isAbortError
+} from "./chatErrors";
 import {
   presentLocalChatRunTerminal,
   projectStreamingChatRun,
@@ -33,6 +37,19 @@ export type ChatRunExecutionOutcome =
 export type ChatRunExecutionErrorScope =
   | "reconcile"
   | "after-local-complete";
+
+export type ChatRunAuthoritativeSettlement =
+  | {
+      kind: "applied";
+      outcome: ChatRunCancellationOutcome;
+      state: ChatRunState;
+      applied: boolean;
+    }
+  | {
+      kind: "deferred" | "stale";
+      outcome: ChatRunCancellationOutcome;
+      state: ChatRunState;
+    };
 
 export type ChatRunExecutionControllerOptions = {
   runId: string;
@@ -68,6 +85,10 @@ export type ChatRunExecutionController = {
   handleLine(line: string): void;
   startReconcile(): void;
   reconcileNow(): Promise<void>;
+  settleAuthoritative(input: {
+    outcome: ChatRunCancellationOutcome;
+    message?: ClientMessage;
+  }): Promise<ChatRunAuthoritativeSettlement>;
   finishTransport(): Promise<ChatRunExecutionOutcome>;
   handleTransportError(error: unknown): Promise<ChatRunExecutionOutcome>;
   checkpointStreaming(): boolean;
@@ -76,6 +97,25 @@ export type ChatRunExecutionController = {
 };
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 1_500;
+
+function getMessageTerminalOutcome(
+  message: ClientMessage
+): ChatRunCancellationOutcome | undefined {
+  return message.generationOutcome;
+}
+
+function isExactAuthoritativeMessage(
+  message: ClientMessage | undefined,
+  runId: string,
+  outcome: ChatRunCancellationOutcome
+): message is ClientMessage {
+  return Boolean(
+      message?.role === "assistant" &&
+      message.generationRunId === runId &&
+      getMessageTerminalOutcome(message) === outcome &&
+      message.status === (outcome === "error" ? "error" : "complete")
+  );
+}
 
 function defaultScheduleInterval(
   task: () => void,
@@ -191,17 +231,17 @@ export function createChatRunExecutionController(
 
   const applyServerMessage = (message: ClientMessage) => {
     if (!canAcceptConnectionEvent()) {
-      return;
+      return false;
     }
 
     const result = dispatch({ type: "server", message });
     if (!result.accepted || !result.phase || !result.assistantPatch) {
-      return;
+      return false;
     }
 
     reportProgress();
     try {
-      options.applyAssistant(result.assistantPatch, result.phase);
+      return options.applyAssistant(result.assistantPatch, result.phase);
     } finally {
       if (result.abortConnection) {
         options.abortConnection();
@@ -379,6 +419,47 @@ export function createChatRunExecutionController(
       }
     },
     reconcileNow,
+    async settleAuthoritative({ outcome, message }) {
+      if (disposed || !options.isConnectionCurrent()) {
+        return { kind: "stale", outcome, state };
+      }
+
+      if (isExactAuthoritativeMessage(message, options.runId, outcome)) {
+        const applied = applyServerMessage(message);
+        if (
+          state.terminal?.source === "server" &&
+          state.terminal.phase === outcome
+        ) {
+          return { kind: "applied", outcome, state, applied };
+        }
+        return { kind: "deferred", outcome, state };
+      }
+
+      if (outcome !== "cancelled") {
+        return { kind: "deferred", outcome, state };
+      }
+
+      const result = dispatch({ type: "authoritative-cancel" });
+      if (!result.accepted) {
+        return state.terminal?.source === "server" &&
+          state.terminal.phase === "cancelled"
+          ? { kind: "applied", outcome, state, applied: false }
+          : { kind: "deferred", outcome, state };
+      }
+
+      reportProgress();
+      const patch = createCancelledAssistantPatch(
+        state.raw,
+        state.reasoning,
+        state.streamSequence
+      );
+      try {
+        const applied = options.applyAssistant(patch, "cancelled");
+        return { kind: "applied", outcome, state, applied };
+      } finally {
+        options.abortConnection();
+      }
+    },
     async finishTransport() {
       await reconcileNow();
       if (state.terminal?.source === "server") {

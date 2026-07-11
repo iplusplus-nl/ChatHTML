@@ -121,4 +121,77 @@ describe("chat branching", () => {
       1
     );
   });
+
+  it("hides a cancelled branch run and selects its durable fallback", () => {
+    const messages = [
+      message("a-user", "user", { groupId: "g1", variantId: "a" }),
+      message("a-assistant", "assistant", {
+        groupId: "g1",
+        variantId: "a",
+        anchor: true
+      }),
+      message("b-user", "user", { groupId: "g1", variantId: "b" }),
+      {
+        ...message("b-assistant", "assistant", {
+          groupId: "g1",
+          variantId: "b",
+          anchor: true
+        }),
+        generationRunId: "run-b",
+        generationOutcome: "cancelled" as const,
+        status: "complete" as const,
+        branchRunRollback: {
+          runId: "run-b",
+          groupId: "g1",
+          variantId: "b",
+          fallbackVariantId: "a"
+        }
+      }
+    ];
+    const activeSession = session(messages, { g1: "b" });
+
+    assert.deepEqual(getBranchVariantOrder(messages, "g1"), ["a"]);
+    assert.deepEqual(
+      getVisibleSessionMessages(activeSession).map((item) => item.id),
+      ["a-user", "a-assistant"]
+    );
+    assert.equal(getAssistantBranchInfo(activeSession, "b-assistant"), undefined);
+  });
+
+  it("does not hide branches for non-cancelled or inconsistent rollback metadata", () => {
+    const complete = {
+      ...message("complete", "assistant", {
+        groupId: "g1",
+        variantId: "b",
+        anchor: true
+      }),
+      generationOutcome: "complete" as const,
+      generationRunId: "run-complete",
+      branchRunRollback: {
+        runId: "run-complete",
+        groupId: "g1",
+        variantId: "b",
+        fallbackVariantId: "a"
+      }
+    };
+    const inconsistent = {
+      ...message("inconsistent", "assistant", {
+        groupId: "g1",
+        variantId: "c",
+        anchor: true
+      }),
+      generationOutcome: "cancelled" as const,
+      generationRunId: "run-inconsistent",
+      branchRunRollback: {
+        runId: "run-inconsistent",
+        groupId: "g1",
+        variantId: "another"
+      }
+    };
+
+    assert.deepEqual(
+      getBranchVariantOrder([complete, inconsistent], "g1"),
+      ["b", "c"]
+    );
+  });
 });

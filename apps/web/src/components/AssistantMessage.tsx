@@ -11,6 +11,7 @@ import type {
   ArtifactSelection,
   ArtifactSelectionPayload
 } from "../core/artifactSelection";
+import { shouldCompleteArtifactRender } from "../features/artifacts/artifactRenderCompletionPolicy";
 import { stripInternalArtifactContextText } from "../features/chat/internalArtifactContext";
 import { extractStreamUiParts } from "../runtime/streamui/protocol";
 import { createStreamingRenderer } from "../runtime/streamui/streamingRenderer";
@@ -37,6 +38,7 @@ type AssistantMessageProps = {
   showRawStream: boolean;
   artifactEditingEnabled: boolean;
   status?: "streaming" | "complete" | "error";
+  generationOutcome?: "complete" | "error" | "cancelled";
   error?: string;
   artifactSelections?: ArtifactSelection[];
   artifactBusySelections?: Array<
@@ -102,6 +104,7 @@ export function AssistantMessage({
   showRawStream,
   artifactEditingEnabled,
   status,
+  generationOutcome,
   error,
   artifactSelections = [],
   artifactBusySelections = [],
@@ -157,11 +160,25 @@ export function AssistantMessage({
 
     const renderer = createStreamingRenderer(themeMode);
     renderer.replace(parts.streamui);
-    if (status === "complete" || parts.streamUiComplete) {
+    if (
+      shouldCompleteArtifactRender({
+        status,
+        generationOutcome,
+        streamUiComplete: parts.streamUiComplete
+      })
+    ) {
       renderer.complete();
     }
     return withRuntimeErrors(renderer.getSnapshot());
-  }, [hasStreamUi, rawStream, runtimeErrors, snapshot, status, themeMode]);
+  }, [
+    generationOutcome,
+    hasStreamUi,
+    rawStream,
+    runtimeErrors,
+    snapshot,
+    status,
+    themeMode
+  ]);
   const visibleContent = stripInternalArtifactContextText(content);
   const hasVisibleArtifact = Boolean(
     hasStreamUi &&
@@ -182,8 +199,11 @@ export function AssistantMessage({
     ? extractStreamUiParts(rawStream).streamUiComplete
     : false;
   const artifactInteractionsReady =
-    status === "complete" &&
-    rawStreamUiComplete &&
+    shouldCompleteArtifactRender({
+      status,
+      generationOutcome,
+      streamUiComplete: rawStreamUiComplete
+    }) &&
     resolvedSnapshot?.status === "complete" &&
     artifactBusySelections.length === 0;
   const selectionDisabled = !artifactInteractionsReady;

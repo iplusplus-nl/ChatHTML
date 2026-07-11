@@ -179,6 +179,51 @@ describe("sessionModel", () => {
     );
   });
 
+  it("normalizes and serializes durable branch run rollback metadata", () => {
+    const message = normalizeStoredMessage({
+      id: "a1",
+      role: "assistant",
+      content: "",
+      branchRunRollback: {
+        runId: " run-1 ",
+        groupId: " group-1 ",
+        variantId: " variant-2 ",
+        fallbackVariantId: " variant-1 "
+      }
+    });
+    const invalid = normalizeStoredMessage({
+      id: "a2",
+      role: "assistant",
+      content: "",
+      branchRunRollback: {
+        runId: "run-2",
+        groupId: "",
+        variantId: "variant-2"
+      }
+    });
+
+    assert.deepEqual(message?.branchRunRollback, {
+      runId: "run-1",
+      groupId: "group-1",
+      variantId: "variant-2",
+      fallbackVariantId: "variant-1"
+    });
+    assert.equal(invalid?.branchRunRollback, undefined);
+    assert.deepEqual(
+      serializeSessions([
+        {
+          id: "s1",
+          title: "Saved",
+          createdAt: 1,
+          updatedAt: 1,
+          messages: [message!],
+          files: []
+        }
+      ])[0].messages[0].branchRunRollback,
+      message?.branchRunRollback
+    );
+  });
+
   it("lists streaming run ids for a single session", () => {
     const session: ChatSession = {
       id: "s1",

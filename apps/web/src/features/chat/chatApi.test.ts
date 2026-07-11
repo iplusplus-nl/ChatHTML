@@ -45,7 +45,13 @@ describe("chat API", () => {
   });
 
   it("encodes run ids for cancellation and event resumption", async () => {
-    const { calls, fetchImpl } = mockFetch();
+    const { calls, fetchImpl } = mockFetch(
+      Response.json({
+        runId: "run/one",
+        outcome: "cancelled",
+        transitioned: true
+      })
+    );
     const controller = new AbortController();
 
     await cancelChatRun("run/one", "client-1", fetchImpl);
@@ -64,6 +70,82 @@ describe("chat API", () => {
       "/api/chat/runs/run%2Fone/events?after=12"
     );
     assert.equal(calls[1].init?.signal, controller.signal);
+  });
+
+  it("returns a validated authoritative cancellation result", async () => {
+    for (const outcome of ["cancelled", "complete", "error"] as const) {
+      const { fetchImpl } = mockFetch(
+        Response.json({ runId: "run-1", outcome, transitioned: false })
+      );
+
+      assert.deepEqual(await cancelChatRun("run-1", "client-1", fetchImpl), {
+        runId: "run-1",
+        outcome,
+        transitioned: false
+      });
+    }
+  });
+
+  it("forwards an optional cancellation abort signal", async () => {
+    const { calls, fetchImpl } = mockFetch(
+      Response.json({
+        runId: "run-1",
+        outcome: "cancelled",
+        transitioned: true
+      })
+    );
+    const controller = new AbortController();
+
+    await cancelChatRun(
+      "run-1",
+      "client-1",
+      fetchImpl,
+      controller.signal
+    );
+
+    assert.equal(calls[0].init?.signal, controller.signal);
+  });
+
+  it("rejects failed and malformed cancellation responses", async () => {
+    const responses = [
+      new Response("missing", { status: 404 }),
+      new Response("not-json", { status: 200 }),
+      Response.json({
+        runId: "another-run",
+        outcome: "cancelled",
+        transitioned: true
+      }),
+      Response.json({
+        runId: "run-1",
+        outcome: "unknown",
+        transitioned: true
+      }),
+      Response.json({
+        runId: "run-1",
+        outcome: ["cancelled"],
+        transitioned: true
+      }),
+      Response.json({
+        runId: "run-1",
+        outcome: { value: "cancelled" },
+        transitioned: true
+      }),
+      Response.json({
+        runId: "run-1",
+        outcome: 1,
+        transitioned: true
+      }),
+      Response.json({
+        runId: "run-1",
+        outcome: "cancelled",
+        transitioned: "yes"
+      })
+    ];
+
+    for (const response of responses) {
+      const { fetchImpl } = mockFetch(response);
+      await assert.rejects(cancelChatRun("run-1", "client-1", fetchImpl));
+    }
   });
 
   it("reads NDJSON lines across arbitrary byte chunks and flushes the tail", async () => {

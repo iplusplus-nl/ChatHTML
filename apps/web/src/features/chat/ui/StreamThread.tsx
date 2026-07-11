@@ -417,6 +417,7 @@ export function StreamThread({
                   showRawStream={showRawStream}
                   artifactEditingEnabled={artifactEditingEnabled}
                   status={clientMessage.status}
+                  generationOutcome={clientMessage.generationOutcome}
                   error={clientMessage.error}
                   artifactSelections={
                     artifactSelection.selectionsByMessageId.get(

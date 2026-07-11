@@ -55,6 +55,58 @@ describe("chat run cancellation route", () => {
     assert.deepEqual(harness.jsonBodies, [{ error: "Chat run not found." }]);
   });
 
+  it("registers a normalized one-shot cancellation for an unknown run", async () => {
+    const registrations = new Set<string>();
+    const handler = createChatRunCancellationHandler({
+      findRun: () => undefined,
+      registerUnknownRunCancellation: (runId) => {
+        const transitioned = !registrations.has(runId);
+        registrations.add(runId);
+        return transitioned;
+      }
+    });
+    const first = responseHarness();
+    const duplicate = responseHarness();
+
+    await handler(request(" run-before-accept "), first.response);
+    await handler(request("run-before-accept"), duplicate.response);
+
+    assert.deepEqual(first.statuses, []);
+    assert.deepEqual(first.jsonBodies, [
+      {
+        runId: "run-before-accept",
+        outcome: "cancelled",
+        transitioned: true
+      }
+    ]);
+    assert.deepEqual(duplicate.jsonBodies, [
+      {
+        runId: "run-before-accept",
+        outcome: "cancelled",
+        transitioned: false
+      }
+    ]);
+    assert.deepEqual(Array.from(registrations), ["run-before-accept"]);
+  });
+
+  it("does not register an empty unknown run id", async () => {
+    let registrations = 0;
+    const harness = responseHarness();
+    const handler = createChatRunCancellationHandler({
+      findRun: () => undefined,
+      registerUnknownRunCancellation: () => {
+        registrations += 1;
+        return true;
+      }
+    });
+
+    await handler(request("   "), harness.response);
+
+    assert.equal(registrations, 0);
+    assert.deepEqual(harness.statuses, [404]);
+    assert.deepEqual(harness.jsonBodies, [{ error: "Chat run not found." }]);
+  });
+
   it("waits for persistence before returning the exact outcome", async () => {
     const pending = deferred();
     const harness = responseHarness();
