@@ -1,4 +1,4 @@
-import { Camera, Download, Eraser, LogOut, Plus, Trash2, Upload, UserRound } from "lucide-react";
+import { Camera, Download, Eraser, LogOut, Plus, Trash2, Upload } from "lucide-react";
 import type { ChangeEvent, RefObject } from "react";
 import {
   MAX_MEMORY_ITEMS,
@@ -28,7 +28,6 @@ type ProfileSettingsSectionProps = {
   onImportPreferences(event: ChangeEvent<HTMLInputElement>): void;
   onExportPreferences(): void;
   onClearPreferences(): void;
-  onLoginRequest?(): void;
   onLogout?(): void;
 };
 
@@ -50,7 +49,6 @@ export function ProfileSettingsSection({
   onImportPreferences,
   onExportPreferences,
   onClearPreferences,
-  onLoginRequest,
   onLogout
 }: ProfileSettingsSectionProps) {
   return (
@@ -113,15 +111,6 @@ export function ProfileSettingsSection({
               >
                 <LogOut size={14} strokeWidth={2.1} aria-hidden="true" />
                 <span>Sign out</span>
-              </button>
-            ) : onLoginRequest ? (
-              <button
-                className="settings-small-button"
-                type="button"
-                onClick={onLoginRequest}
-              >
-                <UserRound size={14} strokeWidth={2.1} aria-hidden="true" />
-                <span>Sign in</span>
               </button>
             ) : null}
           </div>

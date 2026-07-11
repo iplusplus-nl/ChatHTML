@@ -537,6 +537,43 @@ button {
   height: 36px;
 }
 
+.sidebar-account-entry {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.sidebar-account-label {
+  display: flex;
+  min-width: 0;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 9px;
+  color: #52525b;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 540;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-account-label:hover {
+  color: #18181b;
+  background: #e8e8e8;
+}
+
+.sidebar-account-label.is-sign-in {
+  color: #18181b;
+  font-size: 13px;
+  font-weight: 620;
+}
+
 .profile-avatar {
   display: block;
   overflow: hidden;
@@ -664,9 +701,55 @@ button {
   opacity: 0.42;
 }
 
+.settings-nav-footer {
+  display: flex;
+  min-width: 0;
+  margin-top: auto;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.settings-auth-entry {
+  display: flex;
+  width: calc(100% - 16px);
+  min-width: 0;
+  min-height: 38px;
+  margin: 0 8px;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  padding: 8px 10px;
+  border: 1px solid #e4e4e7;
+  border-radius: 10px;
+  color: #18181b;
+  background: #fafafa;
+  font-size: 13px;
+  font-weight: 620;
+  text-align: left;
+}
+
+.settings-auth-entry:hover {
+  border-color: #d4d4d8;
+  background: #f4f4f5;
+}
+
+.settings-auth-entry.is-authenticated {
+  border-color: transparent;
+  color: #52525b;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 540;
+}
+
+.settings-auth-entry span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-build-meta {
   display: flex;
-  margin: auto 8px 2px;
+  margin: 0 8px 2px;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -2033,6 +2116,15 @@ button {
   background: #2a2a2a;
 }
 
+.app-shell[data-theme="night"] .sidebar-account-label {
+  color: #d4d4d8;
+}
+
+.app-shell[data-theme="night"] .sidebar-account-label:hover {
+  color: #ffffff;
+  background: #2a2a2a;
+}
+
 .app-shell[data-theme="night"] .profile-avatar,
 .settings-overlay[data-theme="night"] .profile-avatar {
   background: #4a4a4a;
@@ -2078,6 +2170,26 @@ button {
 .app-shell[data-theme="night"] .settings-build-meta,
 .settings-overlay[data-theme="night"] .settings-build-meta {
   color: #a1a1aa;
+}
+
+.app-shell[data-theme="night"] .settings-auth-entry,
+.settings-overlay[data-theme="night"] .settings-auth-entry {
+  border-color: #4a4a4a;
+  color: #f4f4f5;
+  background: #363636;
+}
+
+.app-shell[data-theme="night"] .settings-auth-entry:hover,
+.settings-overlay[data-theme="night"] .settings-auth-entry:hover {
+  border-color: #5a5a5a;
+  background: #404040;
+}
+
+.app-shell[data-theme="night"] .settings-auth-entry.is-authenticated,
+.settings-overlay[data-theme="night"] .settings-auth-entry.is-authenticated {
+  border-color: transparent;
+  color: #d4d4d8;
+  background: transparent;
 }
 
 .app-shell[data-theme="night"] .settings-profile-hero,
@@ -5474,8 +5586,21 @@ button {
   }
 
   .settings-build-meta {
-    margin: 0 6px 0 auto;
+    margin: 0 6px;
     flex: 0 0 auto;
+  }
+
+  .settings-nav-footer {
+    margin: 0 0 0 auto;
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .settings-auth-entry {
+    width: auto;
+    max-width: 160px;
+    margin: 0;
   }
 
   .settings-content {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Bug,
+  LogIn,
   Menu,
   MoreHorizontal,
   PanelLeftOpen,
@@ -269,15 +270,43 @@ export function SessionSidebar({
           </nav>
 
           <div className="sidebar-footer">
-            <button
-              className="sidebar-profile-button"
-              type="button"
-              aria-label="Open personal settings"
-              title={authUser?.email || "Personal settings"}
-              onClick={() => setIsSettingsOpen(true)}
-            >
-              <ProfileAvatar avatarDataUrl={profileSettings.avatarDataUrl} />
-            </button>
+            <div className="sidebar-account-entry">
+              <button
+                className="sidebar-profile-button"
+                type="button"
+                aria-label="Open personal settings"
+                title={authUser?.email || "Personal settings"}
+                onClick={() => setIsSettingsOpen(true)}
+              >
+                <ProfileAvatar avatarDataUrl={profileSettings.avatarDataUrl} />
+              </button>
+              {cloudEnabled ? (
+                authUser ? (
+                  <button
+                    className="sidebar-account-label"
+                    type="button"
+                    title={authUser.email}
+                    aria-label={`Open account settings for ${authUser.email}`}
+                    onClick={() => {
+                      setSettingsSection("profile");
+                      setIsSettingsOpen(true);
+                    }}
+                  >
+                    {authUser.email}
+                  </button>
+                ) : onLoginRequest ? (
+                  <button
+                    className="sidebar-account-label is-sign-in"
+                    type="button"
+                    aria-label="Sign in to ChatHTML"
+                    onClick={onLoginRequest}
+                  >
+                    <LogIn size={15} strokeWidth={2.1} aria-hidden="true" />
+                    <span>Sign in</span>
+                  </button>
+                ) : null
+              ) : null}
+            </div>
             <button
               className="sidebar-icon-button"
               type="button"

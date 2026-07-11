@@ -1,21 +1,35 @@
-import { CreditCard, Eye, KeyRound, Search, UserRound, X } from "lucide-react";
+import {
+  CreditCard,
+  Eye,
+  KeyRound,
+  LogIn,
+  Search,
+  UserRound,
+  X
+} from "lucide-react";
+import type { AuthUser } from "../../core/cloudAuth";
 import type { SettingsSection } from "../../features/settings/settingsDialogModel";
 import packageJson from "../../../package.json";
 
 const APP_VERSION = packageJson.version;
-const APP_COMMIT = __APP_COMMIT__;
+const APP_COMMIT =
+  typeof __APP_COMMIT__ === "string" ? __APP_COMMIT__ : "development";
 
 type SettingsNavigationProps = {
   section: SettingsSection;
   cloudEnabled: boolean;
+  authUser?: AuthUser | null;
   onSectionChange(section: SettingsSection): void;
+  onLoginRequest?(): void;
   onClose(): void;
 };
 
 export function SettingsNavigation({
   section,
   cloudEnabled,
+  authUser,
   onSectionChange,
+  onLoginRequest,
   onClose
 }: SettingsNavigationProps) {
   return (
@@ -80,12 +94,40 @@ export function SettingsNavigation({
         <Search size={18} strokeWidth={2.1} aria-hidden="true" />
         <span>Web Search</span>
       </button>
-      <div
-        className="settings-build-meta"
-        aria-label={`Version ${APP_VERSION}, commit ${APP_COMMIT}`}
-      >
-        <span>v{APP_VERSION}</span>
-        <code>{APP_COMMIT}</code>
+      <div className="settings-nav-footer">
+        {cloudEnabled ? (
+          authUser ? (
+            <button
+              className="settings-auth-entry is-authenticated"
+              type="button"
+              title={authUser.email}
+              aria-label={`Open account settings for ${authUser.email}`}
+              onClick={() => onSectionChange("profile")}
+            >
+              <UserRound size={17} strokeWidth={2.1} aria-hidden="true" />
+              <span>{authUser.email}</span>
+            </button>
+          ) : onLoginRequest ? (
+            <button
+              className="settings-auth-entry"
+              type="button"
+              onClick={() => {
+                onClose();
+                onLoginRequest();
+              }}
+            >
+              <LogIn size={17} strokeWidth={2.1} aria-hidden="true" />
+              <span>Sign in</span>
+            </button>
+          ) : null
+        ) : null}
+        <div
+          className="settings-build-meta"
+          aria-label={`Version ${APP_VERSION}, commit ${APP_COMMIT}`}
+        >
+          <span>v{APP_VERSION}</span>
+          <code>{APP_COMMIT}</code>
+        </div>
       </div>
     </aside>
   );

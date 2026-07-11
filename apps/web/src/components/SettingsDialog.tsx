@@ -308,7 +308,9 @@ export function SettingsDialog({
         <SettingsNavigation
           section={section}
           cloudEnabled={cloudEnabled}
+          authUser={authUser}
           onSectionChange={onSectionChange}
+          onLoginRequest={onLoginRequest}
           onClose={onClose}
         />
 
@@ -413,7 +415,6 @@ export function SettingsDialog({
                   }));
                   setPreferenceImportError(null);
                 }}
-                onLoginRequest={onLoginRequest}
                 onLogout={onLogout}
               />
             ) : section === "display" ? (
