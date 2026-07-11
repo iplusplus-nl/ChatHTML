@@ -1,6 +1,7 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
-const DEFAULT_CHATHTML_SERVICE_BASE_URL = "https://api.aietheia.com/v1";
+export const DEFAULT_CHATHTML_SERVICE_BASE_URL =
+  "https://service.aietheia.com/v1";
 const SESSION_COOKIE_NAME = "chathtml_service_session";
 const MAX_SERVICE_RESPONSE_BYTES = 256 * 1024;
 

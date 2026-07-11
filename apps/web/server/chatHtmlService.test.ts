@@ -3,7 +3,10 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, it } from "node:test";
 import express from "express";
 import type { Server } from "node:http";
-import { createChatHtmlServiceGateway } from "./chatHtmlService.js";
+import {
+  DEFAULT_CHATHTML_SERVICE_BASE_URL,
+  createChatHtmlServiceGateway
+} from "./chatHtmlService.js";
 
 const servers: Server[] = [];
 
@@ -41,6 +44,13 @@ afterEach(async () => {
 });
 
 describe("ChatHTML Service gateway", () => {
+  it("uses the dedicated service hostname by default", () => {
+    assert.equal(
+      DEFAULT_CHATHTML_SERVICE_BASE_URL,
+      "https://service.aietheia.com/v1"
+    );
+  });
+
   it("keeps the service token in an HttpOnly cookie across auth actions", async () => {
     const token = "service_session_token_abcdefghijklmnopqrstuvwxyz";
     const calls: Array<{ url: string; authorization: string }> = [];
