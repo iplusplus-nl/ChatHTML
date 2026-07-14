@@ -10,7 +10,7 @@ import {
   throwIfRetrievalAborted
 } from "./retrievalAbort.js";
 import { cleanRetrievalImageProviderQuery } from "./retrievalProviderClient.js";
-import { uniqueByUrl } from "./retrievalPrimitives.js";
+import { uniqueSearchResults } from "./retrievalPrimitives.js";
 import {
   searchOpenverseImages,
   searchPexelsImages,
@@ -44,6 +44,12 @@ export function createRecentRetrievalImageProviders(): RetrievalImageProvider[] 
 
 export function createRetrievalImageProviders(): RetrievalImageProvider[] {
   return [
+    {
+      name: "Tavily Images",
+      configured: (config) => Boolean(config.tavilyApiKey),
+      setupHint: "select Tavily with an API key or set TAVILY_API_KEY",
+      search: searchTavilyImages
+    },
     { name: "Openverse", search: searchOpenverseImages },
     { name: "Pexels", envKeys: ["PEXELS_API_KEY"], search: searchPexelsImages },
     {
@@ -109,7 +115,7 @@ export async function searchRetrievalImageSources(
     }
   }
 
-  return uniqueByUrl(
+  return uniqueSearchResults(
     results.filter((result) => isRetrievalDomainPermitted(result.url, config))
   ).slice(0, Math.max(32, config.searchMaxResults * 8));
 }

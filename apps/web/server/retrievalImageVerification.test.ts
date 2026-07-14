@@ -5,6 +5,7 @@ import {
   isDecorativeRetrievalImage,
   retrievalImageDedupeKey,
   retrievalImageUrlVariants,
+  selectRetrievalImageCandidates,
   verifyRetrievalImageCandidates
 } from "./retrievalImageVerification.js";
 import type {
@@ -83,6 +84,33 @@ test("social profile pictures are treated as decorative", () => {
       url: "https://scontent.cdninstagram.com/v/t51.2885-15/event-photo.jpg"
     }),
     false
+  );
+});
+
+test("candidate selection drops off-topic images when a full relevant gallery exists", () => {
+  const candidates = collectRetrievalImageCandidates(
+    [
+      source([
+        { url: "https://cdn.example/wrx-1.jpg", alt: "Subaru WRX front" },
+        { url: "https://cdn.example/wrx-2.jpg", alt: "Subaru WRX rear" },
+        { url: "https://cdn.example/wrx-3.jpg", alt: "Subaru WRX cabin" },
+        { url: "https://cdn.example/wrx-4.jpg", alt: "Subaru WRX track" },
+        { url: "https://cdn.example/untitled.jpg", alt: "Untitled print" }
+      ])
+    ],
+    ["Subaru WRX photos"]
+  );
+
+  assert.deepEqual(
+    selectRetrievalImageCandidates(candidates).map(
+      (candidate) => candidate.image.url
+    ),
+    [
+      "https://cdn.example/wrx-1.jpg",
+      "https://cdn.example/wrx-2.jpg",
+      "https://cdn.example/wrx-3.jpg",
+      "https://cdn.example/wrx-4.jpg"
+    ]
   );
 });
 

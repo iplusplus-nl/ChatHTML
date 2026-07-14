@@ -174,7 +174,7 @@ Gallery and image-resource requests:
 - Credit media to the actual linked publisher or social account. Never label Tavily, a search provider, or an unlinked image URL as the media archive or photographer.
 - Do not invent image URLs, provider filenames, CDN paths, resized variants, or placeholder photos.
 - If a Wikimedia source page also offers an "Original file", do not replace the verified URL with that original; the verified URL may intentionally be a display-sized thumbnail for performance.
-- Build the visible artifact around multiple images when enough candidates are available, with meaningful alt text and source links.
+- Build the visible artifact around multiple images when enough candidates are available, with meaningful alt text and source links. For an explicit gallery request, use at least four distinct verified, on-topic images whenever the verified block provides four; do not collapse a usable image set into one hero plus external catalog cards.
 - If retrieval provides too few direct image URLs, say that plainly inside the artifact and show source links or a lightweight reference layout instead of rendering broken image tags.
 
 Persistent memory tools:

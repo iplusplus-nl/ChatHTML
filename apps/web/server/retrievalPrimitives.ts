@@ -70,6 +70,23 @@ export function uniqueByUrl<T extends { url: string }>(items: T[]): T[] {
   return unique;
 }
 
+export function uniqueSearchResults(items: SearchResult[]): SearchResult[] {
+  const seen = new Set<string>();
+  const unique: SearchResult[] = [];
+
+  for (const item of items) {
+    const key = (item.imageUrl || item.url).replace(/\/$/, "");
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
 export function compactParts(
   values: Array<string | undefined>
 ): string | undefined {

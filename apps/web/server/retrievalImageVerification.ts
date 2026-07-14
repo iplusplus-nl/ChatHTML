@@ -174,6 +174,13 @@ export function collectRetrievalImageCandidates(
   return candidates;
 }
 
+export function selectRetrievalImageCandidates(
+  candidates: RetrievalImageCandidate[]
+): RetrievalImageCandidate[] {
+  const relevant = candidates.filter((candidate) => candidate.score > 0);
+  return relevant.length >= 4 ? relevant : candidates;
+}
+
 export function formatVerifiedRetrievalImages(images: VerifiedImage[]): string[] {
   return images.slice(0, 24).map((image) => {
     const alt = image.alt ? ` (${image.alt})` : "";
@@ -283,9 +290,16 @@ export async function verifyRetrievalImageCandidates(
   validate: RetrievalImageValidator = validateImageUrl
 ): Promise<VerifiedImage[]> {
   throwIfRetrievalAborted(config.signal);
-  const candidates = collectRetrievalImageCandidates(sources, queries).slice(0, 56);
+  const rankedCandidates = collectRetrievalImageCandidates(sources, queries);
+  const candidates = selectRetrievalImageCandidates(rankedCandidates).slice(0, 56);
   if (!candidates.length) {
     return [];
+  }
+
+  if (candidates.length < rankedCandidates.length) {
+    notes.push(
+      `Image relevance removed ${rankedCandidates.length - candidates.length} off-topic candidates.`
+    );
   }
 
   onStatus?.(`Retrieving: verifying ${candidates.length} image candidates...`);

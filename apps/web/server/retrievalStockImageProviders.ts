@@ -61,19 +61,54 @@ export async function searchTavilyImages(
     },
     config.timeoutMs,
     config.signal
-  )) as {
-    images?: Array<string | { url?: string; description?: string }>;
-    results?: Array<{
-      title?: string;
-      url?: string;
-      content?: string;
-      images?: Array<string | { url?: string; description?: string }>;
-    }>;
-  };
+  )) as TavilyImageSearchResponse;
 
+  return tavilyImageSearchResults(data).slice(
+    0,
+    retrievalImageProviderLimit(config)
+  );
+}
+
+type TavilyImage =
+  | string
+  | { url?: string; title?: string; description?: string };
+
+export type TavilyImageSearchResponse = {
+  images?: TavilyImage[];
+  results?: Array<{
+    title?: string;
+    url?: string;
+    content?: string;
+    images?: TavilyImage[];
+  }>;
+};
+
+export function tavilyImageSearchResults(
+  data: TavilyImageSearchResponse
+): SearchResult[] {
   const results: SearchResult[] = [];
+  const sourceResults = data.results ?? [];
+  const normalizedTitle = (value: string | undefined) =>
+    value?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
+  const sourceByTitle = new Map(
+    sourceResults
+      .filter((result) => result.url && result.title)
+      .map((result) => [normalizedTitle(result.title), result] as const)
+  );
+  const nestedImageSources = new Map<string, (typeof sourceResults)[number]>();
+
+  for (const result of sourceResults) {
+    for (const image of result.images ?? []) {
+      const rawImageUrl = typeof image === "string" ? image : image.url ?? "";
+      const imageUrl = parseAbsoluteUrl(rawImageUrl);
+      if (imageUrl && !nestedImageSources.has(imageUrl)) {
+        nestedImageSources.set(imageUrl, result);
+      }
+    }
+  }
+
   const addImage = (
-    image: string | { url?: string; description?: string },
+    image: TavilyImage,
     sourceUrl: string,
     sourceTitle: string | undefined,
     sourceContent: string | undefined
@@ -85,42 +120,55 @@ export async function searchTavilyImages(
       return;
     }
     const description = typeof image === "string" ? undefined : image.description;
+    const imageTitle = typeof image === "string" ? undefined : image.title;
     results.push({
       url: landingUrl,
-      title: clip(sourceTitle || description, 220),
+      title: clip(sourceTitle || imageTitle || description, 220),
       snippet: clip(description || sourceContent, 420),
       imageUrl,
-      imageAlt: clip(description || sourceTitle, 160),
+      imageAlt: clip(description || imageTitle || sourceTitle, 160),
       imageCredit: "Tavily image search",
       provider: "tavily-images",
       rank: results.length + 1
     });
   };
 
-  for (const result of data.results ?? []) {
+  // Tavily's top-level list is curated for the image query. Keep it first;
+  // result-level arrays can contain dozens of incidental page assets.
+  for (const image of data.images ?? []) {
+    const rawImageUrl = typeof image === "string" ? image : image.url ?? "";
+    const imageUrl = parseAbsoluteUrl(rawImageUrl);
+    const imageTitle = typeof image === "string" ? undefined : image.title;
+    const videoId = youtubeVideoId(rawImageUrl);
+    const matchingSource =
+      (imageUrl ? nestedImageSources.get(imageUrl) : undefined) ??
+      (imageTitle ? sourceByTitle.get(normalizedTitle(imageTitle)) : undefined) ??
+      (videoId
+        ? sourceResults.find((result) => youtubeVideoId(result.url) === videoId)
+        : undefined);
+
+    addImage(
+      image,
+      matchingSource?.url ?? rawImageUrl,
+      matchingSource?.title ?? imageTitle,
+      matchingSource?.content
+    );
+  }
+
+  for (const result of sourceResults) {
     for (const image of result.images ?? []) {
       addImage(image, result.url ?? "", result.title, result.content);
     }
   }
-  if (!results.length) {
-    for (const image of data.images ?? []) {
-      const rawImageUrl = typeof image === "string" ? image : image.url;
-      const videoId = youtubeVideoId(rawImageUrl);
-      const matchingSource = videoId
-        ? data.results?.find((result) => youtubeVideoId(result.url) === videoId)
-        : undefined;
-      if (matchingSource) {
-        addImage(
-          image,
-          matchingSource.url ?? "",
-          matchingSource.title,
-          matchingSource.content
-        );
-      }
-    }
-  }
 
-  return results.filter((result) => result.url && result.imageUrl);
+  const seen = new Set<string>();
+  return results.filter((result) => {
+    if (!result.url || !result.imageUrl || seen.has(result.imageUrl)) {
+      return false;
+    }
+    seen.add(result.imageUrl);
+    return true;
+  });
 }
 
 export async function searchOpenverseImages(

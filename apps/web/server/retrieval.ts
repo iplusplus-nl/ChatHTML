@@ -34,7 +34,8 @@ import { RETRIEVAL_USER_AGENT as USER_AGENT } from "./retrievalProviderClient.js
 import {
   imageFromSearchResult,
   sourceKey,
-  uniqueByUrl
+  uniqueByUrl,
+  uniqueSearchResults
 } from "./retrievalPrimitives.js";
 import {
   formatVerifiedRetrievalImages as formatVerifiedImages,
@@ -349,6 +350,51 @@ function assignSourceIds(sources: RetrievalSource[]): RetrievalSource[] {
   }));
 }
 
+function toSearchSources(results: SearchResult[]): RetrievalSource[] {
+  const grouped = new Map<string, RetrievalSource>();
+
+  for (const result of results) {
+    const key = sourceKey(result.url);
+    const existing = grouped.get(key) ?? toSearchSource(result);
+    const image = imageFromSearchResult(result);
+    grouped.set(key, {
+      ...existing,
+      images: image
+        ? uniqueByUrl([...existing.images, image])
+        : existing.images
+    });
+  }
+
+  return [...grouped.values()];
+}
+
+function mergeSearchResultImages(
+  sources: RetrievalSource[],
+  results: SearchResult[]
+): RetrievalSource[] {
+  const imagesBySource = new Map<string, RetrievedImage[]>();
+
+  for (const result of results) {
+    const image = imageFromSearchResult(result);
+    if (!image) {
+      continue;
+    }
+    const key = sourceKey(result.url);
+    imagesBySource.set(
+      key,
+      uniqueByUrl([...(imagesBySource.get(key) ?? []), image])
+    );
+  }
+
+  return sources.map((source) => ({
+    ...source,
+    images: uniqueByUrl([
+      ...source.images,
+      ...(imagesBySource.get(sourceKey(source.url)) ?? [])
+    ])
+  }));
+}
+
 function diversifyRetrievalUrls(urls: string[], maxUrls: number): string[] {
   if (urls.length <= maxUrls) {
     return urls;
@@ -545,7 +591,7 @@ export async function collectRetrievalContext(
           if (!queries.includes(imageQuery)) {
             queries.push(imageQuery);
           }
-          searchResults = uniqueByUrl([
+          searchResults = uniqueSearchResults([
             ...searchResults,
             ...(await searchImageSources(
               imageQuery,
@@ -561,7 +607,7 @@ export async function collectRetrievalContext(
         if (!queries.includes(imageQuery)) {
           queries.push(imageQuery);
         }
-        searchResults = uniqueByUrl([
+        searchResults = uniqueSearchResults([
           ...searchResults,
           ...(await searchImageSources(
             imageQuery,
@@ -579,7 +625,7 @@ export async function collectRetrievalContext(
         queries.push(query);
       }
       options.onStatus?.(`Retrieving: searching the web for "${query}"...`);
-      searchResults = uniqueByUrl([
+      searchResults = uniqueSearchResults([
         ...searchResults,
         ...(await searchWeb(query, config, notes))
       ]).slice(0, searchResultCap);
@@ -609,7 +655,7 @@ export async function collectRetrievalContext(
   const urlsToFetch = visualSearchNeeded
     ? diversifyRetrievalUrls(allUrlsToFetch, config.fetchMaxPages)
     : allUrlsToFetch;
-  const pageSources =
+  const fetchedPageSources =
     config.fetchMaxPages > 0
       ? await fetchSources(
           urlsToFetch,
@@ -620,10 +666,11 @@ export async function collectRetrievalContext(
         )
       : [];
   throwIfRetrievalAborted(config.signal);
+  const pageSources = mergeSearchResultImages(fetchedPageSources, searchResults);
   const fetchedKeys = new Set(pageSources.map((source) => sourceKey(source.url)));
-  const searchOnlySources = searchResults
-    .filter((result) => !fetchedKeys.has(sourceKey(result.url)))
-    .map(toSearchSource);
+  const searchOnlySources = toSearchSources(
+    searchResults.filter((result) => !fetchedKeys.has(sourceKey(result.url)))
+  );
   let sources = assignSourceIds([...pageSources, ...searchOnlySources]);
   let verifiedImages: VerifiedImage[] = [];
   if (asksForVisualResources(intentText)) {
