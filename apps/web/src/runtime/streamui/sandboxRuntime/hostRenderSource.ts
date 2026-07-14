@@ -34,11 +34,19 @@ export const hostRenderSource = `      const applyHostRenderTheme = (theme) => {
         if (
           data.source !== "streamui-host" ||
           data.documentEpoch !== HOST_DOCUMENT_EPOCH ||
-          data.kind !== "render" ||
-          typeof data.bodyHtml !== "string" ||
-          !applyHostRenderTheme(data.theme) ||
-          !document.body
+          (data.kind !== "render" && data.kind !== "theme") ||
+          !applyHostRenderTheme(data.theme)
         ) {
+          return;
+        }
+
+        if (data.kind === "theme") {
+          scheduleMeasure();
+          scheduleReadabilityAudit();
+          return;
+        }
+
+        if (typeof data.bodyHtml !== "string" || !document.body) {
           return;
         }
 

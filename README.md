@@ -46,7 +46,10 @@ The browser calls the local backend at `POST /api/chat`; the backend reads `OPEN
 HTML artifact hosting is provided by the standalone
 [`aietheia/oops`](https://github.com/aietheia/oops) service. ChatHTML posts share
 requests to `POST /api/html-shares`; production deployments should route that
-path, plus `/artifacts/*`, to the Oops service.
+path, plus `/artifacts/*`, to the Oops service. The Share Link action is hidden
+by default so a standalone ChatHTML server does not advertise a route it does
+not implement. Set `VITE_CHATHTML_ARTIFACT_SHARE_LINKS=true` when building the
+web app only after those proxy routes are configured.
 
 ## Open Source and Hosted Cloud
 

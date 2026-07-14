@@ -27,8 +27,18 @@ describe("artifact export resources", () => {
 
   it("proxies remote resources and leaves blob URLs local", () => {
     assert.equal(
-      getExportResourceFetchUrl("https://example.test/image.png?q=1"),
+      getExportResourceFetchUrl(
+        "https://example.test/image.png?q=1",
+        "https://app.test"
+      ),
       "/api/export-resource?url=https%3A%2F%2Fexample.test%2Fimage.png%3Fq%3D1"
+    );
+    assert.equal(
+      getExportResourceFetchUrl(
+        "https://app.test/api/files/file-1/content?token=secret",
+        "https://app.test"
+      ),
+      "https://app.test/api/files/file-1/content?token=secret"
     );
     assert.equal(
       getExportResourceFetchUrl("blob:https://example.test/id"),

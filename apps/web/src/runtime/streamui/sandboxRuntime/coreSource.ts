@@ -8,6 +8,9 @@ export function buildCoreSource(
   return `    (() => {
       const HOST_CHANNEL_TOKEN = ${hostChannelTokenLiteral};
       const HOST_DOCUMENT_EPOCH = ${hostDocumentEpochLiteral};
+      const hasHostCapabilities = Boolean(
+        HOST_CHANNEL_TOKEN && HOST_DOCUMENT_EPOCH && window.parent !== window
+      );
       const postToParent = window.parent.postMessage.bind(window.parent);
       const post = (kind, message, extra = {}) => {
         try {
@@ -64,6 +67,10 @@ export function buildCoreSource(
         });
       }, { passive: true });
       const MATHJAX_SCRIPT_SRC = "${MATHJAX_SCRIPT_SRC}";
+      let runtimeDocumentLoaded = document.readyState === "complete";
+      window.addEventListener("load", () => {
+        runtimeDocumentLoaded = true;
+      }, { once: true });
       window.MathJax = {
         tex: {
           inlineMath: [["\\\\(", "\\\\)"]],
@@ -95,19 +102,27 @@ export function buildCoreSource(
         return request;
       };
       let scheduledMeasureFrame = 0;
+      let scheduledMeasureForceShrink = false;
       let mathJaxScriptRequested = false;
       let mathJaxTypesetFrame = 0;
       let mathJaxTypesetting = false;
       let mathJaxTypesetAgain = false;
-      const scheduleMeasure = () => {
+      const scheduleMeasure = (forceShrink = false) => {
+        if (!runtimeDocumentLoaded) {
+          return;
+        }
+        scheduledMeasureForceShrink =
+          scheduledMeasureForceShrink || forceShrink === true;
         if (scheduledMeasureFrame) {
           return;
         }
 
         scheduledMeasureFrame = requestAnimationFrame(() => {
           scheduledMeasureFrame = 0;
+          const shouldForceShrink = scheduledMeasureForceShrink;
+          scheduledMeasureForceShrink = false;
           normalizeExternalLinks();
-          measure();
+          measure(shouldForceShrink);
         });
       };
       const bodyContainsMathDelimiters = () => {
@@ -234,6 +249,9 @@ export function buildCoreSource(
         });
       };
       const installClipboardBridge = () => {
+        if (!hasHostCapabilities) {
+          return;
+        }
         try {
           if (navigator.clipboard) {
             Object.defineProperty(navigator.clipboard, "writeText", {

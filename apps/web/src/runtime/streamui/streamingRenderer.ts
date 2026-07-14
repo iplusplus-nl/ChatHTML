@@ -36,6 +36,11 @@ const SECURITY_RULES: Array<{ pattern: RegExp; message: string }> = [
   }
 ];
 
+const INLINE_EVENT_HANDLER_PATTERN =
+  /<[a-z][^>]*\s+on[a-z]+\s*=\s*(?:["'][\s\S]*?["']|[^\s>]+)/i;
+const INLINE_EVENT_HANDLER_MESSAGE =
+  "Inline event handler attributes are not supported and were removed. Bind interactions with addEventListener instead.";
+
 function makeSnapshot(
   raw: string,
   errors: RenderError[],
@@ -91,9 +96,16 @@ export function createStreamingRenderer(
     }
   };
 
+  const inspectCompatibility = () => {
+    if (INLINE_EVENT_HANDLER_PATTERN.test(raw)) {
+      addError("html", INLINE_EVENT_HANDLER_MESSAGE);
+    }
+  };
+
   const refresh = () => {
     try {
       inspectSecurity();
+      inspectCompatibility();
       snapshot = makeSnapshot(raw, errors, status, themeMode);
     } catch (error) {
       status = "error";

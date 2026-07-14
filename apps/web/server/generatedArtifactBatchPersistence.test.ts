@@ -124,6 +124,31 @@ describe("generated artifact batch terminal persistence", () => {
     assert.equal(variants[0].createdAt, 20);
   });
 
+  it("preserves the existing title for visual-repair stream and terminal patches", () => {
+    const message = assistant([pendingChatEdit()], {
+      sessionTitle: "Model and Quote"
+    });
+    const titlePatch = terminalPatch({
+      rawStream:
+        "<sessiontitle>Screenshot Details</sessiontitle><chat>Updated explanation</chat><streamui><main>Updated</main></streamui>",
+      sessionTitle: "Screenshot Details"
+    });
+
+    const streaming = finalizeGeneratedArtifactBatchPatch({
+      assistantMessage: message,
+      patch: { ...titlePatch, status: "streaming" },
+      status: "streaming"
+    });
+    const completed = finalizeGeneratedArtifactBatchPatch({
+      assistantMessage: message,
+      patch: titlePatch,
+      status: "complete"
+    });
+
+    assert.equal(streaming.sessionTitle, "Model and Quote");
+    assert.equal(completed.sessionTitle, "Model and Quote");
+  });
+
   it("fails an empty successful terminal instead of storing an empty version", () => {
     const message = assistant([pendingChatEdit()]);
     const result = finalizeGeneratedArtifactBatchPatch({

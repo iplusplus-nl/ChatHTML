@@ -3,6 +3,8 @@ import {
   drawScreenshotLayers,
   type ScreenshotOverlayLayer
 } from "./screenshotLayerComposition";
+import { inlineExternalSnapshotResources } from "./artifactExportResources";
+import { elementToBrowserSvg } from "./browserDomToSvg";
 
 const MAX_CANVAS_DIMENSION = 16_384;
 const MAX_CANVAS_PIXELS = 32_000_000;
@@ -16,7 +18,6 @@ type IframeOverlay = ScreenshotOverlayLayer<HTMLImageElement> & {
 type IframeCaptureContext = {
   document: Document;
   window: Window;
-  staticSource: boolean;
   cleanup(): void;
 };
 
@@ -55,6 +56,16 @@ async function withTimeout<T>(
   }
 }
 
+function getScreenshotScale(width: number, height: number): number {
+  const deviceScale = Math.min(window.devicePixelRatio || 1, 2);
+  const dimensionScale = Math.min(
+    MAX_CANVAS_DIMENSION / width,
+    MAX_CANVAS_DIMENSION / height
+  );
+  const pixelScale = Math.sqrt(MAX_CANVAS_PIXELS / (width * height));
+  return Math.min(deviceScale, dimensionScale, pixelScale, 2);
+}
+
 function createCaptureArea(
   document: Document,
   x: number,
@@ -66,115 +77,37 @@ function createCaptureArea(
   return new FrameDomRect(x, y, width, height);
 }
 
-function measureDocument(document: Document) {
-  const body = document.body;
-  const html = document.documentElement;
-  const width = Math.ceil(
-    Math.max(
-      body?.scrollWidth || 0,
-      body?.offsetWidth || 0,
-      html?.scrollWidth || 0,
-      html?.offsetWidth || 0
-    )
-  );
-  const height = Math.ceil(
-    Math.max(
-      body?.scrollHeight || 0,
-      body?.offsetHeight || 0,
-      html?.scrollHeight || 0,
-      html?.offsetHeight || 0
-    )
-  );
-
-  return {
-    width: Math.max(1, width),
-    height: Math.max(1, height)
-  };
-}
-
-function getScreenshotScale(width: number, height: number): number {
-  const deviceScale = Math.min(window.devicePixelRatio || 1, 2);
-  const dimensionScale = Math.min(
-    MAX_CANVAS_DIMENSION / width,
-    MAX_CANVAS_DIMENSION / height
-  );
-  const pixelScale = Math.sqrt(MAX_CANVAS_PIXELS / (width * height));
-  return Math.min(deviceScale, dimensionScale, pixelScale, 2);
-}
-
-function serializeSvgDocument(svgDocument: XMLDocument): string {
-  return new XMLSerializer().serializeToString(svgDocument.documentElement);
-}
-
-function normalizeSvgMarkup(markup: string): string {
-  return markup.startsWith("<?xml")
-    ? markup
-    : `<?xml version="1.0" encoding="UTF-8"?>${markup}`;
-}
-
-function collectDocumentStyles(document: Document): string {
-  return Array.from(document.styleSheets)
-    .map((sheet) => {
-      try {
-        return Array.from(sheet.cssRules)
-          .map((rule) => rule.cssText)
-          .join("\n");
-      } catch {
-        return "";
-      }
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
-async function inlineSvgResourcesBestEffort(svgDocument: XMLDocument): Promise<void> {
-  const { inlineResources } = await import("dom-to-svg");
-  await withTimeout(
-    inlineResources(svgDocument.documentElement),
-    SCREENSHOT_TIMEOUT_MS,
-    "Timed out while inlining screenshot resources."
-  ).catch((error) => {
-    console.warn("Could not inline every screenshot resource.", error);
-  });
-}
-
-async function renderElementToSvgString(
-  element: Element,
-  captureArea: DOMRectReadOnly
-): Promise<string> {
-  const { elementToSVG } = await import("dom-to-svg");
-  const svgDocument = elementToSVG(element, {
-    captureArea,
-    keepLinks: false
-  });
-  await inlineSvgResourcesBestEffort(svgDocument);
-  return serializeSvgDocument(svgDocument);
-}
-
-function renderDocumentAreaToForeignObjectSvg(
+async function renderDocumentAreaToSvg(
   document: Document,
   x: number,
   y: number,
   width: number,
   height: number
-): string {
-  const measured = measureDocument(document);
-  const clonedBody = document.body.cloneNode(true) as HTMLElement;
-  const style = document.createElement("style");
-  style.textContent = collectDocumentStyles(document);
-  clonedBody.querySelectorAll("script").forEach((script) => script.remove());
-  clonedBody.prepend(style);
-  clonedBody.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
-  clonedBody.style.margin = "0";
-  clonedBody.style.width = `${measured.width}px`;
-  clonedBody.style.minHeight = `${measured.height}px`;
-  clonedBody.style.transform = `translate(${-x}px, ${-y}px)`;
-  clonedBody.style.transformOrigin = "0 0";
-
-  const bodyMarkup = new XMLSerializer().serializeToString(clonedBody);
-  return normalizeSvgMarkup(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject x="0" y="0" width="${width}" height="${height}">${bodyMarkup}</foreignObject></svg>`
-  );
+): Promise<string> {
+  const exclusionStyle = document.createElement("style");
+  exclusionStyle.textContent =
+    "[data-screenshot-exclude] { visibility: hidden !important; }";
+  document.head.appendChild(exclusionStyle);
+  let svgDocument: XMLDocument;
+  try {
+    svgDocument = elementToBrowserSvg(document.documentElement, {
+      captureArea: createCaptureArea(document, x, y, width, height),
+      keepLinks: false
+    });
+  } finally {
+    exclusionStyle.remove();
+  }
+  await withTimeout(
+    inlineExternalSnapshotResources(
+      svgDocument.documentElement,
+      document.baseURI
+    ),
+    SCREENSHOT_TIMEOUT_MS,
+    "Timed out while inlining screenshot resources."
+  ).catch((error) => {
+    console.warn("Could not inline every screenshot resource.", error);
+  });
+  return new XMLSerializer().serializeToString(svgDocument.documentElement);
 }
 
 function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
@@ -273,14 +206,14 @@ async function renderDocumentAreaToDataUrl(
   y: number,
   width: number,
   height: number,
-  inlineResources = false
 ): Promise<string> {
-  const svg = inlineResources
-    ? await renderElementToSvgString(
-        document.documentElement,
-        createCaptureArea(document, x, y, width, height)
-      )
-    : renderDocumentAreaToForeignObjectSvg(document, x, y, width, height);
+  const svg = await renderDocumentAreaToSvg(
+    document,
+    x,
+    y,
+    width,
+    height
+  );
   const scale = getScreenshotScale(width, height);
   const blob = await rasterizeSvgToPngBlob(svg, width, height, scale);
 
@@ -325,7 +258,6 @@ function getDirectIframeCaptureContext(
     return {
       document: frameDocument,
       window: frameWindow,
-      staticSource: false,
       cleanup() {}
     };
   } catch {
@@ -379,7 +311,6 @@ async function createStaticIframeCaptureContext(
     return {
       document: frameDocument,
       window: frameWindow,
-      staticSource: true,
       cleanup: () => proxy.remove()
     };
   } catch (error) {
@@ -421,10 +352,11 @@ async function createIframeOverlay(
     const visibleBottom = Math.min(window.innerHeight, rect.bottom);
     const visibleWidth = Math.max(1, Math.round(visibleRight - visibleLeft));
     const visibleHeight = Math.max(1, Math.round(visibleBottom - visibleTop));
-    const frameX =
-      Math.max(0, visibleLeft - rect.left) + capture.window.scrollX;
-    const frameY =
-      Math.max(0, visibleTop - rect.top) + capture.window.scrollY;
+    // dom-to-svg reads getBoundingClientRect(), whose coordinates already
+    // include the iframe's current scroll position. Add only viewport clipping,
+    // not scrollX/scrollY a second time.
+    const frameX = Math.max(0, visibleLeft - rect.left);
+    const frameY = Math.max(0, visibleTop - rect.top);
     await settleWithin(capture.document.fonts?.ready, 2_000);
     await settleWithin(waitForDocumentImages(capture.document), 2_000);
 
@@ -433,8 +365,7 @@ async function createIframeOverlay(
       frameX,
       frameY,
       visibleWidth,
-      visibleHeight,
-      capture.staticSource
+      visibleHeight
     );
 
     overlay = document.createElement("img");
@@ -486,10 +417,12 @@ export async function captureCurrentPageScreenshotBlob(): Promise<Blob> {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const width = Math.max(1, Math.round(window.innerWidth));
     const height = Math.max(1, Math.round(window.innerHeight));
-    const captureArea = createCaptureArea(document, 0, 0, width, height);
-    const svg = await renderElementToSvgString(
-      document.documentElement,
-      captureArea
+    const svg = await renderDocumentAreaToSvg(
+      document,
+      0,
+      0,
+      width,
+      height
     );
     const scale = getScreenshotScale(width, height);
     return await rasterizeSvgToPngBlob(svg, width, height, scale, overlays);

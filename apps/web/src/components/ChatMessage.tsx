@@ -8,6 +8,10 @@ import type {
   SessionFile
 } from "../domain/chat/sessionModel";
 import { shouldDismissMessageEditor } from "./chatMessageEditModel";
+import {
+  ARTIFACT_EDIT_SELECTION_LABEL,
+  getElementReferenceSummary
+} from "./chatMessageArtifactReferenceModel";
 
 type ArtifactEditTimeline = {
   assistantId: string;
@@ -59,18 +63,6 @@ function getArtifactReferenceText(reference: ArtifactEditReference): string {
   return reference.preview || reference.label;
 }
 
-function getElementReferenceSummary(reference: ArtifactEditReference): string {
-  const value = (reference.preview || reference.label || reference.tagName || "控件")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (value.length <= 52) {
-    return value;
-  }
-
-  return `${value.slice(0, 49).trimEnd()}...`;
-}
-
 function ArtifactEditElementSummary({
   references
 }: {
@@ -85,7 +77,7 @@ function ArtifactEditElementSummary({
         type="button"
         aria-describedby={tooltipId}
       >
-        选区
+        {ARTIFACT_EDIT_SELECTION_LABEL}
       </button>
       <span
         className="artifact-edit-selection-popover"

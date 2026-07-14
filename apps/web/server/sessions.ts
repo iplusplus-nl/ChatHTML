@@ -97,18 +97,6 @@ function getRequestStateKey(req: Request): string {
   return DEFAULT_SESSION_STATE_KEY;
 }
 
-function getRequestOrigin(req: Request): string {
-  const forwardedProto = stringValue(req.headers["x-forwarded-proto"])
-    .split(",")[0]
-    .trim();
-  const forwardedHost = stringValue(req.headers["x-forwarded-host"])
-    .split(",")[0]
-    .trim();
-  const protocol = forwardedProto || req.protocol || "http";
-  const host = forwardedHost || req.get("host") || "127.0.0.1:8787";
-  return `${protocol}://${host}`;
-}
-
 function getRequestBasePath(req: Request): string {
   const forwardedPrefix = stringValue(req.headers["x-forwarded-prefix"])
     .split(",")[0]
@@ -123,19 +111,42 @@ function getRequestBasePath(req: Request): string {
   return forwardedPrefix.replace(/\/+$/, "");
 }
 
+export function buildSessionFileContentUrl(
+  basePath: string,
+  fileId: string,
+  accessToken: string,
+  download = false
+): string {
+  const id = encodeURIComponent(fileId);
+  const token = encodeURIComponent(accessToken);
+  return `${basePath}/api/files/${id}/content?token=${token}${
+    download ? "&download=1" : ""
+  }`;
+}
+
 function withFileUrls(req: Request, file: StoredSessionFile): StoredSessionFile {
   if (!file.accessToken) {
     return file;
   }
 
-  const origin = getRequestOrigin(req);
   const basePath = getRequestBasePath(req);
-  const id = encodeURIComponent(file.id);
-  const token = encodeURIComponent(file.accessToken);
   return {
     ...file,
-    embedUrl: `${origin}${basePath}/api/files/${id}/content?token=${token}`,
-    downloadUrl: `${origin}${basePath}/api/files/${id}/content?token=${token}&download=1`
+    // Keep browser-facing file URLs on the application origin. In the
+    // two-port development topology, absolute backend URLs look external to
+    // the opaque preview iframe and are incorrectly sent through the public
+    // media proxy, which intentionally rejects loopback addresses.
+    embedUrl: buildSessionFileContentUrl(
+      basePath,
+      file.id,
+      file.accessToken
+    ),
+    downloadUrl: buildSessionFileContentUrl(
+      basePath,
+      file.id,
+      file.accessToken,
+      true
+    )
   };
 }
 

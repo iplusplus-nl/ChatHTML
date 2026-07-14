@@ -230,6 +230,7 @@ function mergePatchPreservingOperation(
     artifactEdits: _artifactEdits,
     activeArtifactEditId: _activeArtifactEditId,
     generationRunId: _generationRunId,
+    sessionTitle: _sessionTitle,
     ...safePatch
   } = patch;
 

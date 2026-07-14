@@ -81,9 +81,20 @@ export function shouldInlineExportResource(url: string): boolean {
   return protocol === "http:" || protocol === "https:" || protocol === "blob:";
 }
 
-export function getExportResourceFetchUrl(url: string): string {
+export function getExportResourceFetchUrl(
+  url: string,
+  applicationOrigin =
+    typeof window === "undefined" ? undefined : window.location.origin
+): string {
   const protocol = getExportResourceProtocol(url);
   if (protocol === "http:" || protocol === "https:") {
+    try {
+      if (applicationOrigin && new URL(url).origin === applicationOrigin) {
+        return url;
+      }
+    } catch {
+      // Fall through to the proxy URL for malformed or remote resources.
+    }
     return `${EXPORT_RESOURCE_ENDPOINT}?url=${encodeURIComponent(url)}`;
   }
 

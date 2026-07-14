@@ -38,6 +38,89 @@ export const actionSource = `      const findCapabilityAction = (target) => {
         return String(targetText || direct || "")
           .slice(0, MAX_CAPABILITY_TEXT_CHARS);
       };
+      const copyStandaloneText = async (text) => {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          try {
+            await navigator.clipboard.writeText(text);
+            return;
+          } catch {}
+        }
+
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-10000px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          if (
+            typeof document.execCommand !== "function" ||
+            !document.execCommand("copy")
+          ) {
+            throw new Error("Clipboard copy was rejected.");
+          }
+        } finally {
+          textarea.remove();
+        }
+      };
+      const downloadStandaloneText = (trigger) => {
+        const text = getCapabilityText(
+          trigger,
+          "data-streamui-download",
+          "data-streamui-download-target"
+        );
+        const type = trigger.getAttribute("data-streamui-mime-type") ||
+          "text/plain;charset=utf-8";
+        const filename = trigger.getAttribute("data-streamui-filename") ||
+          "artifact-download.txt";
+        const url = URL.createObjectURL(new Blob([text], { type }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+      const openStandaloneUrl = (trigger) => {
+        const rawUrl = String(
+          trigger.getAttribute("data-streamui-open-url") || ""
+        ).trim();
+        try {
+          const url = new URL(rawUrl, document.baseURI);
+          if (!/^https?:$/.test(url.protocol)) {
+            return;
+          }
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
+        } catch {}
+      };
+      const runStandaloneCapabilityAction = (trigger) => {
+        if (
+          trigger.hasAttribute("data-streamui-copy") ||
+          trigger.hasAttribute("data-streamui-copy-target")
+        ) {
+          void copyStandaloneText(getCapabilityText(
+            trigger,
+            "data-streamui-copy",
+            "data-streamui-copy-target"
+          )).catch((error) => console.error(error));
+          return true;
+        }
+        if (
+          trigger.hasAttribute("data-streamui-download") ||
+          trigger.hasAttribute("data-streamui-download-target")
+        ) {
+          downloadStandaloneText(trigger);
+          return true;
+        }
+        if (trigger.hasAttribute("data-streamui-open-url")) {
+          openStandaloneUrl(trigger);
+          return true;
+        }
+        return false;
+      };
       const postCapabilityAction = (trigger) => {
         const label = getCapabilityLabel(trigger);
 
@@ -224,7 +307,11 @@ export const actionSource = `      const findCapabilityAction = (target) => {
           }
 
           event.preventDefault();
-          postCapabilityAction(capabilityTrigger);
+          if (hasHostCapabilities) {
+            postCapabilityAction(capabilityTrigger);
+          } else {
+            runStandaloneCapabilityAction(capabilityTrigger);
+          }
           return;
         }
 
@@ -248,6 +335,11 @@ export const actionSource = `      const findCapabilityAction = (target) => {
           trigger.getAttribute("data-streamui-prompt") ||
           label
         ).trim().slice(0, MAX_ACTION_PROMPT_CHARS);
+
+        if (!hasHostCapabilities) {
+          event.preventDefault();
+          return;
+        }
 
         if (!prompt || isActionDisabled(trigger)) {
           return;
@@ -279,4 +371,46 @@ export const actionSource = `      const findCapabilityAction = (target) => {
 
         restorePromptAction(data.capabilityId);
       });
+      const disableStandalonePromptAction = (element) => {
+        element.setAttribute("aria-disabled", "true");
+        element.setAttribute(
+          "title",
+          "This action requires the ChatHTML host."
+        );
+        if ("disabled" in element) {
+          try {
+            element.disabled = true;
+          } catch {}
+        }
+      };
+      const disableStandalonePromptActions = (root = document) => {
+        if (hasHostCapabilities) {
+          return;
+        }
+        if (root instanceof Element && root.matches("[data-streamui-prompt]")) {
+          disableStandalonePromptAction(root);
+        }
+        root.querySelectorAll?.("[data-streamui-prompt]")
+          .forEach(disableStandalonePromptAction);
+      };
+      if (document.readyState === "loading") {
+        document.addEventListener(
+          "DOMContentLoaded",
+          disableStandalonePromptActions,
+          { once: true }
+        );
+      } else {
+        disableStandalonePromptActions();
+      }
+      if (!hasHostCapabilities) {
+        new MutationObserver((records) => {
+          records.forEach((record) => {
+            record.addedNodes.forEach((node) => {
+              if (node instanceof Element) {
+                disableStandalonePromptActions(node);
+              }
+            });
+          });
+        }).observe(document.documentElement, { childList: true, subtree: true });
+      }
 `;

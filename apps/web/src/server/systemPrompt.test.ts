@@ -41,6 +41,11 @@ test("instructs formula output to use MathJax delimiters", () => {
   assert.match(SYSTEM_PROMPT, /TeX/i);
 });
 
+test("forbids inline handlers that the artifact sanitizer removes", () => {
+  assert.match(SYSTEM_PROMPT, /Never use inline event-handler attributes/i);
+  assert.match(SYSTEM_PROMPT, /Always bind[\s\S]*addEventListener/i);
+});
+
 test("builds one level-specific UI complexity instruction per turn", () => {
   const cases = [
     { value: 10, label: "Minimal" },

@@ -3,7 +3,8 @@ import { describe, it } from "node:test";
 import {
   PREVIEW_IFRAME_SANDBOX,
   createPreviewChannelToken,
-  createPreviewHostRenderMessage
+  createPreviewHostRenderMessage,
+  createPreviewHostThemeMessage
 } from "./previewFrameSandbox";
 
 describe("preview iframe sandbox", () => {
@@ -30,6 +31,15 @@ describe("preview iframe sandbox", () => {
     assert.equal(message.theme.mode, "day");
     assert.match(message.bodyHtml, /<main>Hello<\/main>/);
     assert.match(message.bodyHtml, /streamui-performance-guard/);
+  });
+
+  it("builds a theme-only update that cannot replace artifact state", () => {
+    const message = createPreviewHostThemeMessage("night", "document-token");
+
+    assert.equal(message.kind, "theme");
+    assert.equal(message.documentEpoch, "document-token");
+    assert.equal(message.theme.mode, "night");
+    assert.equal("bodyHtml" in message, false);
   });
 
   it("falls back to getRandomValues when randomUUID is unavailable", () => {

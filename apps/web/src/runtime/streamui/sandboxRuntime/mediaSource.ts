@@ -48,6 +48,22 @@ export const mediaSource = `      const youtubeVideoIdFromEmbed = (value) => {
         }
         try {
           const source = new URL(rawSource, document.baseURI);
+          const isSessionFilePath = /\\/(?:api)\\/files\\/[^/]+\\/content$/i.test(
+            source.pathname
+          );
+          const documentHostname = new URL(document.baseURI).hostname;
+          const isSameDevelopmentHost =
+            source.hostname === documentHostname &&
+            /^(?:localhost|127\\.0\\.0\\.1|\\[?::1\\]?)$/i.test(source.hostname);
+          if (isSessionFilePath && isSameDevelopmentHost) {
+            // Repair artifacts persisted before session embed URLs became
+            // same-origin paths. The frontend dev server proxies this path to
+            // the backend without exposing a loopback URL to the iframe.
+            image.dataset.streamuiImageProxied = "true";
+            image.dataset.streamuiImageSource = source.toString();
+            image.src = source.pathname + source.search;
+            return;
+          }
           if (
             !/^https?:$/.test(source.protocol) ||
             source.origin === window.location.origin ||

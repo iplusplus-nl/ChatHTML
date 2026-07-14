@@ -56,7 +56,7 @@ describe("preview frame document model", () => {
     );
   });
 
-  it("requires a new document for completion, source changes, and complete themes", () => {
+  it("requires a new document for completion and source changes, but not themes", () => {
     const document = createPreviewFrameDocument({
       epoch: 1,
       mode: "complete",
@@ -86,7 +86,7 @@ describe("preview frame document model", () => {
         "<main>One</main>",
         "day"
       ),
-      false
+      true
     );
   });
 

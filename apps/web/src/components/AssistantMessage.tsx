@@ -25,6 +25,7 @@ import { AssistantPreviewBubble } from "./AssistantPreviewBubble";
 import { AssistantTextBubble } from "./AssistantTextBubble";
 import { RawStreamPanel } from "./RawStreamPanel";
 import { ReasoningPanel } from "./ReasoningPanel";
+import { getAssistantMessageNavigationKinds } from "./assistantMessageNavigation";
 
 type AssistantMessageProps = {
   id: string;
@@ -208,6 +209,10 @@ export function AssistantMessage({
     artifactBusySelections.length === 0;
   const selectionDisabled = !artifactInteractionsReady;
   const repairDisabled = !artifactInteractionsReady;
+  const navigationKinds = getAssistantMessageNavigationKinds(
+    Boolean(artifactVersionInfo),
+    Boolean(branchInfo)
+  );
   const turnActions = (
     <div className="assistant-turn-actions" aria-label="Response actions">
       {artifactEditingEnabled && hasVisibleArtifact ? (
@@ -260,7 +265,7 @@ export function AssistantMessage({
           <Wand2 size={15} strokeWidth={2.15} aria-hidden="true" />
         </button>
       ) : null}
-      {artifactVersionInfo ? (
+      {artifactVersionInfo && navigationKinds.includes("artifact-versions") ? (
         <div className="message-branch-controls" aria-label="Artifact versions">
           <button
             className="message-action-button"
@@ -308,7 +313,8 @@ export function AssistantMessage({
             <ChevronRight size={15} strokeWidth={2.2} aria-hidden="true" />
           </button>
         </div>
-      ) : branchInfo ? (
+      ) : null}
+      {branchInfo && navigationKinds.includes("response-branches") ? (
         <div className="message-branch-controls" aria-label="Response branches">
           <button
             className="message-action-button"

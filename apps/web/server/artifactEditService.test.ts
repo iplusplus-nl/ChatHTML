@@ -133,6 +133,8 @@ describe("artifact edit service", () => {
     assert.match(instructions, /Preserve the requested hues[\s\S]*art direction/i);
     assert.match(instructions, /not a request for maximum contrast/i);
     assert.match(instructions, /only when they are genuinely nonessential/i);
+    assert.match(instructions, /Never add inline event-handler attributes/i);
+    assert.match(instructions, /addEventListener/i);
   });
 
   it("rejects a valid request while draining without reading settings or counting activity", async () => {

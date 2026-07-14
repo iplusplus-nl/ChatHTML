@@ -58,11 +58,10 @@ export function previewFrameDocumentMatches(
   document: PreviewFrameDocument,
   mode: PreviewFrameDocumentMode,
   completedHtml: string,
-  themeMode: PageThemeMode
+  _themeMode: PageThemeMode
 ): boolean {
   return (
     document.mode === mode &&
-    document.themeMode === themeMode &&
     (mode === "streaming" || document.completedHtml === completedHtml)
   );
 }

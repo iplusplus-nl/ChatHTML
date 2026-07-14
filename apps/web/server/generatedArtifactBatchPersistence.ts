@@ -311,6 +311,7 @@ function completeBatch(
 
   return {
     ...patch,
+    sessionTitle: message.sessionTitle,
     generationOutcome: "complete",
     status: "complete",
     error: undefined,
@@ -419,7 +420,16 @@ export function finalizeGeneratedArtifactBatchPatch({
     return patch;
   }
   if (status === "streaming") {
-    return patch;
+    if (
+      !Object.prototype.hasOwnProperty.call(patch, "sessionTitle") ||
+      patch.sessionTitle === assistantMessage.sessionTitle
+    ) {
+      return patch;
+    }
+    return {
+      ...patch,
+      sessionTitle: assistantMessage.sessionTitle
+    };
   }
 
   if (

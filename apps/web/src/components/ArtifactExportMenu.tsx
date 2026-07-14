@@ -22,6 +22,9 @@ import {
   getSnapshotHtmlDocument
 } from "../core/artifactExport";
 import type { PageThemeMode, RenderSnapshot } from "../core/types";
+import {
+  filterUnavailableArtifactShareLink
+} from "../features/artifacts/artifactShareLinkAvailability";
 
 type ArtifactExportAction =
   | "copy-code"
@@ -153,6 +156,10 @@ export function ArtifactExportMenu({
       svg: createArtifactFilename(filenameBase, "svg")
     }),
     [filenameBase]
+  );
+  const menuActions = useMemo(
+    () => filterUnavailableArtifactShareLink(MENU_ACTIONS),
+    []
   );
   const isOpen = isPinned;
 
@@ -313,7 +320,7 @@ export function ArtifactExportMenu({
         role="menu"
         aria-hidden={!isInteractive}
       >
-        {MENU_ACTIONS.map(({ action, icon: Icon, label }) => (
+        {menuActions.map(({ action, icon: Icon, label }) => (
           <button
             className="artifact-export-menu-item"
             type="button"

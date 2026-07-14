@@ -139,6 +139,28 @@ describe("artifact edit version selection", () => {
     assert.equal(result.message.snapshot, undefined);
     assert.equal(result.message.artifactContext, undefined);
   });
+
+  it("does not let an artifact version rename its existing session", () => {
+    const titledRaw =
+      "<sessiontitle>Screenshot Details</sessiontitle><chat>Edited</chat><streamui><main>Edited artifact</main></streamui>";
+    const titledEdit = completeEdit("titled-edit", titledRaw);
+    const current = assistant({
+      sessionTitle: "Model and Quote",
+      rawStream: titledRaw,
+      artifactEdits: [titledEdit],
+      activeArtifactEditId: titledEdit.id
+    });
+
+    const result = selectArtifactEditVersion(
+      current,
+      titledEdit.id,
+      "night"
+    );
+
+    assert.equal(result.selected, true);
+    assert.equal(result.message.rawStream, titledRaw);
+    assert.equal(result.message.sessionTitle, "Model and Quote");
+  });
 });
 
 describe("artifact source edit operations", () => {
@@ -253,6 +275,43 @@ describe("artifact source edit operations", () => {
       "night"
     );
     assert.equal(completed.artifactEditBaseRawStream, originalRaw);
+  });
+
+  it("preserves the existing session title throughout an artifact edit", () => {
+    const current = assistant({
+      sessionTitle: "Model and Quote",
+      rawStream: originalRaw,
+      artifactEditBaseRawStream: undefined,
+      artifactEdits: undefined,
+      activeArtifactEditId: undefined
+    });
+    const operation = prepareArtifactSourceEdit(current, {
+      prompt: "Repair the visual",
+      references: [reference],
+      editId: "title-safe-edit",
+      variantId: "title-safe-variant",
+      operationId: "title-safe-operation",
+      createdAt: 30
+    });
+    assert.ok(operation);
+
+    const pending = applyPendingArtifactEditOperation(
+      current,
+      operation,
+      "night"
+    );
+    const completed = completeArtifactEditOperation(
+      pending,
+      operation,
+      {
+        rawStream:
+          "<sessiontitle>Screenshot Details</sessiontitle><chat>Repaired</chat><streamui><main>Repaired artifact</main></streamui>"
+      },
+      "night"
+    );
+
+    assert.equal(pending.sessionTitle, "Model and Quote");
+    assert.equal(completed.sessionTitle, "Model and Quote");
   });
 
   it("rejects user, blank prompt, and missing source inputs", () => {

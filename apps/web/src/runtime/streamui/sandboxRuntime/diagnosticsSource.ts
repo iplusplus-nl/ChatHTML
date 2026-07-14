@@ -15,7 +15,7 @@ export const diagnosticsSource = `      const replaceBrokenImage = (image) => {
           fallback.style.aspectRatio = String(width) + " / " + String(height);
         }
         image.replaceWith(fallback);
-        scheduleMeasure();
+        scheduleMeasure(true);
       };
       window.addEventListener("error", (event) => {
         if (event.target instanceof HTMLImageElement) {

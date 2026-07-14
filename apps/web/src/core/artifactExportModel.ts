@@ -75,6 +75,14 @@ export function normalizeSvgMarkup(markup: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n${trimmed}\n`;
 }
 
+export function stripExecutableScriptsFromExportDocument(
+  documentMarkup: string
+): string {
+  return documentMarkup
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
+    .replace(/<script\b[^>]*\/>/gi, "");
+}
+
 export function getSnapshotDiagnostics(
   snapshot: RenderSnapshot,
   options: ArtifactExportDiagnosticsOptions = {}

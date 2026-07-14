@@ -77,6 +77,7 @@ Rules:
 - If a find substring appears more than once, include a 1-based occurrence number.
 - Preserve valid ChatHTML protocol tags, especially <chat> and <streamui>.
 - Use selected references as anchors. DOM html/text may differ from source after parsing, so match against ORIGINAL_SOURCE carefully.
+- Never add inline event-handler attributes such as onclick, onchange, oninput, or onsubmit; the renderer removes them. Bind artifact interactions from the final script with addEventListener.
 
 ${COMFORTABLE_LEGIBILITY_PROMPT}
 

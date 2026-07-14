@@ -252,6 +252,36 @@ describe("generated artifact batch model", () => {
     assert.equal(streamed.activeArtifactEditId, operation.editId);
   });
 
+  it("keeps visual-repair titles out of the session during streaming and completion", () => {
+    const { message, operation } = pendingMessage(originalAssistant());
+    const streamed = reduceGeneratedArtifactBatchPatch(
+      message,
+      operation,
+      {
+        rawStream: "<sessiontitle>Screenshot Details</sessiontitle><streamui><main>Partial",
+        sessionTitle: "Screenshot Details"
+      },
+      "streaming",
+      "night"
+    );
+    const completed = reduceGeneratedArtifactBatchPatch(
+      streamed,
+      operation,
+      {
+        rawStream:
+          "<sessiontitle>Screenshot Details</sessiontitle><chat>Repaired</chat><streamui><main>Repaired artifact</main></streamui>",
+        sessionTitle: "Screenshot Details",
+        status: "complete"
+      },
+      "complete",
+      "night"
+    );
+
+    assert.equal(streamed.sessionTitle, "Original title");
+    assert.equal(completed.sessionTitle, "Original title");
+    assert.equal(completed.content, "Repaired");
+  });
+
   it("completes a matching batch and clears stale visual fields for text-only output", () => {
     const staleSnapshot = {
       raw: "<main>partial</main>",

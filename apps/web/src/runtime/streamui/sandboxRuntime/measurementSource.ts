@@ -8,9 +8,12 @@ export const measurementSource = `      const HEIGHT_SAFETY_PADDING = 28;
       let pendingShrinkTimer = 0;
       const hasPositionedAncestor = (element, body) => {
         let parent = element.parentElement;
-        while (parent && parent !== body && parent !== document.documentElement) {
+        while (parent && parent !== document.documentElement) {
           if (getComputedStyle(parent).position !== "static") {
             return true;
+          }
+          if (parent === body) {
+            break;
           }
           parent = parent.parentElement;
         }
@@ -95,8 +98,14 @@ export const measurementSource = `      const HEIGHT_SAFETY_PADDING = 28;
           measure();
         }, delay);
       };
-      const shouldPostHeight = (height) => {
+      const shouldPostHeight = (height, forceShrink = false) => {
         if (!lastHeight) {
+          return true;
+        }
+        if (forceShrink && height < lastHeight) {
+          pendingShrinkHeight = 0;
+          pendingShrinkStartedAt = 0;
+          clearPendingShrinkTimer();
           return true;
         }
         if (height >= lastHeight || lastHeight - height <= SMALL_SHRINK_PX) {
@@ -126,9 +135,12 @@ export const measurementSource = `      const HEIGHT_SAFETY_PADDING = 28;
         clearPendingShrinkTimer();
         return true;
       };
-      const measure = () => {
+      const measure = (forceShrink = false) => {
+        if (!runtimeDocumentLoaded) {
+          return;
+        }
         const height = measureContentHeight();
-        if (height && shouldPostHeight(height)) {
+        if (height && shouldPostHeight(height, forceShrink)) {
           lastHeight = height;
           pendingShrinkHeight = 0;
           pendingShrinkStartedAt = 0;

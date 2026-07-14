@@ -35,7 +35,8 @@ import {
 import {
   PREVIEW_IFRAME_SANDBOX,
   createPreviewChannelToken,
-  createPreviewHostRenderMessage
+  createPreviewHostRenderMessage,
+  createPreviewHostThemeMessage
 } from "../features/artifacts/previewFrameSandbox";
 import { openPreviewExternalUrl } from "../features/artifacts/previewExternalOpen";
 import { dispatchPreviewPromptAction } from "../features/artifacts/previewPromptAction";
@@ -271,6 +272,16 @@ export function PreviewFrame({
     }
 
     if (desiredMode === "complete") {
+      if (lastAppliedThemeModeRef.current !== themeMode) {
+        frame.contentWindow?.postMessage(
+          createPreviewHostThemeMessage(
+            themeMode,
+            frameDocument.documentEpoch
+          ),
+          "*"
+        );
+        lastAppliedThemeModeRef.current = themeMode;
+      }
       requestFrameMeasure();
       return;
     }
@@ -280,16 +291,22 @@ export function PreviewFrame({
       themeMode,
       frameDocument.documentEpoch
     );
-    if (
-      lastAppliedBodyHtmlRef.current !== message.bodyHtml ||
-      lastAppliedThemeModeRef.current !== themeMode
-    ) {
+    if (lastAppliedBodyHtmlRef.current !== message.bodyHtml) {
       const frameWindow = frame.contentWindow;
       if (!frameWindow) {
         return;
       }
       frameWindow.postMessage(message, "*");
       lastAppliedBodyHtmlRef.current = message.bodyHtml;
+      lastAppliedThemeModeRef.current = themeMode;
+      return;
+    }
+
+    if (lastAppliedThemeModeRef.current !== themeMode) {
+      frame.contentWindow?.postMessage(
+        createPreviewHostThemeMessage(themeMode, frameDocument.documentEpoch),
+        "*"
+      );
       lastAppliedThemeModeRef.current = themeMode;
       return;
     }

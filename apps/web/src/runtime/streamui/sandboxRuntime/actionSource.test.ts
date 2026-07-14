@@ -3,6 +3,14 @@ import { describe, it } from "node:test";
 import { actionSource } from "./actionSource";
 
 describe("sandbox runtime action source", () => {
+  it("uses native standalone fallbacks when no ChatHTML host is present", () => {
+    assert.match(actionSource, /runStandaloneCapabilityAction/);
+    assert.match(actionSource, /navigator\.clipboard\.writeText/);
+    assert.match(actionSource, /URL\.createObjectURL\(new Blob/);
+    assert.match(actionSource, /window\.open\(url\.toString\(\), "_blank"/);
+    assert.match(actionSource, /disableStandalonePromptActions/);
+  });
+
   it("rejects synthetic clicks before every host-facing click path", () => {
     const clickHandlers = actionSource
       .split('document.addEventListener("click", (event) => {')

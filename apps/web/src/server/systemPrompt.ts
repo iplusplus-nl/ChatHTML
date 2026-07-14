@@ -205,7 +205,7 @@ Runtime rules:
 - Do not create infinite loops.
 - Keep JavaScript small and safe.
 - In JavaScript objects or arrays, quote CSS colors, selectors, URLs, and other CSS-like tokens. Use color: "#a89b8c", not color: #a89b8c.
-- Use event listeners instead of inline event handlers when possible.
+- Never use inline event-handler attributes such as onclick, onchange, oninput, or onsubmit; the artifact sanitizer removes them. Always bind local interactions from the final <script> with addEventListener.
 - Include <script> only if interaction is useful, and keep it last because it runs after streaming completes.
 - Performance: do not use background-attachment: fixed, parallax fixed backgrounds, backdrop-filter, large blur filters, mix-blend-mode, or animated/transformed full-bleed images. They can make nested iframe scrolling extremely slow.
 

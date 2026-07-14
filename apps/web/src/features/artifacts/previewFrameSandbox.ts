@@ -16,6 +16,13 @@ export type PreviewHostRenderMessage = {
   theme: IframeThemeTokens;
 };
 
+export type PreviewHostThemeMessage = {
+  source: "streamui-host";
+  documentEpoch: string;
+  kind: "theme";
+  theme: IframeThemeTokens;
+};
+
 export function createPreviewHostRenderMessage(
   completedHtml: string,
   themeMode: PageThemeMode,
@@ -27,6 +34,18 @@ export function createPreviewHostRenderMessage(
     kind: "render",
     actionsEnabled: false,
     bodyHtml: buildIframeBodyHtml(completedHtml),
+    theme: getIframeThemeTokens(themeMode)
+  };
+}
+
+export function createPreviewHostThemeMessage(
+  themeMode: PageThemeMode,
+  documentEpoch: string
+): PreviewHostThemeMessage {
+  return {
+    source: "streamui-host",
+    documentEpoch,
+    kind: "theme",
     theme: getIframeThemeTokens(themeMode)
   };
 }

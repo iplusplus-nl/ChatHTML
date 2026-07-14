@@ -8,6 +8,7 @@ import {
   getSnapshotSourceCode,
   getSnapshotVisibleText,
   normalizeSvgMarkup,
+  stripExecutableScriptsFromExportDocument,
   type ArtifactExportDiagnosticsOptions
 } from "./artifactExportModel";
 export {
@@ -17,7 +18,8 @@ export {
   getSnapshotHtmlDocument,
   getSnapshotSourceCode,
   getSnapshotVisibleText,
-  normalizeSvgMarkup
+  normalizeSvgMarkup,
+  stripExecutableScriptsFromExportDocument
 } from "./artifactExportModel";
 export type {
   ArtifactExportDiagnosticsOptions,
@@ -174,9 +176,11 @@ function createHiddenExportFrame(
   frame.style.border = "0";
   frame.style.opacity = "0";
   frame.style.pointerEvents = "none";
-  frame.srcdoc = options.themeMode
-    ? buildIframeDocument(snapshot.completedHtml, options.themeMode)
-    : snapshot.iframeDocument;
+  frame.srcdoc = stripExecutableScriptsFromExportDocument(
+    options.themeMode
+      ? buildIframeDocument(snapshot.completedHtml, options.themeMode)
+      : snapshot.iframeDocument
+  );
 
   return frame;
 }

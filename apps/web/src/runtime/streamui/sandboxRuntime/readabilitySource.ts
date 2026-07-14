@@ -824,6 +824,9 @@ export const readabilitySource = String.raw`${readabilityColorMathSource}
       };
 
       const scheduleReadabilityAudit = () => {
+        if (!runtimeDocumentLoaded) {
+          return;
+        }
         if (!readabilityAuditStartedAt) {
           readabilityAuditStartedAt = Date.now();
         }

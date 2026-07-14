@@ -8,7 +8,8 @@ import {
   getSnapshotSourceCode,
   getSnapshotVisibleText,
   getArtifactExportScale,
-  normalizeSvgMarkup
+  normalizeSvgMarkup,
+  stripExecutableScriptsFromExportDocument
 } from "./artifactExport";
 import type { RenderSnapshot } from "../runtime/streamui/types";
 
@@ -31,6 +32,12 @@ describe("artifactExport", () => {
 
     assert.equal(sandboxTokens.has("allow-same-origin"), true);
     assert.equal(sandboxTokens.has("allow-scripts"), false);
+    assert.equal(
+      stripExecutableScriptsFromExportDocument(
+        '<main>Safe</main><script src="/runtime.js"></script><script>alert(1)</script>'
+      ),
+      "<main>Safe</main>"
+    );
   });
 
   it("uses the raw artifact as copied source code when available", () => {

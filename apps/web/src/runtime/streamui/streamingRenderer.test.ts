@@ -38,6 +38,22 @@ describe("createStreamingRenderer", () => {
     assert.match(renderer.getSnapshot().completedHtml, /<script>/);
   });
 
+  it("reports stripped inline event handlers instead of leaving silent controls", () => {
+    const renderer = createStreamingRenderer();
+    renderer.replace(
+      '<button onclick="increment()">Increment</button><script>function increment(){}</script>'
+    );
+    renderer.complete();
+
+    assert.doesNotMatch(renderer.getSnapshot().completedHtml, /onclick=/i);
+    assert.deepEqual(
+      renderer.getSnapshot().errors.map((error) => error.message),
+      [
+        "Inline event handler attributes are not supported and were removed. Bind interactions with addEventListener instead."
+      ]
+    );
+  });
+
   it("deduplicates security errors", () => {
     const renderer = createStreamingRenderer();
     const errors: string[] = [];

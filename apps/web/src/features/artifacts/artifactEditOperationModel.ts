@@ -241,6 +241,7 @@ export function applyPendingArtifactEditOperation(
   return {
     ...message,
     ...buildCompletedAssistantPatchFromRawStream(operation.source, themeMode),
+    sessionTitle: message.sessionTitle,
     artifactEditBaseRawStream:
       message.artifactEditBaseRawStream ?? operation.baseRawStream,
     artifactEdits,
@@ -285,7 +286,8 @@ export function completeArtifactEditOperation(
   return completeArtifactEditVariant(
     {
       ...message,
-      ...buildCompletedAssistantPatchFromRawStream(input.rawStream, themeMode)
+      ...buildCompletedAssistantPatchFromRawStream(input.rawStream, themeMode),
+      sessionTitle: message.sessionTitle
     },
     {
       editId: operation.editId,
@@ -350,6 +352,7 @@ export function cancelArtifactEditOperation(
           themeMode
         )
       : {}),
+    sessionTitle: message.sessionTitle,
     activeArtifactEditId: operation.previousActiveEditId
   };
 }
@@ -377,6 +380,7 @@ export function selectArtifactEditVersion(
     message: {
       ...message,
       ...buildCompletedAssistantPatchFromRawStream(rawStream, themeMode),
+      sessionTitle: message.sessionTitle,
       activeArtifactEditId: editId
     },
     selected: true
