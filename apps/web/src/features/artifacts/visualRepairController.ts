@@ -339,7 +339,11 @@ export function createVisualRepairController(
         const canUseScreenshot = ports.supportsImageInput(
           initialContext.model
         );
-        let diagnostics: string | undefined;
+        const diagnostics = ports.getDiagnostics(
+          input.snapshot,
+          exportWidth,
+          themeMode
+        );
         let attachment: ImageAttachment | undefined;
 
         if (canUseScreenshot) {
@@ -390,12 +394,6 @@ export function createVisualRepairController(
             finish(task);
             return task.controller.signal.aborted ? "cancelled" : "stale";
           }
-        } else {
-          diagnostics = ports.getDiagnostics(
-            input.snapshot,
-            exportWidth,
-            themeMode
-          );
         }
 
         const live = sameRevision(ports.getState(), task);

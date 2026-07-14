@@ -188,6 +188,7 @@ function harness() {
       return {
         status: "started",
         operation: {} as never,
+        initialization: Promise.resolve(true),
         completion
       };
     },
@@ -442,6 +443,11 @@ describe("visual repair controller request lifecycle", () => {
     assert.ok(request.chatActivityLease);
     assert.equal(request.assistantPatch?.repairOfMessageId, "assistant-1");
     assert.equal(request.assistantPatch?.repairAttempt, 1);
+    assert.deepEqual(
+      test.diagnostics.map(({ width, themeMode }) => ({ width, themeMode })),
+      [{ width: 1_100, themeMode: "night" }]
+    );
+    assert.match(request.prompt, /diagnostics-text/);
     assert.equal(test.deletions.length, 0);
     assert.equal(test.activity.isBusy(), false);
     assert.deepEqual(test.busyChanges, [true, false]);

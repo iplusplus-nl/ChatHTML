@@ -17,6 +17,23 @@ test("pushes generated artifacts through visual layout quality checks", () => {
   assert.match(SYSTEM_PROMPT, /no accidental duplicate primary subjects/i);
 });
 
+test("sets comfortable legibility floors without forcing a high-contrast palette", () => {
+  assert.match(SYSTEM_PROMPT, /4\.5:1 for normal text/i);
+  assert.match(SYSTEM_PROMPT, /3:1 for large text/i);
+  assert.match(SYSTEM_PROMPT, /essential UI[\s\S]*meaning-bearing graphics/i);
+  assert.match(
+    SYSTEM_PROMPT,
+    /actual immediate rendered background[\s\S]*opacity[\s\S]*gradients/i
+  );
+  assert.match(SYSTEM_PROMPT, /Preserve the requested hues[\s\S]*art direction/i);
+  assert.match(SYSTEM_PROMPT, /not a request for maximum contrast or a high-contrast mode/i);
+  assert.match(SYSTEM_PROMPT, /pure black on white or white on black/i);
+  assert.match(SYSTEM_PROMPT, /only when they are genuinely nonessential/i);
+  assert.match(SYSTEM_PROMPT, /Muted styling is not an exemption/i);
+  assert.match(SYSTEM_PROMPT, /data-streamui-decorative/i);
+  assert.match(SYSTEM_PROMPT, /Never use those markers to silence/i);
+});
+
 test("instructs formula output to use MathJax delimiters", () => {
   assert.match(SYSTEM_PROMPT, /MathJax/i);
   assert.match(SYSTEM_PROMPT, /\\\(/);

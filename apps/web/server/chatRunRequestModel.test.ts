@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildChatRunMessagePatch,
+  buildThemeContextPrompt,
   createChatRunInput,
   normalizeCanvasContext,
   normalizeMessages,
@@ -160,6 +161,16 @@ describe("chat run request primitives", () => {
     assert.equal(normalizeThemeMode("day"), "day");
     assert.equal(normalizeThemeMode("light"), "day");
     assert.equal(normalizeThemeMode("dark"), "night");
+  });
+
+  it("grounds legibility checks in the composited page theme", () => {
+    const prompt = buildThemeContextPrompt("night");
+
+    assert.match(prompt, /comfortable-legibility contract/i);
+    assert.match(prompt, /approximately #212121/i);
+    assert.match(prompt, /final composited colors/i);
+    assert.match(prompt, /actual immediate backgrounds/i);
+    assert.match(prompt, /translucent layers[\s\S]*gradients[\s\S]*images/i);
   });
 
   it("trims bounded scalar strings and clips message history", () => {

@@ -2,7 +2,12 @@ export type RenderStatus = "idle" | "streaming" | "complete" | "error";
 
 export type PageThemeMode = "day" | "night";
 
-export type RenderErrorKind = "html" | "runtime" | "security" | "console";
+export type RenderErrorKind =
+  | "html"
+  | "runtime"
+  | "security"
+  | "console"
+  | "readability";
 
 export type RenderError = {
   kind: RenderErrorKind;
@@ -14,6 +19,7 @@ export type RenderError = {
 export type StreamUiPromptAction = {
   type: "prompt";
   prompt: string;
+  capabilityId?: string;
   label?: string;
 };
 

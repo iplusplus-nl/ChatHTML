@@ -25,4 +25,35 @@ describe("sandbox runtime action source", () => {
         clickHandlers[1].indexOf(actionLookup)
     );
   });
+
+  it("settles prompt actions and restores their original control state", () => {
+    assert.match(actionSource, /const pendingPromptActions = new Map\(\)/);
+    assert.match(actionSource, /const capabilityId = createHostCapabilityId\(\)/);
+    assert.match(actionSource, /markActionPending\(trigger, capabilityId\)/);
+    assert.match(actionSource, /pendingPromptActions\.delete\(capabilityId\)/);
+    assert.match(
+      actionSource,
+      /restoreAttribute\(pending\.element, "aria-busy", pending\.ariaBusy\)/
+    );
+    assert.match(
+      actionSource,
+      /restoreAttribute\(pending\.element, "aria-disabled", pending\.ariaDisabled\)/
+    );
+    assert.match(
+      actionSource,
+      /restoreAttribute\(pending\.element, "disabled", pending\.disabledAttribute\)/
+    );
+    assert.match(
+      actionSource,
+      /pending\.element\.replaceChildren\(\.\.\.pending\.childNodes\)/
+    );
+    assert.match(
+      actionSource,
+      /data\.kind !== "capability-result"/
+    );
+  });
+
+  it("forwards Escape presses to the host", () => {
+    assert.match(actionSource, /post\("escape", "escape"\)/);
+  });
 });

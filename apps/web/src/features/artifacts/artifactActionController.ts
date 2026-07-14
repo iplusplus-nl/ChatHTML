@@ -33,7 +33,7 @@ type PendingArtifactAction = {
 export function createArtifactActionController(
   ports: ArtifactActionControllerPorts
 ): ArtifactActionController {
-  let pendingAction: PendingArtifactAction | null = null;
+  const pendingActions: PendingArtifactAction[] = [];
 
   const runAction = (pending: PendingArtifactAction): "ignored" | "sent" => {
     const targetSession = ports
@@ -64,7 +64,7 @@ export function createArtifactActionController(
 
       const pending = { messageId, text, targetSessionId };
       if (ports.isSending()) {
-        pendingAction = pending;
+        pendingActions.push(pending);
         return "queued";
       }
 
@@ -75,13 +75,20 @@ export function createArtifactActionController(
       if (ports.isSending()) {
         return "blocked";
       }
-      if (!pendingAction) {
+      if (!pendingActions.length) {
         return "empty";
       }
 
-      const action = pendingAction;
-      pendingAction = null;
-      return runAction(action);
+      // A queued action can become stale while another generation is running.
+      // Skip stale entries without stranding the valid actions behind them.
+      while (pendingActions.length) {
+        const outcome = runAction(pendingActions.shift()!);
+        if (outcome === "sent") {
+          return outcome;
+        }
+      }
+
+      return "ignored";
     }
   };
 }

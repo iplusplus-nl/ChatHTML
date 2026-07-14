@@ -50,7 +50,7 @@ export function getIframeThemeTokens(themeMode: PageThemeMode): IframeThemeToken
   return {
     mode: "night",
     colorScheme: "dark",
-    pageBg: "#050505",
+    pageBg: "#212121",
     text: "#f4f4f5",
     muted: "#a1a1aa",
     link: "#ffffff",

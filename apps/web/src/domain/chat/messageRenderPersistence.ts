@@ -26,7 +26,8 @@ function normalizeRenderError(input: unknown): RenderError | null {
     error.kind === "html" ||
     error.kind === "runtime" ||
     error.kind === "security" ||
-    error.kind === "console"
+    error.kind === "console" ||
+    error.kind === "readability"
       ? error.kind
       : null;
   if (!kind || typeof error.message !== "string" || !error.message.trim()) {

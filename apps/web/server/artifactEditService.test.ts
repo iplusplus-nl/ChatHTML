@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import type { Request, Response } from "express";
 import {
+  buildArtifactEditInstructions,
   createArtifactEditHandler,
   type ArtifactEditLogger,
   type ArtifactEditServicePorts
@@ -123,6 +124,17 @@ function serviceHarness({
 }
 
 describe("artifact edit service", () => {
+  it("keeps direct artifact edits within the shared comfortable-legibility contract", () => {
+    const instructions = buildArtifactEditInstructions();
+
+    assert.match(instructions, /4\.5:1 for normal text/i);
+    assert.match(instructions, /3:1 for large text/i);
+    assert.match(instructions, /actual immediate rendered background/i);
+    assert.match(instructions, /Preserve the requested hues[\s\S]*art direction/i);
+    assert.match(instructions, /not a request for maximum contrast/i);
+    assert.match(instructions, /only when they are genuinely nonessential/i);
+  });
+
   it("rejects a valid request while draining without reading settings or counting activity", async () => {
     const service = serviceHarness({
       draining: true,

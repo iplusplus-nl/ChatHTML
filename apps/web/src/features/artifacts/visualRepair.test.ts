@@ -19,7 +19,7 @@ describe("visual repair prompt", () => {
 
     assert.equal(
       clipped.endsWith(
-        "[Diagnostics truncated; prioritize fixing layout, scale, overlap, clipping, and blur.]"
+        "[Diagnostics truncated; prioritize fixing color legibility, layout, scale, overlap, clipping, and blur.]"
       ),
       true
     );
@@ -35,6 +35,9 @@ describe("visual repair prompt", () => {
 
     assert.match(prompt, /attached rendering screenshot/);
     assert.match(prompt, /about 720px wide/);
+    assert.match(prompt, /foreground\/background color legibility/i);
+    assert.match(prompt, /final composited surfaces/i);
+    assert.match(prompt, /preserve the palette and art direction/i);
     assert.match(prompt, /Render diagnostics and artifact source:/);
     assert.match(prompt, /overlapping labels/);
   });

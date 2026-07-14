@@ -76,7 +76,7 @@ describe("artifact action controller", () => {
     assert.deepEqual(sent, []);
   });
 
-  it("keeps only the latest busy action and flushes it exactly once", () => {
+  it("queues every busy action in order and flushes each exactly once", () => {
     let sending = true;
     let state = createState();
     const sent: Array<{ text: string; sessionId: string }> = [];
@@ -106,8 +106,15 @@ describe("artifact action controller", () => {
     state = { ...state, activeSessionId: "session-1" };
     sending = false;
     assert.equal(controller.flushPendingAction(), "sent");
+    sending = true;
+    assert.equal(controller.flushPendingAction(), "blocked");
+    sending = false;
+    assert.equal(controller.flushPendingAction(), "sent");
     assert.equal(controller.flushPendingAction(), "empty");
-    assert.deepEqual(sent, [{ text: "second", sessionId: "session-2" }]);
+    assert.deepEqual(sent, [
+      { text: "first", sessionId: "session-1" },
+      { text: "second", sessionId: "session-2" }
+    ]);
   });
 
   it("does not let an invalid busy action replace a valid queued action", () => {
@@ -161,6 +168,41 @@ describe("artifact action controller", () => {
     assert.equal(controller.flushPendingAction(), "ignored");
     assert.equal(controller.flushPendingAction(), "empty");
     assert.deepEqual(sent, []);
+  });
+
+  it("skips a stale queued action and sends the next valid action", () => {
+    let sending = true;
+    let state = createState();
+    const sent: Array<{ text: string; sessionId: string }> = [];
+    const controller = createArtifactActionController({
+      isSending: () => sending,
+      getSessionState: () => state,
+      sendActionMessage: (text, sessionId) => sent.push({ text, sessionId })
+    });
+
+    assert.equal(
+      controller.handleAction("assistant-1", {
+        type: "prompt",
+        prompt: "stale"
+      }),
+      "queued"
+    );
+    assert.equal(
+      controller.handleAction("assistant-2", {
+        type: "prompt",
+        prompt: "keep"
+      }),
+      "queued"
+    );
+    state = {
+      ...state,
+      sessions: state.sessions.filter((session) => session.id !== "session-1")
+    };
+    sending = false;
+
+    assert.equal(controller.flushPendingAction(), "sent");
+    assert.deepEqual(sent, [{ text: "keep", sessionId: "session-2" }]);
+    assert.equal(controller.flushPendingAction(), "empty");
   });
 
   it("drops a queued action when its source message disappears", () => {

@@ -95,11 +95,48 @@ export const actionSource = `      const findCapabilityAction = (target) => {
           Boolean(element.disabled)
         );
       };
-      const markActionPending = (element) => {
+      const pendingPromptActions = new Map();
+      const restoreAttribute = (element, name, value) => {
+        if (value === null) {
+          element.removeAttribute(name);
+          return;
+        }
+        element.setAttribute(name, value);
+      };
+      const restorePromptAction = (capabilityId) => {
+        const pending = pendingPromptActions.get(capabilityId);
+        if (!pending) {
+          return;
+        }
+
+        pendingPromptActions.delete(capabilityId);
+        restoreAttribute(pending.element, "aria-busy", pending.ariaBusy);
+        restoreAttribute(pending.element, "aria-disabled", pending.ariaDisabled);
+        if (pending.hasDisabledProperty) {
+          try {
+            pending.element.disabled = pending.disabledProperty;
+          } catch {}
+        }
+        restoreAttribute(pending.element, "disabled", pending.disabledAttribute);
+        if (pending.childNodes) {
+          pending.element.replaceChildren(...pending.childNodes);
+        }
+      };
+      const markActionPending = (element, capabilityId) => {
         const pendingText = element.getAttribute("data-streamui-pending");
+        const hasDisabledProperty = "disabled" in element;
+        pendingPromptActions.set(capabilityId, {
+          element,
+          ariaBusy: element.getAttribute("aria-busy"),
+          ariaDisabled: element.getAttribute("aria-disabled"),
+          disabledAttribute: element.getAttribute("disabled"),
+          hasDisabledProperty,
+          disabledProperty: hasDisabledProperty ? element.disabled : undefined,
+          childNodes: pendingText ? Array.from(element.childNodes) : null
+        });
         element.setAttribute("aria-busy", "true");
         element.setAttribute("aria-disabled", "true");
-        if ("disabled" in element) {
+        if (hasDisabledProperty) {
           try {
             element.disabled = true;
           } catch {}
@@ -129,6 +166,7 @@ export const actionSource = `      const findCapabilityAction = (target) => {
       });
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
+          post("escape", "escape");
           hideTextSelectionToolbar();
           if (selectionModeEnabled) {
             exitSelectionMode();
@@ -216,11 +254,29 @@ export const actionSource = `      const findCapabilityAction = (target) => {
         }
 
         event.preventDefault();
-        markActionPending(trigger);
+        const capabilityId = createHostCapabilityId();
+        markActionPending(trigger, capabilityId);
         post("action", prompt, {
           actionType: "prompt",
+          capabilityId,
           prompt,
           label: label.slice(0, 200)
         });
       }, true);
+      window.addEventListener("message", (event) => {
+        if (!event.isTrusted || event.source !== window.parent) {
+          return;
+        }
+        const data = event.data || {};
+        if (
+          data.source !== "streamui-host" ||
+          data.documentEpoch !== HOST_DOCUMENT_EPOCH ||
+          data.kind !== "capability-result" ||
+          typeof data.capabilityId !== "string"
+        ) {
+          return;
+        }
+
+        restorePromptAction(data.capabilityId);
+      });
 `;

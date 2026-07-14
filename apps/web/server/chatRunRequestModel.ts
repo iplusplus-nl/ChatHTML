@@ -266,7 +266,7 @@ export function normalizeThemeMode(input: unknown): PageThemeMode {
 export function buildThemeContextPrompt(themeMode: PageThemeMode): string {
   const isNight = themeMode === "night";
   const label = isNight ? "dark" : "light";
-  const background = isNight ? "#050505" : "#ffffff";
+  const background = isNight ? "#212121" : "#ffffff";
 
   return `Current page background preference:
 - The user is viewing ChatHTML on a ${label} page background, approximately ${background}.
@@ -274,6 +274,7 @@ export function buildThemeContextPrompt(themeMode: PageThemeMode): string {
 - For ordinary replies using streamui-response and streamui-chat, rely on the built-in transparent styles.
 - For custom visual artifacts, keep the root transparent when possible. If a root surface should match the surrounding app background, use var(--streamui-page-bg) instead of hardcoding ${background}; ChatHTML updates that variable when the user toggles the page theme.
 - Use the built-in theme variables for adaptive basics: --streamui-page-bg, --streamui-text, --streamui-muted, --streamui-link, --streamui-button-bg, --streamui-button-text, --streamui-secondary-border, and --streamui-secondary-text.
+- Apply the comfortable-legibility contract to final composited colors on their actual immediate backgrounds in this theme, including translucent layers, overlays, gradients, and images.
 - Do not assume the opposite page theme unless the user asks for it.`;
 }
 

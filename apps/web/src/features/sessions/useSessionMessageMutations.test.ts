@@ -115,3 +115,62 @@ test("appends runtime errors once without touching messages without snapshots", 
     state
   );
 });
+
+test("replaces and clears the stateful readability finding", () => {
+  const runtimeError = {
+    kind: "runtime" as const,
+    message: "boom",
+    timestamp: 1
+  };
+  const firstReadability = {
+    kind: "readability" as const,
+    message: "First contrast report",
+    timestamp: 2
+  };
+  const target = {
+    ...assistant("assistant-a"),
+    runtimeErrors: [runtimeError, firstReadability],
+    snapshot: {
+      raw: "raw",
+      completedHtml: "<p>test</p>",
+      iframeDocument: "<html></html>",
+      errors: [runtimeError, firstReadability],
+      status: "complete" as const
+    }
+  };
+  const state: SessionState = {
+    activeSessionId: "session-a",
+    sessions: [session("session-a", [target])]
+  };
+  const nextReadability = {
+    kind: "readability" as const,
+    message: "Updated contrast report",
+    timestamp: 3
+  };
+
+  const replaced = appendRuntimeErrorInState(
+    state,
+    "assistant-a",
+    nextReadability
+  );
+  const replacedMessage = replaced.sessions[0].messages[0];
+  assert.deepEqual(replacedMessage.runtimeErrors, [runtimeError, nextReadability]);
+  assert.deepEqual(replacedMessage.snapshot?.errors, [runtimeError, nextReadability]);
+
+  const cleared = appendRuntimeErrorInState(replaced, "assistant-a", {
+    kind: "readability",
+    message: "",
+    timestamp: 4
+  });
+  const clearedMessage = cleared.sessions[0].messages[0];
+  assert.deepEqual(clearedMessage.runtimeErrors, [runtimeError]);
+  assert.deepEqual(clearedMessage.snapshot?.errors, [runtimeError]);
+  assert.equal(
+    appendRuntimeErrorInState(cleared, "assistant-a", {
+      kind: "readability",
+      message: "",
+      timestamp: 5
+    }),
+    cleared
+  );
+});

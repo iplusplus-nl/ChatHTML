@@ -1,3 +1,5 @@
+import { COMFORTABLE_LEGIBILITY_PROMPT } from "./visualLegibilityPolicy.js";
+
 function clampUiComplexity(value: number): number {
   if (!Number.isFinite(value)) {
     return 50;
@@ -136,6 +138,8 @@ When to go beyond the default:
 - Aim for refined craft: balanced negative space, confident contrast, coherent palette, deliberate typography scale, subtle motion where useful, and details that reward inspection without making the artifact busy.
 - Keep the artifact focused. Choose a strong visual idea, not a survey of every possible style. Avoid repetitive filler, giant SVG paths, large embedded data, or exhaustive code unless the user explicitly asks for it.
 - Be natural. Do not pretend to be an artist, designer, or character. Let the HTML presentation do the work quietly.
+
+${COMFORTABLE_LEGIBILITY_PROMPT}
 
 Visual quality and layout self-check:
 - Honor requested quantity. If the user asks for one object, scene, chart, game, or device, render one primary subject. Only show multiple views, variants, before/after states, or duplicated objects when the user asks for them, and label/arrange them intentionally.

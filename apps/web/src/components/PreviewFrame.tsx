@@ -37,6 +37,8 @@ import {
   createPreviewChannelToken,
   createPreviewHostRenderMessage
 } from "../features/artifacts/previewFrameSandbox";
+import { openPreviewExternalUrl } from "../features/artifacts/previewExternalOpen";
+import { dispatchPreviewPromptAction } from "../features/artifacts/previewPromptAction";
 import {
   createPreviewFrameDocument,
   previewFrameDocumentMatches,
@@ -301,6 +303,43 @@ export function PreviewFrame({
     themeMode
   ]);
 
+  const postCapabilityResult = useCallback(
+    (capabilityId: string, ok: boolean, message = "") => {
+      frameRef.current?.contentWindow?.postMessage(
+        {
+          source: "streamui-host",
+          documentEpoch: frameDocument.documentEpoch,
+          kind: "capability-result",
+          capabilityId,
+          ok,
+          message
+        },
+        "*"
+      );
+    },
+    [frameDocument.documentEpoch]
+  );
+
+  const sendCapabilityResult = useCallback(
+    (action: PreviewCapabilityAction, ok: boolean, message = "") => {
+      if (action.capabilityId) {
+        postCapabilityResult(action.capabilityId, ok, message);
+      }
+    },
+    [postCapabilityResult]
+  );
+
+  const cancelCapabilityAction = useCallback(() => {
+    if (capabilityAction) {
+      sendCapabilityResult(
+        capabilityAction,
+        false,
+        "The user cancelled this action."
+      );
+    }
+    setCapabilityAction(null);
+  }, [capabilityAction, sendCapabilityResult]);
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== frameRef.current?.contentWindow) {
@@ -314,10 +353,13 @@ export function PreviewFrame({
           | RenderError["kind"]
           | "resize"
           | "action"
+          | "escape"
           | "wheel"
           | "selection"
           | "selection-mode-change";
         actionType?: string;
+        status?: string;
+        count?: number;
         prompt?: string;
         capabilityId?: string;
         label?: string;
@@ -337,6 +379,15 @@ export function PreviewFrame({
         data?.source !== "streamui-runtime" ||
         data.channelToken !== channelTokenRef.current
       ) {
+        return;
+      }
+
+      if (data.kind === "readability" && data.status === "clear") {
+        onRuntimeError({
+          kind: "readability",
+          message: "",
+          timestamp: Date.now()
+        });
         return;
       }
 
@@ -362,6 +413,11 @@ export function PreviewFrame({
         return;
       }
 
+      if (data.kind === "escape") {
+        cancelCapabilityAction();
+        return;
+      }
+
       if (data.kind === "selection-mode-change") {
         onSelectionModeChange?.(Boolean(data.enabled));
         return;
@@ -380,15 +436,11 @@ export function PreviewFrame({
       }
 
       if (data.kind === "action" && data.actionType === "prompt") {
-        const prompt = String(data.prompt || data.message || "").trim();
-        const label = String(data.label || "").trim();
-        if (prompt) {
-          onArtifactAction({
-            type: "prompt",
-            prompt: prompt.slice(0, 2000),
-            ...(label ? { label: label.slice(0, 200) } : {})
-          });
-        }
+        dispatchPreviewPromptAction(
+          data,
+          onArtifactAction,
+          (capabilityId) => postCapabilityResult(capabilityId, true)
+        );
         return;
       }
 
@@ -452,7 +504,9 @@ export function PreviewFrame({
       }
 
       const kind: RenderError["kind"] =
-        data.kind === "console" ? "console" : "runtime";
+        data.kind === "console" || data.kind === "readability"
+          ? data.kind
+          : "runtime";
       const runtimeError = {
         kind,
         message: data.message || "Unknown iframe runtime event.",
@@ -472,10 +526,12 @@ export function PreviewFrame({
   }, [
     applyMeasuredHeight,
     artifactActionsEnabled,
+    cancelCapabilityAction,
     onArtifactAction,
     onArtifactSelection,
     onSelectionModeChange,
-    onRuntimeError
+    onRuntimeError,
+    postCapabilityResult
   ]);
 
   useEffect(() => {
@@ -502,27 +558,6 @@ export function PreviewFrame({
   useEffect(() => {
     postSelectionState();
   }, [postSelectionState]);
-
-  const sendCapabilityResult = useCallback(
-    (action: PreviewCapabilityAction, ok: boolean, message = "") => {
-      if (!action.capabilityId) {
-        return;
-      }
-
-      frameRef.current?.contentWindow?.postMessage(
-        {
-          source: "streamui-host",
-          documentEpoch: frameDocument.documentEpoch,
-          kind: "capability-result",
-          capabilityId: action.capabilityId,
-          ok,
-          message
-        },
-        "*"
-      );
-    },
-    [frameDocument.documentEpoch]
-  );
 
   useEffect(() => {
     if (!capabilityStatus || capabilityStatus.kind === "error") {
@@ -561,15 +596,10 @@ export function PreviewFrame({
         setCapabilityStatus({ kind: "success", message: "Download started" });
         sendCapabilityResult(capabilityAction, true);
       } else {
-        const opened = window.open(
+        openPreviewExternalUrl(
           capabilityAction.url,
-          "_blank",
-          "noopener,noreferrer"
+          window.open.bind(window)
         );
-        if (!opened) {
-          throw new Error("The browser blocked this popup.");
-        }
-        opened.opener = null;
         setCapabilityStatus({ kind: "success", message: "Opened" });
         sendCapabilityResult(capabilityAction, true);
       }
@@ -585,12 +615,22 @@ export function PreviewFrame({
     }
   };
 
-  const cancelCapabilityAction = () => {
-    if (capabilityAction) {
-      sendCapabilityResult(capabilityAction, false, "The user cancelled this action.");
+  useEffect(() => {
+    if (!capabilityAction) {
+      return undefined;
     }
-    setCapabilityAction(null);
-  };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      cancelCapabilityAction();
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [capabilityAction, cancelCapabilityAction]);
 
   return (
     <>

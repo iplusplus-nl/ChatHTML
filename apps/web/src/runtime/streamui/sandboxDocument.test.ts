@@ -10,6 +10,7 @@ describe("sandboxDocument", () => {
   it("creates day and night theme tokens", () => {
     assert.equal(getIframeThemeTokens("day").colorScheme, "light");
     assert.equal(getIframeThemeTokens("night").colorScheme, "dark");
+    assert.equal(getIframeThemeTokens("night").pageBg, "#212121");
   });
 
   it("wraps completed html in the sandbox document", () => {
@@ -55,6 +56,22 @@ describe("sandboxDocument", () => {
     assert.match(document, /streamui-image-fallback/);
     assert.match(document, /Image unavailable/);
     assert.match(document, /event\.target instanceof HTMLImageElement/);
+  });
+
+  it("includes a non-mutating rendered readability audit", () => {
+    const document = buildIframeDocument(
+      '<svg aria-label="Map"><path fill="#111" stroke="#222"></path></svg>'
+    );
+
+    assert.match(document, /Readability audit/);
+    assert.match(document, /text-contrast/);
+    assert.match(document, /svg-fill-contrast/);
+    assert.match(document, /svg-stroke-contrast/);
+    assert.match(document, /data-streamui-decorative/);
+    assert.match(document, /scheduleReadabilityAudit/);
+    assert.match(document, /addEventListener\("resize", scheduleReadabilityAudit\)/);
+    assert.match(document, /addEventListener\("focusin", scheduleReadabilityAudit, true\)/);
+    assert.match(document, /addEventListener\("pointerover", scheduleReadabilityAudit, true\)/);
   });
 
   it("turns sandbox-blocked YouTube embeds into host-opened launchers", () => {

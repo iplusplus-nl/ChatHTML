@@ -69,12 +69,22 @@ export const diagnosticsSource = `      const replaceBrokenImage = (image) => {
       window.addEventListener("load", scheduleMathTypeset);
       window.addEventListener("load", scheduleSelectionUiRefresh);
       window.addEventListener("resize", scheduleSelectionUiRefresh);
+      window.addEventListener("load", scheduleReadabilityAudit);
+      window.addEventListener("resize", scheduleReadabilityAudit);
       document.addEventListener("scroll", scheduleSelectionUiRefresh, true);
       document.addEventListener("toggle", scheduleMeasure, true);
+      document.addEventListener("toggle", scheduleReadabilityAudit, true);
+      document.addEventListener("focusin", scheduleReadabilityAudit, true);
+      document.addEventListener("focusout", scheduleReadabilityAudit, true);
+      document.addEventListener("change", scheduleReadabilityAudit, true);
+      document.addEventListener("pointerover", scheduleReadabilityAudit, true);
+      document.addEventListener("pointerout", scheduleReadabilityAudit, true);
       document.addEventListener("transitionend", scheduleMeasure, true);
       document.addEventListener("animationend", scheduleMeasure, true);
       document.addEventListener("transitionend", scheduleSelectionUiRefresh, true);
       document.addEventListener("animationend", scheduleSelectionUiRefresh, true);
+      document.addEventListener("transitionend", scheduleReadabilityAudit, true);
+      document.addEventListener("animationend", scheduleReadabilityAudit, true);
       const resizeObserver = new ResizeObserver(scheduleMeasure);
       const observeBody = () => {
         if (document.body) {
@@ -87,6 +97,7 @@ export const diagnosticsSource = `      const replaceBrokenImage = (image) => {
       new MutationObserver(() => {
         scheduleMathTypeset();
         scheduleMeasure();
+        scheduleReadabilityAudit();
       }).observe(document.documentElement, {
         attributes: true,
         childList: true,
@@ -95,5 +106,9 @@ export const diagnosticsSource = `      const replaceBrokenImage = (image) => {
       });
       scheduleMathTypeset();
       scheduleMeasure();
+      if (document.fonts && document.fonts.ready) {
+        Promise.resolve(document.fonts.ready).then(scheduleReadabilityAudit).catch(() => {});
+      }
+      scheduleReadabilityAudit();
     })();
 `;

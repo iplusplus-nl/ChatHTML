@@ -7,7 +7,7 @@ export function clipVisualRepairDiagnostics(value: string): string {
 
   return `${value
     .slice(0, MAX_VISUAL_REPAIR_DIAGNOSTICS_CHARS - 120)
-    .trimEnd()}\n\n[Diagnostics truncated; prioritize fixing layout, scale, overlap, clipping, and blur.]`;
+    .trimEnd()}\n\n[Diagnostics truncated; prioritize fixing color legibility, layout, scale, overlap, clipping, and blur.]`;
 }
 
 export function buildVisualRepairPrompt({
@@ -27,6 +27,7 @@ export function buildVisualRepairPrompt({
       ? `The screenshot shows the actual rendered output at about ${Math.round(width)}px wide.`
       : `The diagnostics describe the rendered artifact at about ${Math.round(width)}px wide.`,
     "Inspect the screenshot or diagnostics for visual failures such as overlapping labels, clustered or unreadable content, clipped elements, bad scaling, excessive blur, tiny text, or poor use of space.",
+    "Repair foreground/background color legibility for text, essential UI, and meaning-bearing graphics on their final composited surfaces, including translucent layers and gradients; preserve the palette and art direction while making local adjustments.",
     "Use the previous artifact source and the original user intent from the conversation as context.",
     "Generate a complete corrected ChatHTML artifact. Preserve the user's intent, but change the visual mapping if needed; do not keep realistic proportions when they make the result unreadable.",
     "Prefer readable compressed/log scales, callouts, legends, exploded views, or separated annotation lanes when exact spatial scale would collapse details.",

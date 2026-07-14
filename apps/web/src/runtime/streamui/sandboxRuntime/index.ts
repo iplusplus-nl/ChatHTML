@@ -4,6 +4,7 @@ import { diagnosticsSource } from "./diagnosticsSource";
 import { hostRenderSource } from "./hostRenderSource";
 import { measurementSource } from "./measurementSource";
 import { mediaSource } from "./mediaSource";
+import { readabilitySource } from "./readabilitySource";
 import { selectionSource } from "./selectionSource";
 
 export function buildSandboxRuntimeSource(
@@ -17,6 +18,7 @@ export function buildSandboxRuntimeSource(
     mediaSource +
     selectionSource +
     actionSource +
+    readabilitySource +
     hostRenderSource +
     diagnosticsSource
   );

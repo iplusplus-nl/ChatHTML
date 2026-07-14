@@ -48,5 +48,6 @@ export const hostRenderSource = `      const applyHostRenderTheme = (theme) => {
         scheduleMathTypeset();
         scheduleMeasure();
         scheduleSelectionUiRefresh();
+        scheduleReadabilityAudit();
       });
 `;

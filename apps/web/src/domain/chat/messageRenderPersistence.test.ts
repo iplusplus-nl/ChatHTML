@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { rebuildAssistantSnapshot } from "./messageRenderPersistence";
+import {
+  normalizeRenderErrors,
+  rebuildAssistantSnapshot
+} from "./messageRenderPersistence";
 import type { ClientMessage } from "./sessionTypes";
 
 function assistantMessage(
@@ -16,6 +19,24 @@ function assistantMessage(
 }
 
 describe("assistant render persistence", () => {
+  it("preserves readability findings for later repair", () => {
+    const errors = normalizeRenderErrors([
+      {
+        kind: "readability",
+        message: "3 essential color pairs fall below the readability floor.",
+        timestamp: 123
+      }
+    ]);
+
+    assert.deepEqual(errors, [
+      {
+        kind: "readability",
+        message: "3 essential color pairs fall below the readability floor.",
+        timestamp: 123
+      }
+    ]);
+  });
+
   it("keeps a cancelled partial stream inert while rebuilding after reload", () => {
     const restored = rebuildAssistantSnapshot(
       assistantMessage({

@@ -15,6 +15,7 @@ import type {
   ResponsesStreamState,
   StreamResponsesOnceOptions
 } from "./responsesStreamClient.js";
+import { COMFORTABLE_LEGIBILITY_PROMPT } from "../src/server/visualLegibilityPolicy.js";
 
 const ARTIFACT_EDIT_MAX_OUTPUT_TOKENS = 32_000;
 
@@ -76,6 +77,9 @@ Rules:
 - If a find substring appears more than once, include a 1-based occurrence number.
 - Preserve valid ChatHTML protocol tags, especially <chat> and <streamui>.
 - Use selected references as anchors. DOM html/text may differ from source after parsing, so match against ORIGINAL_SOURCE carefully.
+
+${COMFORTABLE_LEGIBILITY_PROMPT}
+
 - Do not include markdown or comments outside JSON. A full rewritten artifact is allowed only inside edits[].replace when target is "streamui".`;
 }
 

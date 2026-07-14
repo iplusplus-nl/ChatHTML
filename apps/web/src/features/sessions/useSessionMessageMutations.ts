@@ -64,6 +64,48 @@ export function appendRuntimeErrorInState(
       if (message.id !== messageId || !message.snapshot) {
         return message;
       }
+      if (error.kind === "readability") {
+        const previousRuntimeErrors = message.runtimeErrors ?? [];
+        const previousSnapshotErrors = message.snapshot.errors;
+        const runtimeErrorsWithoutReadability = previousRuntimeErrors.filter(
+          (item) => item.kind !== "readability"
+        );
+        const snapshotErrorsWithoutReadability = previousSnapshotErrors.filter(
+          (item) => item.kind !== "readability"
+        );
+        const nextReadabilityError = error.message.trim() ? error : undefined;
+        const runtimeErrors = nextReadabilityError
+          ? [...runtimeErrorsWithoutReadability, nextReadabilityError]
+          : runtimeErrorsWithoutReadability;
+        const snapshotErrors = nextReadabilityError
+          ? [...snapshotErrorsWithoutReadability, nextReadabilityError]
+          : snapshotErrorsWithoutReadability;
+        const previousReadability = previousRuntimeErrors.find(
+          (item) => item.kind === "readability"
+        );
+        const previousSnapshotReadability = previousSnapshotErrors.find(
+          (item) => item.kind === "readability"
+        );
+        if (
+          previousRuntimeErrors.length === runtimeErrors.length &&
+          previousSnapshotErrors.length === snapshotErrors.length &&
+          previousReadability?.message === nextReadabilityError?.message &&
+          previousSnapshotReadability?.message === nextReadabilityError?.message
+        ) {
+          return message;
+        }
+
+        didUpdate = true;
+        sessionChanged = true;
+        return {
+          ...message,
+          runtimeErrors: runtimeErrors.length ? runtimeErrors : undefined,
+          snapshot: {
+            ...message.snapshot,
+            errors: snapshotErrors
+          }
+        };
+      }
       if (
         hasRenderError(message.runtimeErrors, error) ||
         hasRenderError(message.snapshot.errors, error)
