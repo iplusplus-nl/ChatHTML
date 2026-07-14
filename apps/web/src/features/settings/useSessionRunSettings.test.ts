@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_API_SETTINGS,
-  REQUIRED_MODEL_OPTIONS,
   type ApiSettings
 } from "../../core/apiSettings";
 import type { ChatSession } from "../../domain/chat/sessionModel";
@@ -33,11 +32,7 @@ test("derives run settings from API defaults for an unconfigured session", () =>
     model: "default-model",
     reasoningEffort: "low",
     uiComplexity: 50,
-    selectableModels: [
-      ...REQUIRED_MODEL_OPTIONS,
-      "default-model",
-      "other-model"
-    ]
+    selectableModels: ["default-model", "other-model"]
   });
 });
 
@@ -55,11 +50,7 @@ test("prefers session settings and keeps its model selectable", () => {
   assert.equal(settings.model, "session-model");
   assert.equal(settings.reasoningEffort, "high");
   assert.equal(settings.uiComplexity, 100);
-  assert.deepEqual(settings.selectableModels, [
-    ...REQUIRED_MODEL_OPTIONS,
-    "session-model",
-    "other-model"
-  ]);
+  assert.deepEqual(settings.selectableModels, ["session-model", "other-model"]);
 });
 
 test("normalizes requested session models without accepting blank input", () => {
@@ -81,7 +72,6 @@ test("uses provider-filtered selectable models for OpenAI sessions", () => {
   });
 
   assert.deepEqual(settings.selectableModels, [
-    "openai/gpt-5.5",
     "gpt-4.1",
     "gpt-4o"
   ]);

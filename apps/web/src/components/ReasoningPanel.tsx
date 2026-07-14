@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { stripSyntheticReasoningStatus } from "../core/reasoningText";
 
 type ReasoningPanelProps = {
@@ -16,49 +15,16 @@ export function ReasoningPanel({
   isActive = false,
   onOpenActivity
 }: ReasoningPanelProps) {
-  const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [elapsedMs, setElapsedMs] = useState(0);
   const visibleReasoning = stripSyntheticReasoningStatus(reasoning);
   const hasReasoning = visibleReasoning.trim().length > 0;
   const showStatusOnly = isStreaming && !hasReasoning;
   const canOpenActivity = hasReasoning || isStreaming;
 
-  useEffect(() => {
-    if (isStreaming) {
-      const start = Date.now();
-      setStartedAt(start);
-      setElapsedMs(0);
-      const interval = window.setInterval(() => {
-        setElapsedMs(Date.now() - start);
-      }, 500);
-
-      return () => window.clearInterval(interval);
-    }
-  }, [isStreaming]);
-
-  useEffect(() => {
-    if (isStreaming) {
-      return;
-    }
-
-    if (startedAt) {
-      setElapsedMs(Date.now() - startedAt);
-    }
-  }, [isStreaming, startedAt]);
-
   if (!hasReasoning && !showStatusOnly) {
     return null;
   }
 
-  const durationSeconds =
-    startedAt || elapsedMs > 0 ? Math.max(1, Math.round(elapsedMs / 1000)) : null;
-  const label = showStatusOnly
-    ? "Thinking"
-    : isStreaming
-      ? "Thinking"
-    : durationSeconds
-      ? `Thought for ${durationSeconds}s`
-      : "Thought";
+  const label = getReasoningPanelLabel(isStreaming);
 
   return (
     <div
@@ -81,4 +47,8 @@ export function ReasoningPanel({
       </button>
     </div>
   );
+}
+
+export function getReasoningPanelLabel(isStreaming: boolean): string {
+  return isStreaming ? "Thinking" : "Thought";
 }

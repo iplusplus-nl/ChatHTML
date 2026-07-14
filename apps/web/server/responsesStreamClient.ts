@@ -63,7 +63,7 @@ export function isOpenRouterRuntime(
   );
 }
 
-function isOpenAiRuntime(
+export function isOpenAiRuntime(
   settings: Pick<ResponsesHttpErrorContext, "providerName" | "baseUrl">
 ): boolean {
   return (

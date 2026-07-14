@@ -23,3 +23,9 @@ export function modelLikelySupportsImageInput(model: string): boolean {
 
   return IMAGE_MODEL_PATTERNS.some((pattern) => pattern.test(normalized));
 }
+
+export function findImageInputCapableModel(
+  models: readonly string[]
+): string | undefined {
+  return models.find(modelLikelySupportsImageInput);
+}

@@ -8,8 +8,8 @@ import {
   getDefaultModelsEndpoint,
   getSelectableModelOptions,
   getUiComplexityLevel,
-  isRequiredModelOption,
   normalizeUiComplexity,
+  providerSupportsReasoning,
   type ApiKeySource,
   type ApiProviderId,
   type ApiSettings,
@@ -34,8 +34,7 @@ const REASONING_DESCRIPTIONS: Partial<Record<ReasoningEffort, string>> = {
   none: "Fastest, without a reasoning budget",
   low: "A short reasoning pass",
   medium: "Balanced depth and response time",
-  high: "More time for difficult tasks",
-  xhigh: "Maximum available reasoning effort"
+  high: "More time for difficult tasks"
 };
 
 function formatEnvironmentStatus(
@@ -98,6 +97,19 @@ export function ApiSettingsSection({
       preset.id === settings.providerId
   );
   const selectableModels = getSelectableModelOptions(settings);
+  const allowsManualModelId =
+    settings.providerId === "local" || settings.providerId === "custom";
+  const supportsReasoning = providerSupportsReasoning(settings.providerId);
+  const connectionGuidance =
+    !isManagedProvider &&
+    settings.apiKeySource === "environment" &&
+    apiKeyStatus?.configured === false
+      ? `No ${getApiKeyEnvironmentName(settings)} was found. Choose Manual to enter a key, or configure it on the server.`
+      : !isManagedProvider &&
+          settings.apiKeySource === "manual" &&
+          !settings.apiKey.trim()
+        ? "Enter an API key to finish this provider connection."
+        : null;
 
   return (
     <>
@@ -193,21 +205,50 @@ export function ApiSettingsSection({
       <div className="settings-row">
         <span>Default Model</span>
         <div className="settings-control-stack">
-          <SettingsSelect
-            ariaLabel="Default Model"
-            value={settings.model}
-            options={
-              selectableModels.length
-                ? selectableModels.map((model) => ({
-                    value: model,
-                    label: model
-                  }))
-                : [{ value: "", label: "No saved models", disabled: true }]
-            }
-            onChange={(model) => onSettingsChange({ model })}
-          />
+          {allowsManualModelId ? (
+            <>
+              <input
+                value={settings.model}
+                aria-label="Default Model ID"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={
+                  settings.providerId === "local"
+                    ? "llama3.1"
+                    : "provider/model-id"
+                }
+                onChange={(event) =>
+                  onSettingsChange({ model: event.target.value })
+                }
+              />
+              <span className="settings-hint">
+                Enter any model ID accepted by this endpoint, even if Fetch
+                does not list it.
+              </span>
+            </>
+          ) : (
+            <SettingsSelect
+              ariaLabel="Default Model"
+              value={settings.model}
+              options={
+                selectableModels.length
+                  ? selectableModels.map((model) => ({
+                      value: model,
+                      label: model
+                    }))
+                  : [{ value: "", label: "No saved models", disabled: true }]
+              }
+              onChange={(model) => onSettingsChange({ model })}
+            />
+          )}
         </div>
       </div>
+
+      {connectionGuidance ? (
+        <div className="settings-provider-guidance" role="status">
+          {connectionGuidance}
+        </div>
+      ) : null}
 
       {!isManagedProvider ? (
         <label className="settings-row">
@@ -242,14 +283,12 @@ export function ApiSettingsSection({
         <div className="settings-model-list">
           {settings.modelOptions.length ? (
             settings.modelOptions.map((model) => {
-              const isRequiredModel = isRequiredModelOption(model);
-
               return (
                 <span
                   key={model}
                   className={`settings-model-chip ${
                     model === settings.model ? "is-active" : ""
-                  } ${isRequiredModel ? "is-locked" : ""}`}
+                  }`}
                 >
                   <button
                     type="button"
@@ -259,13 +298,7 @@ export function ApiSettingsSection({
                   </button>
                   <button
                     type="button"
-                    aria-label={
-                      isRequiredModel
-                        ? `${model} is always included`
-                        : `Remove ${model}`
-                    }
-                    disabled={isRequiredModel}
-                    title={isRequiredModel ? "Always included" : undefined}
+                    aria-label={`Remove ${model}`}
                     onClick={() => onRemoveModel(model)}
                   >
                     <X size={13} strokeWidth={2.1} aria-hidden="true" />
@@ -279,20 +312,29 @@ export function ApiSettingsSection({
         </div>
       </div>
 
-      <div className="settings-row">
-        <span>Reasoning</span>
-        <SettingsSelect
-          ariaLabel="Reasoning"
-          value={settings.reasoningEffort}
-          options={REASONING_EFFORT_OPTIONS.map((option) => ({
-            ...option,
-            description: REASONING_DESCRIPTIONS[option.value]
-          }))}
-          onChange={(value) =>
-            onSettingsChange({ reasoningEffort: value as ReasoningEffort })
-          }
-        />
-      </div>
+      {supportsReasoning ? (
+        <div className="settings-row">
+          <span>Reasoning</span>
+          <SettingsSelect
+            ariaLabel="Reasoning"
+            value={settings.reasoningEffort}
+            options={REASONING_EFFORT_OPTIONS.map((option) => ({
+              ...option,
+              description: REASONING_DESCRIPTIONS[option.value]
+            }))}
+            onChange={(value) =>
+              onSettingsChange({ reasoningEffort: value as ReasoningEffort })
+            }
+          />
+        </div>
+      ) : (
+        <div className="settings-row">
+          <span>Reasoning</span>
+          <span className="settings-hint">
+            Not available on this provider request path
+          </span>
+        </div>
+      )}
 
       <div className="settings-row">
         <span>UI complexity</span>

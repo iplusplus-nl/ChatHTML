@@ -1,12 +1,13 @@
 import {
   getDefaultModelsEndpoint,
+  getProviderModelCatalog,
   getProviderPreset,
-  isRequiredModelOption,
   normalizeApiSettings,
   normalizeMemoryItems,
   type ApiProviderId,
   type ApiSettings
 } from "../../core/apiSettings";
+import type { RuntimeSettingsSummary } from "../../core/runtimeSettings";
 
 export type ExportedUserPreferences = {
   userPreferencePrompt: string;
@@ -42,7 +43,7 @@ export function changeSettingsProvider(
     providerName: preset.label,
     baseUrl: preset.baseUrl,
     model: preset.model,
-    modelOptions: [preset.model],
+    modelOptions: getProviderModelCatalog(preset.id),
     modelsEndpoint: getDefaultModelsEndpoint(preset.baseUrl),
     reasoningEffort: preset.reasoningEffort,
     apiKeySource: preset.apiKeySource ?? current.apiKeySource,
@@ -54,10 +55,6 @@ export function toggleSettingsModelSelection(
   current: string[],
   modelId: string
 ): string[] {
-  if (isRequiredModelOption(modelId)) {
-    return current;
-  }
-
   const normalizedModelId = modelId.toLowerCase();
   const exists = current.some(
     (selectedModel) => selectedModel.toLowerCase() === normalizedModelId
@@ -89,10 +86,6 @@ export function removeSettingsModelOption(
   current: ApiSettings,
   modelId: string
 ): ApiSettings {
-  if (isRequiredModelOption(modelId)) {
-    return current;
-  }
-
   const modelOptions = current.modelOptions.filter(
     (modelOption) => modelOption !== modelId
   );
@@ -101,6 +94,37 @@ export function removeSettingsModelOption(
     ...current,
     model: current.model === modelId ? (modelOptions[0] ?? "") : current.model,
     modelOptions
+  });
+}
+
+export function selectContinueLocalApiSettings(
+  current: ApiSettings,
+  runtimeSettings: RuntimeSettingsSummary | null
+): ApiSettings {
+  if (
+    current.providerId !== "chathtml-cloud" &&
+    current.apiKeySource !== "managed"
+  ) {
+    return current;
+  }
+
+  const environmentKeys = runtimeSettings?.api.environmentKeys ?? [];
+  const hasEnvironmentKey = (name: string) =>
+    environmentKeys.some((key) => key.name === name && key.configured);
+  const providerId: ApiProviderId = hasEnvironmentKey("OPENROUTER_API_KEY")
+    ? "openrouter"
+    : hasEnvironmentKey("OPENAI_API_KEY")
+      ? "openai"
+      : "openrouter";
+  const environmentConfigured = hasEnvironmentKey(
+    providerId === "openai" ? "OPENAI_API_KEY" : "OPENROUTER_API_KEY"
+  );
+  const selected = changeSettingsProvider(current, providerId);
+
+  return normalizeApiSettings({
+    ...selected,
+    apiKeySource: environmentConfigured ? "environment" : "manual",
+    apiKey: ""
   });
 }
 

@@ -8,12 +8,15 @@ import {
   REQUIRED_MODEL_OPTIONS,
   createMemoryItemId,
   getDefaultModelsEndpoint,
+  getProviderModelCatalog,
   getSelectableModelOptions,
   getUiComplexityLevel,
   hasCompleteApiSettings,
   normalizeApiSettings,
+  normalizeModelIdForProvider,
   normalizeMemoryItems,
   normalizeUiComplexity,
+  providerSupportsReasoning,
   serializeApiSettings
 } from "./apiSettings";
 
@@ -38,12 +41,19 @@ describe("apiSettings", () => {
     assert.equal(DEFAULT_API_SETTINGS.apiKeySource, "environment");
   });
 
-  it("keeps the required default models selected", () => {
+  it("uses an OpenRouter shortlist by default without forcing it after edits", () => {
     assert.deepEqual(DEFAULT_API_SETTINGS.modelOptions, REQUIRED_MODEL_OPTIONS);
     assert.deepEqual(
       normalizeApiSettings({ modelOptions: [] }).modelOptions,
-      REQUIRED_MODEL_OPTIONS
+      []
     );
+  });
+
+  it("provides provider-compatible starter catalogs", () => {
+    assert.deepEqual(getProviderModelCatalog("openrouter"), REQUIRED_MODEL_OPTIONS);
+    assert.deepEqual(getProviderModelCatalog("openai"), ["gpt-4.1"]);
+    assert.deepEqual(getProviderModelCatalog("local"), ["llama3.1"]);
+    assert.deepEqual(getProviderModelCatalog("custom"), []);
   });
 
   it("supports ChatHTML Cloud as a managed provider preset", () => {
@@ -70,17 +80,17 @@ describe("apiSettings", () => {
     });
 
     assert.deepEqual(getSelectableModelOptions(normalized), [
-      ...REQUIRED_MODEL_OPTIONS,
       "anthropic/claude-sonnet-4",
       "openai/gpt-4.1"
     ]);
   });
 
-  it("excludes non-OpenAI vendor models from OpenAI selectable options", () => {
+  it("normalizes direct OpenAI IDs and excludes vendor-qualified models", () => {
     const normalized = normalizeApiSettings({
       providerId: "openai",
-      model: "gpt-4.1",
+      model: "openai/gpt-5.5",
       modelOptions: [
+        "openai/gpt-5.5",
         "google/gemini-custom",
         "ANTHROPIC/CLAUDE-CUSTOM",
         "z-ai/glm-custom",
@@ -89,23 +99,38 @@ describe("apiSettings", () => {
     });
 
     assert.deepEqual(getSelectableModelOptions(normalized), [
-      "openai/gpt-5.5",
-      "gpt-4.1",
+      "gpt-5.5",
       "gpt-4o"
     ]);
+    assert.equal(normalized.model, "gpt-5.5");
+    assert.equal(normalizeModelIdForProvider("openai/gpt-4.1", "openai"), "gpt-4.1");
+    assert.equal(normalizeModelIdForProvider("google/gemini-pro", "openai"), null);
   });
 
-  it("keeps the OpenRouter shortlist and active model selectable", () => {
+  it("keeps only the active OpenRouter model selectable after the list is cleared", () => {
     const normalized = normalizeApiSettings({
       providerId: "openrouter",
       model: "vendor/active-model",
       modelOptions: []
     });
 
-    assert.deepEqual(getSelectableModelOptions(normalized), [
-      ...REQUIRED_MODEL_OPTIONS,
-      "vendor/active-model"
-    ]);
+    assert.deepEqual(getSelectableModelOptions(normalized), ["vendor/active-model"]);
+  });
+
+  it("does not inject OpenRouter models into local and custom providers", () => {
+    const local = normalizeApiSettings({
+      providerId: "local",
+      model: "my-local-model",
+      modelOptions: []
+    });
+    const custom = normalizeApiSettings({
+      providerId: "custom",
+      model: "deployment-42",
+      modelOptions: []
+    });
+
+    assert.deepEqual(getSelectableModelOptions(local), ["my-local-model"]);
+    assert.deepEqual(getSelectableModelOptions(custom), ["deployment-42"]);
   });
 
   it("deduplicates model options case-insensitively", () => {
@@ -116,9 +141,24 @@ describe("apiSettings", () => {
     });
 
     assert.deepEqual(getSelectableModelOptions(normalized), [
-      ...REQUIRED_MODEL_OPTIONS,
+      "openai/gpt-5.5",
       "google/gemini-pro"
     ]);
+  });
+
+  it("hides unsupported reasoning and migrates xhigh to high", () => {
+    assert.equal(providerSupportsReasoning("openrouter"), true);
+    assert.equal(providerSupportsReasoning("openai"), false);
+    assert.equal(
+      normalizeApiSettings({ providerId: "openrouter", reasoningEffort: "xhigh" })
+        .reasoningEffort,
+      "high"
+    );
+    assert.equal(
+      normalizeApiSettings({ providerId: "custom", reasoningEffort: "high" })
+        .reasoningEffort,
+      "none"
+    );
   });
 
   it("normalizes UI complexity as a clamped integer", () => {

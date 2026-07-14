@@ -8,6 +8,12 @@ import {
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 import { consumeEscapeDismissal } from "../dismissalModel";
+import {
+  getAdjacentSettingsOptionIndex,
+  getInitialSettingsOptionIndex
+} from "./settingsSelectModel";
+
+const SETTINGS_SELECT_OPEN_EVENT = "chathtml:settings-select-open";
 
 export type SettingsSelectOption = {
   value: string;
@@ -69,8 +75,49 @@ export function SettingsSelect({
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const focusIntentRef = useRef<"selected" | "first" | "last">("selected");
+  const hasFocusedMenuRef = useRef(false);
   const listboxId = useId();
   const selected = options.find((option) => option.value === value) ?? options[0];
+
+  const openMenu = (intent: "selected" | "first" | "last" = "selected") => {
+    focusIntentRef.current = intent;
+    hasFocusedMenuRef.current = false;
+    window.dispatchEvent(
+      new CustomEvent(SETTINGS_SELECT_OPEN_EVENT, { detail: listboxId })
+    );
+    setIsOpen(true);
+  };
+
+  const chooseOption = (option: SettingsSelectOption) => {
+    if (option.disabled) {
+      return;
+    }
+    onChange(option.value);
+    setIsOpen(false);
+    buttonRef.current?.focus();
+  };
+
+  const focusOption = (index: number) => {
+    if (index >= 0) {
+      optionRefs.current[index]?.focus();
+    }
+  };
+
+  const focusNextControl = (reverse: boolean) => {
+    const trigger = buttonRef.current;
+    if (!trigger) {
+      return;
+    }
+    const controls = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((element) => !menuRef.current?.contains(element));
+    const index = controls.indexOf(trigger);
+    controls[index + (reverse ? -1 : 1)]?.focus();
+  };
 
   useEffect(() => {
     if (!isOpen || !buttonRef.current) {
@@ -98,19 +145,46 @@ export function SettingsSelect({
       setIsOpen(false);
       buttonRef.current?.focus();
     };
+    const handleOtherSelectOpen = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== listboxId) {
+        setIsOpen(false);
+      }
+    };
 
     updatePosition();
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener(SETTINGS_SELECT_OPEN_EVENT, handleOtherSelectOpen);
     return () => {
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener(
+        SETTINGS_SELECT_OPEN_EVENT,
+        handleOtherSelectOpen
+      );
     };
-  }, [isOpen]);
+  }, [isOpen, listboxId]);
+
+  useEffect(() => {
+    if (!isOpen || !menuPosition || hasFocusedMenuRef.current) {
+      return undefined;
+    }
+    hasFocusedMenuRef.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      focusOption(
+        getInitialSettingsOptionIndex(
+          options,
+          value,
+          focusIntentRef.current
+        )
+      );
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isOpen, menuPosition, options, value]);
 
   const portalTarget = typeof document === "undefined" ? null : document.body;
   const menuTheme =
@@ -127,8 +201,33 @@ export function SettingsSelect({
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-controls={isOpen ? listboxId : undefined}
-        disabled={disabled || !selected}
-        onClick={() => setIsOpen((current) => !current)}
+        disabled={disabled || !selected || selected.disabled}
+        onClick={() => {
+          if (isOpen) {
+            setIsOpen(false);
+            return;
+          }
+          openMenu();
+        }}
+        onKeyDown={(event) => {
+          const intent =
+            event.key === "ArrowUp" || event.key === "End"
+              ? "last"
+              : event.key === "Home"
+                ? "first"
+                : "selected";
+          if (
+            event.key === "Enter" ||
+            event.key === " " ||
+            event.key === "ArrowDown" ||
+            event.key === "ArrowUp" ||
+            event.key === "Home" ||
+            event.key === "End"
+          ) {
+            event.preventDefault();
+            openMenu(intent);
+          }
+        }}
       >
         <span className="settings-select-value">
           {selected?.label ?? "Select"}
@@ -149,6 +248,7 @@ export function SettingsSelect({
               className={`settings-select-menu ${
                 menuPosition.opensUp ? "opens-up" : ""
               }`}
+              data-modal-focus-portal=""
               data-theme={menuTheme}
               style={menuPosition.style}
               role="listbox"
@@ -158,6 +258,9 @@ export function SettingsSelect({
                 const isSelected = option.value === value;
                 return (
                   <button
+                    ref={(element) => {
+                      optionRefs.current[options.indexOf(option)] = element;
+                    }}
                     className={`settings-select-option ${
                       isSelected ? "is-selected" : ""
                     }`}
@@ -166,10 +269,43 @@ export function SettingsSelect({
                     aria-selected={isSelected}
                     disabled={option.disabled}
                     key={option.value}
-                    onClick={() => {
-                      onChange(option.value);
-                      setIsOpen(false);
-                      buttonRef.current?.focus();
+                    onClick={() => chooseOption(option)}
+                    onKeyDown={(event) => {
+                      const currentIndex = options.indexOf(option);
+                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault();
+                        focusOption(
+                          getAdjacentSettingsOptionIndex(
+                            options,
+                            currentIndex,
+                            event.key === "ArrowDown" ? 1 : -1
+                          )
+                        );
+                        return;
+                      }
+                      if (event.key === "Home" || event.key === "End") {
+                        event.preventDefault();
+                        focusOption(
+                          getInitialSettingsOptionIndex(
+                            options,
+                            value,
+                            event.key === "Home" ? "first" : "last"
+                          )
+                        );
+                        return;
+                      }
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        chooseOption(option);
+                        return;
+                      }
+                      if (event.key === "Tab") {
+                        event.preventDefault();
+                        setIsOpen(false);
+                        window.requestAnimationFrame(() =>
+                          focusNextControl(event.shiftKey)
+                        );
+                      }
                     }}
                   >
                     <span className="settings-select-option-copy">

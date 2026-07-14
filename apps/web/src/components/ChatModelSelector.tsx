@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -14,7 +15,9 @@ import {
 import {
   CHAT_REASONING_OPTIONS,
   getChatReasoningIndex,
-  getChatReasoningLabel
+  getChatReasoningLabel,
+  getViewportHorizontalOffset,
+  getViewportVerticalOffset
 } from "./chatModelSelectorModel";
 import { isEscapeDismissKey } from "./dismissalModel";
 
@@ -22,6 +25,7 @@ type ChatModelSelectorProps = {
   model: string;
   modelOptions: string[];
   reasoningEffort: ReasoningEffort;
+  reasoningSupported?: boolean;
   uiComplexity: number;
   disabled?: boolean;
   onModelChange(model: string): void;
@@ -31,6 +35,8 @@ type ChatModelSelectorProps = {
 
 const REASONING_MAX_INDEX = CHAT_REASONING_OPTIONS.length - 1;
 const UI_COMPLEXITY_MAX_INDEX = UI_COMPLEXITY_LEVEL_OPTIONS.length - 1;
+const useBrowserLayoutEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function getDisplayModelName(model: string): string {
   const trimmed = model.trim();
@@ -65,6 +71,7 @@ export function ChatModelSelector({
   model,
   modelOptions,
   reasoningEffort,
+  reasoningSupported = true,
   uiComplexity,
   disabled = false,
   onModelChange,
@@ -74,14 +81,25 @@ export function ChatModelSelector({
   const [isOpen, setIsOpen] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [menuOffsetX, setMenuOffsetX] = useState(0);
+  const [menuOffsetY, setMenuOffsetY] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuShellRef = useRef<HTMLDivElement | null>(null);
+  const controlsMenuRef = useRef<HTMLDivElement | null>(null);
+  const modelMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const modelSubmenuRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const closeModelMenuTimeoutRef = useRef<number | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const reasoningLabel = getChatReasoningLabel(reasoningEffort);
   const reasoningIndex = getChatReasoningIndex(reasoningEffort);
   const uiComplexityLevel = getUiComplexityLevel(uiComplexity);
   const uiComplexityIndex = UI_COMPLEXITY_LEVEL_OPTIONS.indexOf(uiComplexityLevel);
-  const parameterLabel = [reasoningLabel, `UI ${uiComplexityLevel.label}`]
+  const parameterLabel = [
+    reasoningSupported ? reasoningLabel : "",
+    `UI ${uiComplexityLevel.label}`
+  ]
     .filter(Boolean)
     .join(" · ");
   const filteredModels = useMemo(() => {
@@ -109,6 +127,67 @@ export function ChatModelSelector({
     }, 120);
   };
 
+  useBrowserLayoutEffect(() => {
+    if (!isOpen || !menuShellRef.current) {
+      setMenuOffsetX(0);
+      setMenuOffsetY(0);
+      return undefined;
+    }
+
+    const updateMenuOffset = () => {
+      const shell = menuShellRef.current;
+      if (!shell) {
+        return;
+      }
+      const previousTransform = shell.style.transform;
+      shell.style.transform = "none";
+      const rect = shell.getBoundingClientRect();
+      shell.style.transform = previousTransform;
+      setMenuOffsetX(
+        getViewportHorizontalOffset(rect.left, rect.right, window.innerWidth)
+      );
+      setMenuOffsetY(
+        getViewportVerticalOffset(rect.top, rect.bottom, window.innerHeight)
+      );
+    };
+
+    updateMenuOffset();
+    window.addEventListener("resize", updateMenuOffset);
+    return () => window.removeEventListener("resize", updateMenuOffset);
+  }, [isModelMenuOpen, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      controlsMenuRef.current
+        ?.querySelector<HTMLElement>(
+          'input:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex="-1"])'
+        )
+        ?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isModelMenuOpen) {
+      return undefined;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const selectedOption = modelSubmenuRef.current?.querySelector<HTMLElement>(
+        '.chat-model-option[aria-selected="true"]'
+      );
+      (searchInputRef.current ?? selectedOption ??
+        modelSubmenuRef.current?.querySelector<HTMLElement>(
+          ".chat-model-option:not(:disabled)"
+        ))?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isModelMenuOpen, modelOptions.length]);
+
   useEffect(() => {
     if (!isOpen) {
       return undefined;
@@ -125,8 +204,13 @@ export function ChatModelSelector({
         return;
       }
       event.preventDefault();
+      if (isModelMenuOpen) {
+        setIsModelMenuOpen(false);
+        window.requestAnimationFrame(() => modelMenuButtonRef.current?.focus());
+        return;
+      }
       setIsOpen(false);
-      setIsModelMenuOpen(false);
+      triggerRef.current?.focus();
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
@@ -136,18 +220,25 @@ export function ChatModelSelector({
       window.removeEventListener("keydown", handleKeyDown);
       clearModelMenuCloseTimeout();
     };
-  }, [isOpen]);
+  }, [isModelMenuOpen, isOpen]);
 
   return (
     <div className="chat-model-selector" ref={rootRef}>
       {isOpen ? (
         <div
-          className="chat-model-menu-shell"
+          ref={menuShellRef}
+          className={`chat-model-menu-shell ${
+            isModelMenuOpen ? "is-model-menu-open" : ""
+          }`}
+          style={{
+            transform: `translate(${menuOffsetX}px, ${menuOffsetY}px)`
+          }}
           onMouseEnter={clearModelMenuCloseTimeout}
           onMouseLeave={scheduleModelMenuClose}
         >
           {isModelMenuOpen ? (
             <div
+              ref={modelSubmenuRef}
               className="chat-model-submenu"
               role="listbox"
               aria-label="Choose model"
@@ -160,11 +251,23 @@ export function ChatModelSelector({
                 <label className="chat-model-search">
                   <Search size={14} strokeWidth={2.1} aria-hidden="true" />
                   <input
+                    ref={searchInputRef}
                     value={query}
                     autoFocus
                     placeholder="Search models"
                     spellCheck={false}
                     onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "ArrowDown") {
+                        return;
+                      }
+                      event.preventDefault();
+                      modelSubmenuRef.current
+                        ?.querySelector<HTMLElement>(
+                          ".chat-model-option:not(:disabled)"
+                        )
+                        ?.focus();
+                    }}
                   />
                 </label>
               ) : null}
@@ -187,6 +290,42 @@ export function ChatModelSelector({
                           onModelChange(option);
                           setIsOpen(false);
                           setIsModelMenuOpen(false);
+                          triggerRef.current?.focus();
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "ArrowLeft") {
+                            event.preventDefault();
+                            setIsModelMenuOpen(false);
+                            window.requestAnimationFrame(() =>
+                              modelMenuButtonRef.current?.focus()
+                            );
+                            return;
+                          }
+                          if (
+                            event.key !== "ArrowDown" &&
+                            event.key !== "ArrowUp" &&
+                            event.key !== "Home" &&
+                            event.key !== "End"
+                          ) {
+                            return;
+                          }
+                          event.preventDefault();
+                          const options = Array.from(
+                            modelSubmenuRef.current?.querySelectorAll<HTMLElement>(
+                              ".chat-model-option:not(:disabled)"
+                            ) ?? []
+                          );
+                          const currentIndex = options.indexOf(event.currentTarget);
+                          const nextIndex =
+                            event.key === "Home"
+                              ? 0
+                              : event.key === "End"
+                                ? options.length - 1
+                                : event.key === "ArrowDown"
+                                  ? (currentIndex + 1) % options.length
+                                  : (currentIndex - 1 + options.length) %
+                                    options.length;
+                          options[nextIndex]?.focus();
                         }}
                       >
                         <span>{getDisplayModelName(option)}</span>
@@ -203,7 +342,13 @@ export function ChatModelSelector({
             </div>
           ) : null}
 
-          <div className="chat-model-menu" role="menu" aria-label="Model controls">
+          <div
+            ref={controlsMenuRef}
+            className="chat-model-menu"
+            role="menu"
+            aria-label="Model controls"
+          >
+            {reasoningSupported ? (
             <div className="chat-model-slider-block is-reasoning">
               <div className="chat-model-slider-header">
                 <span>Reasoning</span>
@@ -242,6 +387,7 @@ export function ChatModelSelector({
                 </span>
               </div>
             </div>
+            ) : null}
             <div className="chat-model-slider-block is-ui">
               <div className="chat-model-slider-header">
                 <span>UI</span>
@@ -282,6 +428,7 @@ export function ChatModelSelector({
             </div>
             <div className="chat-model-menu-separator" />
             <button
+              ref={modelMenuButtonRef}
               className="chat-model-menu-item is-parent"
               type="button"
               role="menuitem"
@@ -290,8 +437,13 @@ export function ChatModelSelector({
                 setIsModelMenuOpen(true);
               }}
               onMouseLeave={scheduleModelMenuClose}
-              onFocus={() => setIsModelMenuOpen(true)}
               onClick={() => setIsModelMenuOpen(true)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight") {
+                  event.preventDefault();
+                  setIsModelMenuOpen(true);
+                }
+              }}
             >
               <span>{getDisplayModelName(model)}</span>
               <ChevronRight size={18} strokeWidth={2.1} aria-hidden="true" />
@@ -300,11 +452,24 @@ export function ChatModelSelector({
         </div>
       ) : null}
       <button
+        ref={triggerRef}
         className="chat-model-button"
         type="button"
         disabled={disabled || !modelOptions.length}
         aria-expanded={isOpen}
+        aria-haspopup="menu"
         aria-label="Choose model"
+        onKeyDown={(event) => {
+          if (
+            !isOpen &&
+            (event.key === "ArrowDown" || event.key === "ArrowUp")
+          ) {
+            event.preventDefault();
+            setQuery("");
+            setIsModelMenuOpen(false);
+            setIsOpen(true);
+          }
+        }}
         onClick={() => {
           setQuery("");
           setIsModelMenuOpen(false);

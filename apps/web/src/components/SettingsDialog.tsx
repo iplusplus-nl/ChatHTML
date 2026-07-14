@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
 import {
-  REQUIRED_MODEL_OPTIONS,
   createMemoryItemId,
   normalizeApiSettings,
   type ApiProviderId,
@@ -51,6 +50,7 @@ import { DisplaySettingsSection } from "./settings/DisplaySettingsSection";
 import { ProfileSettingsSection } from "./settings/ProfileSettingsSection";
 import { SearchSettingsSection } from "./settings/SearchSettingsSection";
 import { SettingsNavigation } from "./settings/SettingsNavigation";
+import { useModalFocusTrap } from "./useModalFocusTrap";
 
 export type SettingsDialogProps = {
   section: SettingsSection;
@@ -109,7 +109,10 @@ export function SettingsDialog({
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const preferenceFileInputRef = useRef<HTMLInputElement>(null);
   const avatarFileInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const dirtyDraftsRef = useRef(createCleanSettingsDraftState());
+
+  useModalFocusTrap({ dialogRef, enabled: !isModelImportOpen });
 
   useEffect(() => {
     setDraftApiSettings((current) =>
@@ -327,6 +330,7 @@ export function SettingsDialog({
       }}
     >
       <section
+        ref={dialogRef}
         className="settings-panel"
         role="dialog"
         aria-modal="true"
@@ -467,7 +471,7 @@ export function SettingsDialog({
         <ModelImportDialog
           models={fetchedModels}
           selectedModels={selectedFetchedModels}
-          requiredModels={[...REQUIRED_MODEL_OPTIONS]}
+          requiredModels={[]}
           query={modelImportQuery}
           isLoading={isModelImportLoading}
           error={modelImportError}

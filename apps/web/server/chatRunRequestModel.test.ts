@@ -147,6 +147,50 @@ describe("chat run request normalization", () => {
       /API settings missing: Model/
     );
   });
+
+  it("normalizes legacy Ultra and clears reasoning on unsupported providers", () => {
+    assert.equal(
+      readRuntimeApiSettings(manualApiSettings({ reasoningEffort: "xhigh" }))
+        .reasoningEffort,
+      "high"
+    );
+    assert.equal(
+      readRuntimeApiSettings(
+        manualApiSettings({
+          providerId: "openai",
+          providerName: "OpenAI",
+          baseUrl: "https://api.openai.com/v1",
+          model: "gpt-4.1",
+          reasoningEffort: "high"
+        })
+      ).reasoningEffort,
+      "none"
+    );
+  });
+
+  it("normalizes direct OpenAI model IDs before sending a request", () => {
+    const directSettings = {
+      providerId: "openai",
+      providerName: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      model: "openai/gpt-5.5"
+    };
+
+    assert.equal(
+      readRuntimeApiSettings(manualApiSettings(directSettings)).model,
+      "gpt-5.5"
+    );
+    assert.throws(
+      () =>
+        readRuntimeApiSettings(
+          manualApiSettings({
+            ...directSettings,
+            model: "google/gemini-3.1-pro-preview"
+          })
+        ),
+      /cannot use another provider prefix/
+    );
+  });
 });
 
 describe("chat run request primitives", () => {

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   DEFAULT_API_SETTINGS,
-  REQUIRED_MODEL_OPTIONS,
   normalizeApiSettings
 } from "../../core/apiSettings";
+import type { RuntimeSettingsSummary } from "../../core/runtimeSettings";
 import {
   addSettingsModelOptions,
   applyImportedUserPreferences,
@@ -12,6 +12,7 @@ import {
   changeSettingsProvider,
   getExportedUserPreferences,
   removeSettingsModelOption,
+  selectContinueLocalApiSettings,
   toggleSettingsModelSelection
 } from "./settingsDraftModel";
 
@@ -57,6 +58,7 @@ describe("settings draft model", () => {
     assert.equal(next.baseUrl, "https://api.openai.com/v1");
     assert.equal(next.modelsEndpoint, "https://api.openai.com/v1/models");
     assert.equal(next.model, "gpt-4.1");
+    assert.deepEqual(next.modelOptions, ["gpt-4.1"]);
     assert.equal(next.reasoningEffort, "none");
     assert.equal(next.apiKeySource, "manual");
     assert.equal(next.apiKey, "secret");
@@ -85,16 +87,19 @@ describe("settings draft model", () => {
     );
   });
 
-  it("does not toggle or remove required models", () => {
-    const required = REQUIRED_MODEL_OPTIONS[0];
-    const selected = ["custom/model"];
+  it("allows every saved model to be toggled and removed", () => {
+    const model = "openai/gpt-5.5";
+    const selected = [model, "custom/model"];
     const current = normalizeApiSettings({
       ...DEFAULT_API_SETTINGS,
-      model: required
+      model,
+      modelOptions: selected
     });
 
-    assert.equal(toggleSettingsModelSelection(selected, required), selected);
-    assert.equal(removeSettingsModelOption(current, required), current);
+    assert.deepEqual(toggleSettingsModelSelection(selected, model), [
+      "custom/model"
+    ]);
+    assert.equal(removeSettingsModelOption(current, model).modelOptions.includes(model), false);
   });
 
   it("adds fetched models with case-insensitive normalization", () => {
@@ -129,6 +134,42 @@ describe("settings draft model", () => {
     assert.notEqual(next.model, "Vendor/Active");
     assert.equal(next.modelOptions.includes("Vendor/Active"), false);
     assert.equal(next.modelOptions.includes(next.model), true);
+  });
+
+  it("moves managed onboarding to an environment-backed local provider", () => {
+    const current = normalizeApiSettings({ providerId: "chathtml-cloud" });
+    const runtime: RuntimeSettingsSummary = {
+      api: {
+        defaults: current,
+        environmentKeys: [
+          { name: "OPENROUTER_API_KEY", configured: false },
+          { name: "OPENAI_API_KEY", configured: true }
+        ]
+      },
+      search: {
+        environmentKeys: [],
+        defaultProvider: "auto",
+        defaultBrowserEngine: "fetch",
+        providers: [],
+        browserEngines: []
+      }
+    };
+
+    const next = selectContinueLocalApiSettings(current, runtime);
+
+    assert.equal(next.providerId, "openai");
+    assert.equal(next.apiKeySource, "environment");
+    assert.equal(next.model, "gpt-4.1");
+    assert.deepEqual(next.modelOptions, ["gpt-4.1"]);
+  });
+
+  it("selects OpenRouter manual setup with guidance when no key exists", () => {
+    const current = normalizeApiSettings({ providerId: "chathtml-cloud" });
+    const next = selectContinueLocalApiSettings(current, null);
+
+    assert.equal(next.providerId, "openrouter");
+    assert.equal(next.apiKeySource, "manual");
+    assert.equal(next.apiKey, "");
   });
 
   it("exports normalized preferences without unrelated provider settings", () => {

@@ -15,6 +15,7 @@ import type {
 import type { ResponsesInputMessage } from "./responsesEventReducer.js";
 import {
   describeApiCredentialMismatch,
+  isOpenAiRuntime,
   isOpenRouterRuntime
 } from "./responsesStreamClient.js";
 
@@ -569,7 +570,9 @@ function normalizeReasoningEffort(value: unknown): OpenRouterReasoningEffort {
     typeof value === "string" &&
     allowed.has(value as OpenRouterReasoningEffort)
   ) {
-    return value as OpenRouterReasoningEffort;
+    return value === "xhigh"
+      ? "high"
+      : (value as OpenRouterReasoningEffort);
   }
 
   throw new Error(
@@ -604,7 +607,16 @@ export function readRuntimeApiSettings(input: unknown): RuntimeApiSettings {
       "Managed ChatHTML Cloud requests require a hosted ChatHTML Cloud backend. Use OpenRouter/OpenAI with your own API key in the open-source server."
     );
   }
-  const modelValue = typeof object.model === "string" ? object.model.trim() : "";
+  const rawModelValue =
+    typeof object.model === "string" ? object.model.trim() : "";
+  const modelValue = isOpenAiRuntime(credentials)
+    ? rawModelValue.replace(/^openai\//i, "")
+    : rawModelValue;
+  if (isOpenAiRuntime(credentials) && modelValue.includes("/")) {
+    throw new Error(
+      "API settings invalid: OpenAI Direct model IDs cannot use another provider prefix."
+    );
+  }
   const model =
     modelValue ||
     (Object.prototype.hasOwnProperty.call(object, "model")
@@ -640,9 +652,11 @@ export function readRuntimeApiSettings(input: unknown): RuntimeApiSettings {
   return {
     ...credentials,
     model,
-    reasoningEffort: normalizeReasoningEffort(
-      object.reasoningEffort ?? defaults.reasoningEffort
-    ),
+    reasoningEffort: isOpenRouterRuntime(credentials)
+      ? normalizeReasoningEffort(
+          object.reasoningEffort ?? defaults.reasoningEffort
+        )
+      : "none",
     uiComplexity: normalizeUiComplexity(
       object.uiComplexity ?? defaults.uiComplexity
     ),

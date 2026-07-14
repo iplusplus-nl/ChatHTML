@@ -1,9 +1,10 @@
 import { Check, Search, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   isDirectOverlayInteraction,
   isEscapeDismissKey
 } from "./dismissalModel";
+import { useModalFocusTrap } from "./useModalFocusTrap";
 
 type ModelImportDialogProps = {
   models: string[];
@@ -30,6 +31,10 @@ export function ModelImportDialog({
   onClose,
   onAddSelected
 }: ModelImportDialogProps) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useModalFocusTrap({ dialogRef, initialFocusRef: searchInputRef });
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isEscapeDismissKey(event.key)) {
@@ -63,6 +68,7 @@ export function ModelImportDialog({
       }}
     >
       <section
+        ref={dialogRef}
         className="model-import-dialog"
         role="dialog"
         aria-modal="true"
@@ -86,6 +92,7 @@ export function ModelImportDialog({
         <label className="model-import-search">
           <Search size={15} strokeWidth={2.1} aria-hidden="true" />
           <input
+            ref={searchInputRef}
             value={query}
             autoFocus
             placeholder="Search models"

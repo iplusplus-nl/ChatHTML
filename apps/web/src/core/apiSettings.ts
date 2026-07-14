@@ -69,12 +69,26 @@ export const UI_COMPLEXITY_LEVEL_OPTIONS = [
   { value: 90, max: 100, label: "Elaborate" }
 ] as const;
 
-export const REQUIRED_MODEL_OPTIONS = [
+export const OPENROUTER_MODEL_OPTIONS = [
   "openai/gpt-5.5",
   "google/gemini-3.1-pro-preview",
   "anthropic/claude-sonnet-5",
   "z-ai/glm-5.2"
 ] as const;
+
+/**
+ * Kept as a compatibility export for code that still refers to the original
+ * OpenRouter shortlist. These models are defaults, not mandatory selections.
+ */
+export const REQUIRED_MODEL_OPTIONS = OPENROUTER_MODEL_OPTIONS;
+
+const PROVIDER_MODEL_CATALOGS: Record<ApiProviderId, readonly string[]> = {
+  openrouter: OPENROUTER_MODEL_OPTIONS,
+  "chathtml-cloud": OPENROUTER_MODEL_OPTIONS,
+  openai: ["gpt-4.1"],
+  local: ["llama3.1"],
+  custom: []
+};
 
 export const API_PROVIDER_PRESETS: ApiProviderPreset[] = [
   {
@@ -123,8 +137,7 @@ export const REASONING_EFFORT_OPTIONS: Array<{
   { value: "minimal", label: "Minimal" },
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "XHigh" }
+  { value: "high", label: "High" }
 ];
 
 export const API_KEY_SOURCE_OPTIONS: Array<{
@@ -144,7 +157,7 @@ export const DEFAULT_API_SETTINGS: ApiSettings = {
   apiKeySource: "environment",
   apiKey: "",
   model: DEFAULT_PRESET.model,
-  modelOptions: [...REQUIRED_MODEL_OPTIONS],
+  modelOptions: [...OPENROUTER_MODEL_OPTIONS],
   modelsEndpoint: getDefaultModelsEndpoint(DEFAULT_PRESET.baseUrl),
   reasoningEffort: DEFAULT_PRESET.reasoningEffort,
   uiComplexity: DEFAULT_UI_COMPLEXITY,
@@ -152,22 +165,33 @@ export const DEFAULT_API_SETTINGS: ApiSettings = {
   memoryItems: []
 };
 
-const REQUIRED_MODEL_OPTION_KEYS = new Set(
-  REQUIRED_MODEL_OPTIONS.map((model) => model.toLowerCase())
-);
-
-const OPENAI_INCOMPATIBLE_MODEL_PREFIXES = [
-  "google/",
-  "anthropic/",
-  "z-ai/"
-] as const;
-
 function isProviderId(value: unknown): value is ApiProviderId {
   return API_PROVIDER_PRESETS.some((preset) => preset.id === value);
 }
 
 function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return REASONING_EFFORT_OPTIONS.some((option) => option.value === value);
+}
+
+function normalizeReasoningEffort(
+  value: unknown,
+  fallback: ReasoningEffort
+): ReasoningEffort {
+  if (value === "xhigh") {
+    return "high";
+  }
+
+  return isReasoningEffort(value) ? value : fallback;
+}
+
+export function providerSupportsReasoning(providerId: ApiProviderId): boolean {
+  return providerId === "openrouter" || providerId === "chathtml-cloud";
+}
+
+export function getProviderModelCatalog(
+  providerId: ApiProviderId
+): string[] {
+  return [...PROVIDER_MODEL_CATALOGS[providerId]];
 }
 
 export function normalizeUiComplexity(
@@ -240,18 +264,29 @@ function normalizeModelId(value: unknown): string | null {
   return normalized;
 }
 
-export function normalizeModelOptions(input: unknown): string[] {
+export function normalizeModelIdForProvider(
+  value: unknown,
+  providerId: ApiProviderId
+): string | null {
+  const modelId = normalizeModelId(value);
+  if (!modelId || providerId !== "openai") {
+    return modelId;
+  }
+
+  const directModelId = modelId.replace(/^openai\//i, "");
+  return directModelId && !directModelId.includes("/") ? directModelId : null;
+}
+
+export function normalizeModelOptions(
+  input: unknown,
+  providerId: ApiProviderId = DEFAULT_PRESET.id
+): string[] {
   const seen = new Set<string>();
   const options: string[] = [];
   const candidates = Array.isArray(input) ? input : [];
 
-  for (const modelId of REQUIRED_MODEL_OPTIONS) {
-    seen.add(modelId.toLowerCase());
-    options.push(modelId);
-  }
-
   for (const candidate of candidates) {
-    const modelId = normalizeModelId(candidate);
+    const modelId = normalizeModelIdForProvider(candidate, providerId);
     if (!modelId) {
       continue;
     }
@@ -272,26 +307,11 @@ export function normalizeModelOptions(input: unknown): string[] {
   return options;
 }
 
-export function isRequiredModelOption(modelId: string): boolean {
-  return REQUIRED_MODEL_OPTION_KEYS.has(modelId.trim().toLowerCase());
-}
-
 export function getSelectableModelOptions(settings: ApiSettings): string[] {
-  const options = normalizeModelOptions([
-    settings.model,
-    ...settings.modelOptions
-  ]);
-
-  if (settings.providerId !== "openai") {
-    return options;
-  }
-
-  return options.filter((modelId) => {
-    const normalizedModelId = modelId.trim().toLowerCase();
-    return !OPENAI_INCOMPATIBLE_MODEL_PREFIXES.some((prefix) =>
-      normalizedModelId.startsWith(prefix)
-    );
-  });
+  return normalizeModelOptions(
+    [settings.model, ...settings.modelOptions],
+    settings.providerId
+  );
 }
 
 export function getProviderPreset(id: ApiProviderId): ApiProviderPreset {
@@ -504,7 +524,7 @@ export function normalizeApiSettings(input: unknown): ApiSettings {
       : preset.label;
   const model =
     typeof object.model === "string"
-      ? (normalizeModelId(object.model) ?? "")
+      ? (normalizeModelIdForProvider(object.model, providerId) ?? preset.model)
       : preset.model;
   const baseUrl =
     typeof object.baseUrl === "string" ? object.baseUrl.trim() : preset.baseUrl;
@@ -519,14 +539,19 @@ export function normalizeApiSettings(input: unknown): ApiSettings {
     ),
     apiKey: typeof object.apiKey === "string" ? object.apiKey.trim() : "",
     model,
-    modelOptions: normalizeModelOptions(object.modelOptions),
+    modelOptions: normalizeModelOptions(
+      Array.isArray(object.modelOptions)
+        ? object.modelOptions
+        : getProviderModelCatalog(providerId),
+      providerId
+    ),
     modelsEndpoint:
       typeof object.modelsEndpoint === "string"
         ? object.modelsEndpoint.trim()
         : getDefaultModelsEndpoint(baseUrl),
-    reasoningEffort: isReasoningEffort(object.reasoningEffort)
-      ? object.reasoningEffort
-      : preset.reasoningEffort,
+    reasoningEffort: providerSupportsReasoning(providerId)
+      ? normalizeReasoningEffort(object.reasoningEffort, preset.reasoningEffort)
+      : "none",
     uiComplexity: normalizeUiComplexity(object.uiComplexity),
     userPreferencePrompt,
     memoryItems

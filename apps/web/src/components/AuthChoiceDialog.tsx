@@ -1,10 +1,11 @@
 import { Laptop, LogIn, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   isDirectOverlayInteraction,
   isEscapeDismissKey
 } from "./dismissalModel";
+import { useModalFocusTrap } from "./useModalFocusTrap";
 
 export type AuthChoiceDialogProps = {
   themeMode: "day" | "night";
@@ -18,8 +19,12 @@ export function AuthChoiceDialogContent({
   onSignIn,
   onContinueLocal
 }: Omit<AuthChoiceDialogProps, "themeMode">) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocusTrap({ dialogRef });
+
   return (
     <section
+      ref={dialogRef}
       className="auth-choice-dialog"
       role="dialog"
       aria-modal="true"
