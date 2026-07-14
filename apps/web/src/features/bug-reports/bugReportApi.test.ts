@@ -15,6 +15,7 @@ const environment: BugReportEnvironment = {
 describe("bug report API", () => {
   it("submits the report with browser diagnostics and client headers", async () => {
     const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const abortController = new AbortController();
     const fetchImpl: typeof fetch = async (input, init) => {
       calls.push({ input, init });
       return Response.json({ id: "report-1" }, { status: 201 });
@@ -31,6 +32,7 @@ describe("bug report API", () => {
         }
       },
       "client-1",
+      abortController.signal,
       environment,
       fetchImpl
     );
@@ -41,6 +43,7 @@ describe("bug report API", () => {
       "Content-Type": "application/json",
       "X-ChatHTML-Client-Id": "client-1"
     });
+    assert.equal(calls[0].init?.signal, abortController.signal);
     assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
       clientId: "client-1",
       sessionId: "session-1",
@@ -62,6 +65,7 @@ describe("bug report API", () => {
           draft: { text: "Broken", images: [], updatedAt: 1 }
         },
         "client-1",
+        undefined,
         environment,
         apiError
       ),
@@ -78,6 +82,7 @@ describe("bug report API", () => {
           draft: { text: "Broken", images: [], updatedAt: 1 }
         },
         "client-1",
+        undefined,
         environment,
         invalidResponse
       ),

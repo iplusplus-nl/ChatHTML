@@ -33,12 +33,14 @@ export async function submitBugReport(
     draft: BugReportDraft;
   },
   clientId: string,
+  signal?: AbortSignal,
   environment: BugReportEnvironment = browserBugReportEnvironment(),
   fetchImpl: FetchLike = fetch
 ): Promise<string> {
   const response = await fetchImpl(apiUrl("/bug-reports"), {
     method: "POST",
     headers: clientRequestHeaders(clientId, "application/json"),
+    signal,
     body: JSON.stringify({
       clientId,
       sessionId: input.sessionId,

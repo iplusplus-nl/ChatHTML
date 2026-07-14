@@ -513,14 +513,21 @@ describe("bug report controller submit lifecycle", () => {
   it("ignores a pending submit completion after close", async () => {
     const submission = deferred<string>();
     const existing = draft("keep", [], 5);
+    let submitSignal: AbortSignal | undefined;
     const test = harness({
       sessions: [session("session-a", { draft: existing })],
-      submitReport: () => submission.promise
+      submitReport: (_input, _clientId, signal) => {
+        submitSignal = signal;
+        return submission.promise;
+      }
     });
     await test.controller.open();
     const submitting = test.controller.submit();
+    assert.ok(submitSignal);
+    assert.equal(submitSignal.aborted, false);
 
     test.controller.close();
+    assert.equal(submitSignal.aborted, true);
     submission.resolve("report-1");
 
     assert.equal(await submitting, "cancelled");

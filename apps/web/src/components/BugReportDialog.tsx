@@ -153,6 +153,21 @@ export function BugReportDialog({
     return () => window.clearTimeout(id);
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || isSubmitted) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isSubmitted, onClose]);
+
   const emitDraft = (updater: (current: BugReportDraft) => BugReportDraft) => {
     const now = Date.now();
     const next = {
@@ -267,7 +282,7 @@ export function BugReportDialog({
       data-theme={themeMode}
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !isSubmitting && !isSubmitted) {
+        if (event.target === event.currentTarget && !isSubmitted) {
           onClose();
         }
       }}
@@ -291,7 +306,7 @@ export function BugReportDialog({
             className="bug-report-icon-button"
             type="button"
             aria-label="Close bug report"
-            disabled={isSubmitting || isSubmitted}
+            disabled={isSubmitted}
             onClick={onClose}
           >
             <X size={17} strokeWidth={2.1} aria-hidden="true" />
@@ -394,7 +409,7 @@ export function BugReportDialog({
             <button
               className="bug-report-secondary-button"
               type="button"
-              disabled={isSubmitting || isSubmitted}
+              disabled={isSubmitted}
               onClick={onClose}
             >
               Cancel

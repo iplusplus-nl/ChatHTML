@@ -54,7 +54,8 @@ export type BugReportControllerDependencies = {
       sessionTitle: string;
       draft: BugReportDraft;
     },
-    clientId: string
+    clientId: string,
+    signal: AbortSignal
   ): Promise<string>;
   createImageId(): string;
   now(): number;
@@ -104,6 +105,7 @@ export function createBugReportController(
   let generation = 0;
   let activeCaptureToken: number | null = null;
   let activeSubmitToken: number | null = null;
+  let activeSubmitController: AbortController | null = null;
   let successCloseTask: ScheduledBugReportTask | null = null;
 
   const emit = (next: BugReportViewState) => {
@@ -117,6 +119,8 @@ export function createBugReportController(
   };
 
   const invalidateOperations = () => {
+    activeSubmitController?.abort();
+    activeSubmitController = null;
     generation += 1;
     activeCaptureToken = null;
     activeSubmitToken = null;
@@ -295,7 +299,9 @@ export function createBugReportController(
     cancelSuccessClose();
     generation += 1;
     const token = generation;
+    const submitController = new AbortController();
     activeSubmitToken = token;
+    activeSubmitController = submitController;
     emit({
       phase: "submitting",
       sessionId: targetSessionId,
@@ -311,7 +317,8 @@ export function createBugReportController(
             targetSession.title || summarizeSession(targetSession.messages),
           draft
         },
-        ports.getClientId()
+        ports.getClientId(),
+        submitController.signal
       );
       if (activeSubmitToken !== token || generation !== token) {
         return "cancelled";
@@ -366,6 +373,9 @@ export function createBugReportController(
     } finally {
       if (activeSubmitToken === token) {
         activeSubmitToken = null;
+      }
+      if (activeSubmitController === submitController) {
+        activeSubmitController = null;
       }
     }
   };
