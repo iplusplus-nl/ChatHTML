@@ -234,6 +234,12 @@ export function runFreshChatRun(
     return Promise.resolve();
   }
 
+  try {
+    options.sendOptions.onRunInitialized?.();
+  } catch (error) {
+    warn("ChatHTML run initialization observer failed.", error);
+  }
+
   return (async () => {
     let streamConnected = false;
     try {

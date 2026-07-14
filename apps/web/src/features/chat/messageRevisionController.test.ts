@@ -31,26 +31,33 @@ function state(messages: ClientMessage[]): SessionState {
   return { sessions: [session], activeSessionId: session.id };
 }
 
-function harness(messages: ClientMessage[]) {
+function harness(messages: ClientMessage[], initiallyBusy = false) {
   const events: Array<{ type: string; value: unknown }> = [];
   let current = state(messages);
+  let busy = initiallyBusy;
   const controller = createMessageRevisionController({
     getState: () => current,
     getActiveSessionId: () => current.activeSessionId,
+    isBusy: () => busy,
     regenerateArtifactEdit: (assistantId, editId) =>
       events.push({ type: "artifact-edit", value: { assistantId, editId } }),
     startGeneratedArtifactBatch: (input) =>
       events.push({ type: "generated-batch", value: input }),
     startVisualRepair: (assistantId, snapshot, width) =>
       events.push({ type: "visual-repair", value: { assistantId, snapshot, width } }),
-    startBranchedTurn: (input) =>
-      events.push({ type: "branch", value: input })
+    startBranchedTurn: (input) => {
+      events.push({ type: "branch", value: input });
+      return true;
+    }
   });
   return {
     controller,
     events,
     setState(next: SessionState) {
       current = next;
+    },
+    setBusy(next: boolean) {
+      busy = next;
     }
   };
 }
@@ -160,12 +167,32 @@ describe("message revision controller", () => {
   it("edits a user turn as a history-preserving branch", () => {
     const test = harness([user, assistant]);
 
-    test.controller.editUserMessage("user-1", "  Revised prompt  ");
+    assert.equal(
+      test.controller.editUserMessage("user-1", "  Revised prompt  "),
+      true
+    );
 
     const branch = test.events[0].value as MessageRevisionBranchInput;
     assert.equal(branch.nextUserContent, "Revised prompt");
     assert.equal(branch.assistantId, "assistant-1");
     assert.equal(branch.preserveFollowingMessages, true);
+  });
+
+  it("rejects edits defensively while another generation is active", () => {
+    const test = harness([user, assistant], true);
+
+    assert.equal(
+      test.controller.editUserMessage("user-1", "Revised prompt"),
+      false
+    );
+    assert.deepEqual(test.events, []);
+
+    test.setBusy(false);
+    assert.equal(
+      test.controller.editUserMessage("user-1", "Revised prompt"),
+      true
+    );
+    assert.equal(test.events.length, 1);
   });
 
   it("ignores missing, blank, and unchanged revision targets", () => {

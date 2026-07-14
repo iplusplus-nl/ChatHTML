@@ -23,6 +23,10 @@ describe("managed chat request replay safety", () => {
       false
     );
     assert.equal(
+      isManagedRequestReplaySafe({ onRunInitialized() {} }),
+      false
+    );
+    assert.equal(
       isManagedRequestReplaySafe({ onRunAccepted() {} }),
       false
     );

@@ -52,7 +52,7 @@ export type StreamThreadProps = {
   onArtifactAction(id: string, action: StreamUiAction): void;
   onVisualRepairAssistant(id: string, snapshot: RenderSnapshot, width: number): void;
   onRegenerateAssistant(id: string): void;
-  onEditUserMessage(id: string, content: string): void;
+  onEditUserMessage(id: string, content: string): boolean;
   onSelectBranch(groupId: string, variantId: string): void;
   onSelectArtifactEdit(assistantId: string, editId?: string): void;
   onEditArtifactEditPrompt(
@@ -137,6 +137,7 @@ export function StreamThread({
   onUiComplexityChange
 }: StreamThreadProps) {
   const isNewChat = useAuiState((state) => state.thread.messages.length === 0);
+  const isThreadRunning = useAuiState((state) => state.thread.isRunning);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowBottomRef = useRef(true);
   const reasoningActivityCloseTimerRef = useRef<number | null>(null);
@@ -456,10 +457,15 @@ export function StreamThread({
                 files={clientMessage.fileIds
                   ?.map((fileId) => fileById.get(fileId))
                   .filter((file): file is SessionFile => Boolean(file))}
-                artifactEditTimeline={artifactEditTimelineByUserId.get(
-                  clientMessage.id
-                )}
-                onEdit={onEditUserMessage}
+                artifactEditTimeline={(() => {
+                  const timeline = artifactEditTimelineByUserId.get(
+                    clientMessage.id
+                  );
+                  return timeline && isThreadRunning
+                    ? { ...timeline, disabled: true }
+                    : timeline;
+                })()}
+                onEdit={isThreadRunning ? undefined : onEditUserMessage}
                 onEditArtifactEditPrompt={onEditArtifactEditPrompt}
               >
                 {clientMessage.content}

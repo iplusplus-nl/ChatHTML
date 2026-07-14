@@ -283,24 +283,16 @@ type PendingUploadLifecycle = {
   cancelled: boolean;
   removalStarted: boolean;
   removalFinished: boolean;
-  removalPromise: Promise<void>;
-  resolveRemoval(): void;
 };
 
 function createPendingUploadLifecycle(
   ownerSessionId: string | undefined
 ): PendingUploadLifecycle {
-  let resolveRemoval!: () => void;
-  const removalPromise = new Promise<void>((resolve) => {
-    resolveRemoval = resolve;
-  });
   return {
     ownerSessionId,
     cancelled: false,
     removalStarted: false,
-    removalFinished: false,
-    removalPromise,
-    resolveRemoval
+    removalFinished: false
   };
 }
 
@@ -332,7 +324,6 @@ export class StreamImageAttachmentAdapter implements AttachmentAdapter {
 
     lifecycle.removalFinished = true;
     this.options?.onRemoveComplete?.(attachmentId);
-    lifecycle.resolveRemoval();
   }
 
   private async deleteDraftFile(
@@ -406,7 +397,7 @@ export class StreamImageAttachmentAdapter implements AttachmentAdapter {
         : undefined;
       if (lifecycle.cancelled) {
         if (uploaded) {
-          await this.deleteDraftFile(ownerSessionId, uploaded.id);
+          void this.deleteDraftFile(ownerSessionId, uploaded.id);
         }
         this.finishPendingRemoval(id, lifecycle);
         return;
@@ -515,7 +506,7 @@ export class StreamImageAttachmentAdapter implements AttachmentAdapter {
         lifecycle.removalStarted = true;
         this.options?.onRemoveStart?.(attachment.id);
       }
-      await lifecycle.removalPromise;
+      this.finishPendingRemoval(attachment.id, lifecycle);
       return;
     }
 

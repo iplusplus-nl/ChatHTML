@@ -7,6 +7,7 @@ import type {
   ArtifactEditReference,
   SessionFile
 } from "../domain/chat/sessionModel";
+import { shouldDismissMessageEditor } from "./chatMessageEditModel";
 
 type ArtifactEditTimeline = {
   assistantId: string;
@@ -20,7 +21,7 @@ type ChatMessageProps = {
   role: "user" | "assistant";
   files?: SessionFile[];
   artifactEditTimeline?: ArtifactEditTimeline;
-  onEdit?(id: string, content: string): void;
+  onEdit?(id: string, content: string): boolean;
   onEditArtifactEditPrompt?(
     assistantId: string,
     editId: string,
@@ -364,6 +365,7 @@ export function ChatMessage({
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(text);
   const canEdit = role === "user" && Boolean(onEdit);
+  const isEditorOpen = isEditing && canEdit;
   const normalizedDraft = draft.trim();
   const canSave = normalizedDraft.length > 0 && normalizedDraft !== text.trim();
   const canShowEditButton =
@@ -375,16 +377,23 @@ export function ChatMessage({
     }
   }, [isEditing, text]);
 
+  useEffect(() => {
+    if (shouldDismissMessageEditor(isEditing, canEdit)) {
+      setIsEditing(false);
+    }
+  }, [canEdit, isEditing]);
+
   const saveEdit = () => {
     if (!canSave || !onEdit) {
       return;
     }
 
-    onEdit(id, normalizedDraft);
-    setIsEditing(false);
+    if (onEdit(id, normalizedDraft)) {
+      setIsEditing(false);
+    }
   };
 
-  const messageContent = isEditing ? (
+  const messageContent = isEditorOpen ? (
     <>
       <textarea
         className="message-edit-input"
@@ -442,7 +451,7 @@ export function ChatMessage({
     </>
   );
   const bubbleClassName = `message-bubble ${role} ${
-    isEditing ? "is-editing" : ""
+    isEditorOpen ? "is-editing" : ""
   }`;
 
   return (

@@ -1,6 +1,7 @@
 import type { ImageAttachment } from "../../core/imageAttachments";
 import {
   createId as createSessionId,
+  type ArtifactEditReference,
   type ChatSession,
   type ClientMessage,
   type SessionState
@@ -29,6 +30,7 @@ export type StartGeneratedArtifactBatchInput = {
   assistantId: string;
   sourceUserMessageId: string;
   prompt: string;
+  references?: ArtifactEditReference[];
   attachments?: ImageAttachment[];
   assistantPatch?: Partial<ClientMessage>;
   initialReasoning?: string;
@@ -36,6 +38,7 @@ export type StartGeneratedArtifactBatchInput = {
   runId?: string;
   chatActivityLease?: ChatGenerationLease;
   ephemeralAttachments?: boolean;
+  onRunInitialized?(): void;
   onRunAccepted?(): void;
 };
 
@@ -48,6 +51,7 @@ export type StartGeneratedArtifactBatchResult =
   | {
       status: "started";
       operation: GeneratedArtifactBatchOperation;
+      initialization: Promise<boolean>;
       completion: Promise<GeneratedArtifactBatchCompletion>;
     };
 
@@ -119,6 +123,21 @@ function buildRequestHistory(
   };
 }
 
+export function buildGeneratedArtifactBatchRequestPrompt(
+  operation: GeneratedArtifactBatchOperation
+): string {
+  if (!operation.references.length) {
+    return operation.prompt;
+  }
+
+  return [
+    operation.prompt,
+    "",
+    "Selected artifact references are anchors for intent and disambiguation, not strict edit boundaries:",
+    JSON.stringify(operation.references, null, 2)
+  ].join("\n");
+}
+
 export function createGeneratedArtifactBatchController(
   ports: GeneratedArtifactBatchControllerPorts
 ): GeneratedArtifactBatchController {
@@ -152,6 +171,7 @@ export function createGeneratedArtifactBatchController(
         assistantId: target.assistant.id,
         sourceUserMessageId: input.sourceUserMessageId,
         prompt: input.prompt,
+        references: input.references,
         runId: input.runId?.trim() || createId("run"),
         operationId: createId("artifact-edit-operation"),
         editId: createId("artifact-edit"),
@@ -185,10 +205,14 @@ export function createGeneratedArtifactBatchController(
             )
         );
       };
+      let resolveInitialization!: (initialized: boolean) => void;
+      const initialization = new Promise<boolean>((resolve) => {
+        resolveInitialization = resolve;
+      });
       let request: Promise<void>;
       try {
         request = ports.sendRequest(
-          operation.prompt,
+          buildGeneratedArtifactBatchRequestPrompt(operation),
           input.attachments ?? [],
           {
             appendUserMessage: false,
@@ -196,6 +220,15 @@ export function createGeneratedArtifactBatchController(
             generationRunId: operation.runId,
             chatActivityLease: input.chatActivityLease,
             ephemeralAttachments: input.ephemeralAttachments,
+            onRunInitialized: input.onRunInitialized
+              ? () => {
+                  try {
+                    input.onRunInitialized?.();
+                  } finally {
+                    resolveInitialization(true);
+                  }
+                }
+              : undefined,
             onRunAccepted: input.onRunAccepted,
             targetSessionId: operation.target.sessionId,
             initialReasoning: input.initialReasoning ?? "Thinking",
@@ -264,7 +297,9 @@ export function createGeneratedArtifactBatchController(
         }
       );
 
-      return { status: "started", operation, completion };
+      void completion.then(() => resolveInitialization(false));
+
+      return { status: "started", operation, initialization, completion };
     }
   };
 }

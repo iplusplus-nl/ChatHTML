@@ -125,6 +125,7 @@ describe("session attachment gate", () => {
       attachmentId: "a"
     });
     assert.deepEqual(removed, { records: {} });
+    assert.equal(summarizeAttachmentGate(removed).isSendBlocked, false);
     assert.equal(
       reduceAttachmentGate(removed, {
         type: "fail",

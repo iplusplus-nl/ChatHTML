@@ -127,6 +127,7 @@ function createHarness(input: {
     sessionId: "session-1",
     plan,
     sendOptions: {
+      onRunInitialized: () => events.push("initialized:observer"),
       onRunAccepted: () => events.push("accepted:observer")
     },
     requestApiSettings: normalizeApiSettings({
@@ -241,11 +242,12 @@ describe("fresh chat run controller", () => {
     assert.equal(harness.requestPayload?.sessionId, "session-1");
     assert.equal(harness.requestPayload?.runId, "run-1");
     assert.deepEqual(
-      harness.events.slice(0, 10),
+      harness.events.slice(0, 11),
       [
         "renderer:subscribe",
         "session:initialize",
         "runtime:attach",
+        "initialized:observer",
         "reconcile:start",
         "request",
         "accepted:mark",

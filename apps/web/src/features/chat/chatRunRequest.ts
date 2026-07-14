@@ -18,6 +18,7 @@ export type SendStreamUiRequestOptions = {
   generationRunId?: string;
   chatActivityLease?: ChatGenerationLease;
   ephemeralAttachments?: boolean;
+  onRunInitialized?(): void;
   onRunAccepted?(): void;
   assistantPatch?: Partial<ClientMessage>;
   persistUserMessage?: ClientMessage;
@@ -68,6 +69,7 @@ export function isManagedRequestReplaySafe(
   return !(
     options.chatActivityLease ||
     options.ephemeralAttachments ||
+    options.onRunInitialized ||
     options.onRunAccepted
   );
 }

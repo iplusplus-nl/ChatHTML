@@ -187,6 +187,38 @@ describe("generated artifact batch controller", () => {
     );
   });
 
+  it("grounds image-backed regeneration in the selected artifact references", () => {
+    const test = harness();
+    const result = test.controller.start({
+      ...input(),
+      references: [
+        {
+          kind: "element",
+          key: "hero",
+          selector: "#hero",
+          label: "Hero",
+          preview: "Welcome banner"
+        }
+      ]
+    });
+
+    assert.equal(result.status, "started");
+    assert.match(test.requests[0].text, /Selected artifact references/);
+    assert.match(test.requests[0].text, /"selector": "#hero"/);
+    assert.deepEqual(
+      test.requests[0].options.assistantPatch?.artifactEdits?.[0].references,
+      [
+        {
+          kind: "element",
+          key: "hero",
+          selector: "#hero",
+          label: "Hero",
+          preview: "Welcome banner"
+        }
+      ]
+    );
+  });
+
   it("revalidates target identity and source before managed-auth replay", () => {
     const test = harness();
     test.controller.start(input());
@@ -346,12 +378,16 @@ describe("generated artifact batch controller", () => {
     const test = harness();
     test.busy = true;
     const lease = { release() {} };
+    let initialized = false;
     let accepted = false;
     const result = test.controller.start({
       ...input(),
       runId: " visual-run ",
       chatActivityLease: lease,
       ephemeralAttachments: true,
+      onRunInitialized: () => {
+        initialized = true;
+      },
       onRunAccepted: () => {
         accepted = true;
       }
@@ -365,6 +401,9 @@ describe("generated artifact batch controller", () => {
     assert.equal(test.requests[0].options.generationRunId, "visual-run");
     assert.equal(test.requests[0].options.chatActivityLease, lease);
     assert.equal(test.requests[0].options.ephemeralAttachments, true);
+    test.requests[0].options.onRunInitialized?.();
+    assert.equal(initialized, true);
+    assert.equal(await result.initialization, true);
     test.requests[0].options.onRunAccepted?.();
     assert.equal(accepted, true);
     assert.deepEqual(await result.completion, { status: "fulfilled" });
@@ -386,10 +425,26 @@ describe("generated artifact batch controller", () => {
       status: "rejected",
       error: failure
     });
+    assert.equal(await result.initialization, false);
 
     assert.deepEqual(test.warnings, [
       { message: "Could not run generated artifact batch.", error: failure }
     ]);
+  });
+
+  it("reports a fulfilled sender return before run initialization as not initialized", async () => {
+    const test = harness();
+    const result = test.controller.start({
+      ...input(),
+      onRunInitialized: () => undefined
+    });
+
+    assert.equal(result.status, "started");
+    if (result.status !== "started") {
+      return;
+    }
+    assert.deepEqual(await result.completion, { status: "fulfilled" });
+    assert.equal(await result.initialization, false);
   });
 
   it("contains synchronous request and terminal-save failures", () => {

@@ -1,5 +1,6 @@
 import type {
   ArtifactEdit,
+  ArtifactEditReference,
   ArtifactEditRollback,
   ClientMessage,
   SessionState
@@ -46,6 +47,7 @@ export type PrepareGeneratedArtifactBatchInput =
     editId: string;
     variantId: string;
     createdAt: number;
+    references?: ArtifactEditReference[];
   };
 
 export function prepareGeneratedArtifactBatch(
@@ -71,13 +73,16 @@ export function prepareGeneratedArtifactBatch(
     repairOfMessageId: message.repairOfMessageId,
     repairAttempt: message.repairAttempt
   };
+  const references = (input.references ?? []).map((reference) => ({
+    ...reference
+  }));
   const pendingEdit: ArtifactEdit = {
     id: input.editId,
     origin: "chat-run",
     parentId: previousActiveEditId,
     createdAt: input.createdAt,
     prompt,
-    references: [],
+    references: references.map((reference) => ({ ...reference })),
     promptBubble: false,
     activeVariantId: input.variantId,
     variants: [
@@ -106,7 +111,7 @@ export function prepareGeneratedArtifactBatch(
     previousActiveEditId,
     source,
     prompt,
-    references: [],
+    references,
     baseRawStream: message.artifactEditBaseRawStream ?? source,
     pendingEdit,
     rollback

@@ -31,6 +31,7 @@ export type MessageRevisionBranchInput = {
 export type MessageRevisionControllerPorts = {
   getState(): SessionState;
   getActiveSessionId(): string;
+  isBusy(): boolean;
   regenerateArtifactEdit(assistantId: string, editId: string): unknown;
   startGeneratedArtifactBatch(input: StartGeneratedArtifactBatchInput): unknown;
   startVisualRepair(
@@ -38,12 +39,12 @@ export type MessageRevisionControllerPorts = {
     snapshot: RenderSnapshot,
     width: number
   ): unknown;
-  startBranchedTurn(input: MessageRevisionBranchInput): unknown;
+  startBranchedTurn(input: MessageRevisionBranchInput): boolean;
 };
 
 export type MessageRevisionController = {
   regenerateAssistant(assistantId: string): void;
-  editUserMessage(messageId: string, content: string): void;
+  editUserMessage(messageId: string, content: string): boolean;
 };
 
 function getActiveSession(
@@ -144,12 +145,15 @@ export function createMessageRevisionController(
     },
 
     editUserMessage(messageId, content) {
+      if (ports.isBusy()) {
+        return false;
+      }
       const session = getActiveSession(
         ports.getState(),
         ports.getActiveSessionId()
       );
       if (!session) {
-        return;
+        return false;
       }
       const visibleMessages = getVisibleSessionMessages(session);
       const userIndex = visibleMessages.findIndex(
@@ -157,17 +161,17 @@ export function createMessageRevisionController(
       );
       const nextUserContent = content.trim();
       if (userIndex < 0 || !nextUserContent) {
-        return;
+        return false;
       }
       if (nextUserContent === visibleMessages[userIndex].content.trim()) {
-        return;
+        return false;
       }
 
       const activeAssistant = getAssistantForUserTurn(
         visibleMessages,
         userIndex
       );
-      ports.startBranchedTurn({
+      return ports.startBranchedTurn({
         session,
         visibleMessages,
         userIndex,

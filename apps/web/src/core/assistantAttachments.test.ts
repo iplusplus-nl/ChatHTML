@@ -238,6 +238,8 @@ describe("assistant image attachments", () => {
   it("cancels an in-flight add, deletes a late upload, and emits no ghost attachment", async () => {
     const upload = deferred<UploadedSessionFile>();
     const uploadStarted = deferred<void>();
+    const deletion = deferred<void>();
+    const deleteStarted = deferred<void>();
     const deletes: Array<[string, string]> = [];
     const events: string[] = [];
     const adapter = new StreamImageAttachmentAdapter({
@@ -250,6 +252,8 @@ describe("assistant image attachments", () => {
       },
       deleteFile: async (sessionId, fileId) => {
         deletes.push([sessionId, fileId]);
+        deleteStarted.resolve();
+        return deletion.promise;
       },
       onUploadStart: (id) => events.push(`upload-start:${id}`),
       onUploadComplete: (id) => events.push(`upload-complete:${id}`),
@@ -265,21 +269,53 @@ describe("assistant image attachments", () => {
     await uploadStarted.promise;
 
     const removing = adapter.remove(running.value as PendingAttachment);
-    await Promise.resolve();
+    await removing;
     assert.deepEqual(events, [
       "upload-start:pending-cancelled",
-      "remove-start:pending-cancelled"
+      "remove-start:pending-cancelled",
+      "remove-complete:pending-cancelled"
     ]);
 
     upload.resolve(uploaded({ id: "late-file" }));
     assert.deepEqual(await finalYield, { value: undefined, done: true });
-    await removing;
+    await deleteStarted.promise;
 
     assert.deepEqual(deletes, [["session-owner", "late-file"]]);
     assert.deepEqual(events, [
       "upload-start:pending-cancelled",
       "remove-start:pending-cancelled",
       "remove-complete:pending-cancelled"
+    ]);
+    deletion.resolve();
+  });
+
+  it("finishes removal without waiting for an upload that never settles", async () => {
+    const uploadStarted = deferred<void>();
+    const events: string[] = [];
+    const adapter = new StreamImageAttachmentAdapter({
+      getSessionId: () => "session-owner",
+      createPendingId: () => "pending-stalled",
+      prepareImage: async () => image(),
+      uploadImage: async () => {
+        uploadStarted.resolve();
+        return new Promise<UploadedSessionFile>(() => undefined);
+      },
+      onUploadStart: (id) => events.push(`upload-start:${id}`),
+      onRemoveStart: (id) => events.push(`remove-start:${id}`),
+      onRemoveComplete: (id) => events.push(`remove-complete:${id}`)
+    });
+
+    const iterator = adapter.add({ file: sourceFile() });
+    const running = await iterator.next();
+    void iterator.next();
+    await uploadStarted.promise;
+
+    await adapter.remove(running.value as PendingAttachment);
+
+    assert.deepEqual(events, [
+      "upload-start:pending-stalled",
+      "remove-start:pending-stalled",
+      "remove-complete:pending-stalled"
     ]);
   });
 

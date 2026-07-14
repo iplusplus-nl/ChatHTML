@@ -10,6 +10,7 @@ import { X } from "lucide-react";
 import type { ArtifactSelection } from "../core/artifactSelection";
 import { MAX_IMAGE_ATTACHMENTS } from "../core/assistantAttachments";
 import type { ReasoningEffort } from "../core/apiSettings";
+import { getComposerAttachmentPresentation } from "./chatInputAttachmentModel";
 import { ChatModelSelector } from "./ChatModelSelector";
 
 function useAttachmentPreviewUrl(attachment: Attachment): string | undefined {
@@ -25,8 +26,8 @@ function useAttachmentPreviewUrl(attachment: Attachment): string | undefined {
 
 function ComposerAttachmentPreview({ attachment }: { attachment: Attachment }) {
   const previewUrl = useAttachmentPreviewUrl(attachment);
-  const isUploading = attachment.status.type === "running";
-  const isError = attachment.status.type === "incomplete";
+  const { isUploading, isError, isRemoveDisabled } =
+    getComposerAttachmentPresentation(attachment.status);
 
   useEffect(() => {
     return () => {
@@ -61,8 +62,9 @@ function ComposerAttachmentPreview({ attachment }: { attachment: Attachment }) {
       <AttachmentPrimitive.Remove
         className="attachment-remove"
         type="button"
-        disabled={isUploading}
+        disabled={isRemoveDisabled}
         aria-label={`Remove ${attachment.name}`}
+        title={isUploading ? "Cancel upload" : "Remove attachment"}
       >
         <span className="x-icon" aria-hidden="true" />
       </AttachmentPrimitive.Remove>

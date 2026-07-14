@@ -162,6 +162,34 @@ describe("generated artifact batch model", () => {
     });
   });
 
+  it("preserves selected references on generated edit metadata", () => {
+    const current = originalAssistant();
+    const reference = {
+      kind: "text" as const,
+      key: "heading",
+      selector: "#heading",
+      label: "Heading",
+      preview: "Original heading"
+    };
+    const operation = prepareGeneratedArtifactBatch(current, {
+      sessionId: "session-1",
+      assistantId: current.id,
+      sourceUserMessageId: "user-1",
+      prompt: "Match the reference image",
+      references: [reference],
+      runId: "run-ref",
+      operationId: "operation-ref",
+      editId: "edit-ref",
+      variantId: "variant-ref",
+      createdAt: 30
+    });
+
+    assert.ok(operation);
+    assert.deepEqual(operation.references, [reference]);
+    assert.deepEqual(operation.pendingEdit.references, [reference]);
+    assert.notEqual(operation.references, operation.pendingEdit.references);
+  });
+
   it("rejects invalid targets, blank sources, and concurrent pending edits", () => {
     const base = originalAssistant();
     const input = {

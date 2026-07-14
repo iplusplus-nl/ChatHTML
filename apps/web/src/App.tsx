@@ -44,8 +44,10 @@ import {
 import { StreamThread } from "./features/chat/ui/StreamThread";
 import { useBugReportController } from "./features/bug-reports/useBugReportController";
 import {
-  getAssistantForUserTurn
+  getAssistantForUserTurn,
+  getVisibleSessionMessages
 } from "./features/chat/branching";
+import { submitComposerMessage } from "./features/chat/composerSubmissionController";
 import {
   loadSessionClientId
 } from "./features/sessions/sessionPersistence";
@@ -53,6 +55,8 @@ import { useSessionSync } from "./features/sessions/useSessionSync";
 import { useSessionSave } from "./features/sessions/useSessionSave";
 import { useSessionIndex } from "./features/sessions/useSessionIndex";
 import { useSessionActions } from "./features/sessions/useSessionActions";
+import { createDeferredSessionSelectionController } from "./features/sessions/deferredSessionSelection";
+import { discardComposerAttachmentsAndRun } from "./features/sessions/composerAttachmentNavigation";
 import { useSessionAttachmentController } from "./features/sessions/useSessionAttachmentController";
 import { useSessionStateController } from "./features/sessions/useSessionStateController";
 import { useSessionMessageMutations } from "./features/sessions/useSessionMessageMutations";
@@ -68,6 +72,7 @@ import { isArtifactSelectionTargetActive } from "./features/artifacts/artifactSe
 import { useArtifactActions } from "./features/artifacts/useArtifactActions";
 import { useArtifactEditController } from "./features/artifacts/useArtifactEditController";
 import { useArtifactEditSelection } from "./features/artifacts/useArtifactEditSelection";
+import { artifactSelectionToReference } from "./features/artifacts/artifactMessageProjection";
 import { createGeneratedArtifactBatchController } from "./features/artifacts/generatedArtifactBatchController";
 import { useVisualRepairController } from "./features/artifacts/useVisualRepairController";
 import {
@@ -145,6 +150,7 @@ export default function App() {
   const isSendingRef = useRef(isSending);
   const sessionNewOrDeleteBlockedRef = useRef(isSending);
   const sessionSelectionBlockedRef = useRef(false);
+  const attachmentDraftsRef = useRef(false);
   const renderersRef = useRef<Map<string, StreamingRenderer>>(new Map());
   const runConnectionsRef = useRef<Map<string, AbortController>>(new Map());
   const cancelledRunIdsRef = useRef<Set<string>>(new Set());
@@ -187,9 +193,9 @@ export default function App() {
     activeSessionIdRef,
     sessionClientIdRef
   });
-  sessionNewOrDeleteBlockedRef.current =
-    isSending || hasComposerAttachmentDrafts;
-  sessionSelectionBlockedRef.current = hasComposerAttachmentDrafts;
+  attachmentDraftsRef.current = hasComposerAttachmentDrafts;
+  sessionNewOrDeleteBlockedRef.current = isSending;
+  sessionSelectionBlockedRef.current = false;
   const handleAuthOverlayRequest = useCallback(() => {
     pendingVisualRepairSlot.clear();
     openManualAuth(pendingManagedRequestSlot, openAuthChoice);
@@ -260,7 +266,7 @@ export default function App() {
     transientEmptySessionIdRef,
     runConnectionsRef,
     cancelledRunIdsRef,
-    attachmentDraftsRef: sessionSelectionBlockedRef,
+    attachmentDraftsRef,
     updateState: setSessionStateAndRef,
     setSessionsLoaded,
     setSessionsHydrated
@@ -306,6 +312,36 @@ export default function App() {
     defaultReasoningEffort: apiSettings.reasoningEffort,
     defaultUiComplexity: apiSettings.uiComplexity
   });
+  const selectSessionRef = useRef(handleSelectSession);
+  selectSessionRef.current = handleSelectSession;
+  const [deferredSessionSelection] = useState(() =>
+    createDeferredSessionSelectionController({
+      hasSession: (sessionId) =>
+        sessionStateRef.current.sessions.some(
+          (session) => session.id === sessionId
+        ),
+      selectSession: (sessionId) => selectSessionRef.current(sessionId)
+    })
+  );
+  const requestSidebarSessionSelection = useCallback(
+    (sessionId: string) => {
+      deferredSessionSelection.request(
+        sessionId,
+        sessionsHydratedRef.current
+      );
+    },
+    [deferredSessionSelection, sessionsHydratedRef]
+  );
+
+  useEffect(() => {
+    if (sessionsHydrated) {
+      deferredSessionSelection.flush(true);
+      return;
+    }
+    if (sessionsLoaded) {
+      deferredSessionSelection.clear();
+    }
+  }, [deferredSessionSelection, sessionsHydrated, sessionsLoaded]);
 
   const {
     model: activeSessionModel,
@@ -445,12 +481,12 @@ export default function App() {
       preserveFollowingMessages = false
     }: MessageRevisionBranchInput) => {
       if (generationActivity.isBusy()) {
-        return;
+        return false;
       }
 
       const activeUser = visibleMessages[userIndex];
       if (!activeUser || activeUser.role !== "user") {
-        return;
+        return false;
       }
 
       const activeAssistant = assistantId
@@ -477,6 +513,7 @@ export default function App() {
         targetSessionId: session.id,
         requestHistory: requestHistory ?? plan.requestHistory
       });
+      return true;
     },
     [generationActivity, sendStreamUiRequest]
   );
@@ -581,6 +618,7 @@ export default function App() {
       createMessageRevisionController({
         getState: () => sessionStateRef.current,
         getActiveSessionId: () => activeSessionIdRef.current,
+        isBusy: generationActivity.isBusy,
         regenerateArtifactEdit: regenerateArtifactEditNode,
         startGeneratedArtifactBatch,
         startVisualRepair: handleVisualRepairAssistant,
@@ -588,6 +626,7 @@ export default function App() {
       }),
     [
       handleVisualRepairAssistant,
+      generationActivity,
       regenerateArtifactEditNode,
       startBranchedTurn,
       startGeneratedArtifactBatch
@@ -667,19 +706,74 @@ export default function App() {
 
       const text = getAppendMessageText(message);
       const attachments = getAppendMessageImages(message);
-      const artifactSelections = getArtifactSelections();
-      if (artifactSelections.length > 0) {
-        await runArtifactSourceEdit(text, artifactSelections, attachments);
-        return;
-      }
+      await submitComposerMessage(text, attachments, {
+        getSelections: getArtifactSelections,
+        runSourceEdit: runArtifactSourceEdit,
+        startArtifactGeneration: async (
+          prompt,
+          artifactSelections,
+          artifactAttachments
+        ) => {
+          const selectedMessageIds = Array.from(
+            new Set(artifactSelections.map((selection) => selection.messageId))
+          );
+          const assistantId = selectedMessageIds[0];
+          const session = sessionStateRef.current.sessions.find(
+            (candidate) => candidate.id === activeSessionIdRef.current
+          );
+          if (!session || !assistantId || selectedMessageIds.length !== 1) {
+            return false;
+          }
 
-      await sendStreamUiRequest(text, attachments);
+          const visibleMessages = getVisibleSessionMessages(session);
+          const assistantIndex = visibleMessages.findIndex(
+            (candidate) =>
+              candidate.id === assistantId && candidate.role === "assistant"
+          );
+          let sourceUserMessageId = "";
+          for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+            if (visibleMessages[index]?.role === "user") {
+              sourceUserMessageId = visibleMessages[index].id;
+              break;
+            }
+          }
+          if (assistantIndex < 0 || !sourceUserMessageId || !prompt.trim()) {
+            return false;
+          }
+
+          const result = startGeneratedArtifactBatch({
+            sessionId: session.id,
+            assistantId,
+            sourceUserMessageId,
+            prompt,
+            references: artifactSelections.map(artifactSelectionToReference),
+            attachments: artifactAttachments,
+            ephemeralAttachments: true,
+            historyMode: "through-target-assistant",
+            initialReasoning: "Thinking",
+            onRunInitialized: () => undefined,
+            onRunAccepted: clearArtifactSelections
+          });
+          if (result.status !== "started") {
+            return false;
+          }
+          return result.initialization;
+        },
+        sendChat: (chatText, chatAttachments) => {
+          clearArtifactSelections();
+          return sendStreamUiRequest(chatText, chatAttachments);
+        }
+      });
     },
     [
+      activeSessionIdRef,
+      clearArtifactSelections,
       isAttachmentSendBlocked,
       getArtifactSelections,
       runArtifactSourceEdit,
-      sendStreamUiRequest
+      sendStreamUiRequest,
+      sessionStateRef,
+      startGeneratedArtifactBatch
     ]
   );
 
@@ -700,6 +794,58 @@ export default function App() {
     }
   });
 
+  const discardComposerAttachmentsForSessionAction = useCallback(
+    (action: () => void) => {
+      attachmentDraftsRef.current = false;
+      discardComposerAttachmentsAndRun(
+        {
+          clearAttachments: () => runtime.thread.composer.clearAttachments(),
+          onClearError: (error) =>
+            console.warn("Could not clear composer attachments.", error)
+        },
+        action
+      );
+    },
+    [attachmentDraftsRef, runtime]
+  );
+  const handleSidebarNewSession = useCallback(() => {
+    discardComposerAttachmentsForSessionAction(() => {
+      handleNewSession();
+    });
+  }, [discardComposerAttachmentsForSessionAction, handleNewSession]);
+  const handleSidebarSelectSession = useCallback(
+    (sessionId: string) => {
+      if (sessionId === activeSessionIdRef.current) {
+        requestSidebarSessionSelection(sessionId);
+        return;
+      }
+      discardComposerAttachmentsForSessionAction(() => {
+        requestSidebarSessionSelection(sessionId);
+      });
+    },
+    [
+      activeSessionIdRef,
+      discardComposerAttachmentsForSessionAction,
+      requestSidebarSessionSelection
+    ]
+  );
+  const handleSidebarDeleteSession = useCallback(
+    (sessionId: string) => {
+      if (sessionId !== activeSessionIdRef.current) {
+        handleDeleteSession(sessionId);
+        return;
+      }
+      discardComposerAttachmentsForSessionAction(() => {
+        handleDeleteSession(sessionId);
+      });
+    },
+    [
+      activeSessionIdRef,
+      discardComposerAttachmentsForSessionAction,
+      handleDeleteSession
+    ]
+  );
+
   const sidebarPreview =
     !sessionsLoaded && sessionListPreview ? sessionListPreview : null;
   const sidebarSessionItems = sidebarPreview?.sessions ?? sessionItems;
@@ -715,8 +861,8 @@ export default function App() {
             <SessionSidebar
               sessions={sidebarSessionItems}
               activeSessionId={sidebarActiveSessionId}
-              isSending={isSending || hasComposerAttachmentDrafts}
-              isSessionSelectionBlocked={hasComposerAttachmentDrafts}
+              isSending={isSending}
+              isSessionSelectionBlocked={false}
               themeMode={themeMode}
               apiSettings={apiSettings}
               searchSettings={searchSettings}
@@ -726,9 +872,9 @@ export default function App() {
               cloudEnabled={cloudEnabled}
               accountMode={accountMode}
               authUser={authenticatedUser}
-              onNewSession={handleNewSession}
-              onSelectSession={handleSelectSession}
-              onDeleteSession={handleDeleteSession}
+              onNewSession={handleSidebarNewSession}
+              onSelectSession={handleSidebarSelectSession}
+              onDeleteSession={handleSidebarDeleteSession}
               onApiSettingsChange={handleApiSettingsChange}
               onSearchSettingsChange={handleSearchSettingsChange}
               onDisplaySettingsChange={handleDisplaySettingsChange}
