@@ -175,6 +175,20 @@ export async function enqueueSessionRepositoryOperation<T>(
   return queued;
 }
 
+export async function closeSessionRepository(): Promise<void> {
+  await enqueueSessionRepositoryOperation(async () => {
+    if (!database) {
+      return;
+    }
+
+    const openDatabase = database;
+    await openDatabase.close();
+    if (database === openDatabase) {
+      database = null;
+    }
+  });
+}
+
 export async function enqueueSessionStateUpdate(
   stateKey: string,
   updater: (state: StoredSessionState) => void | StoredSessionState

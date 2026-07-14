@@ -13,11 +13,14 @@ const repositoryDatabasePath = path.join(repositoryDirectory, "state.sqlite");
 process.env.STREAMUI_SESSION_DB = repositoryDatabasePath;
 process.env.STREAMUI_SESSION_DIR = repositoryDirectory;
 
-const { enqueueSessionRepositoryOperation, readSessionState } = await import(
-  "./sessionRepository.js"
-);
+const {
+  closeSessionRepository,
+  enqueueSessionRepositoryOperation,
+  readSessionState
+} = await import("./sessionRepository.js");
 
 after(async () => {
+  await closeSessionRepository();
   await rm(repositoryDirectory, { recursive: true, force: true });
 });
 
