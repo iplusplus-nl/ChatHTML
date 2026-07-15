@@ -66,6 +66,9 @@ type SessionSidebarProps = {
   onProfileSettingsChange(settings: ProfileSettings): void;
   onLoginRequest?(): void;
   onLogout?(): void;
+  onExportAccount?(): void;
+  onDeleteAccount?(): void;
+  onGenerateRecoveryCode?(): Promise<string>;
   onBugReportOpen(): void;
   isBugReportCapturing?: boolean;
   confirmDeleteSession?(message: string): boolean;
@@ -96,6 +99,9 @@ export function SessionSidebar({
   onProfileSettingsChange,
   onLoginRequest,
   onLogout,
+  onExportAccount,
+  onDeleteAccount,
+  onGenerateRecoveryCode,
   onBugReportOpen,
   isBugReportCapturing = false,
   confirmDeleteSession = (message) => window.confirm(message),
@@ -537,6 +543,9 @@ export function SessionSidebar({
           onDisplaySettingsChange={onDisplaySettingsChange}
           onProfileSettingsChange={onProfileSettingsChange}
           onLogout={onLogout}
+          onExportAccount={onExportAccount}
+          onDeleteAccount={onDeleteAccount}
+          onGenerateRecoveryCode={onGenerateRecoveryCode}
         />
       ) : null}
     </aside>

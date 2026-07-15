@@ -1,0 +1,8 @@
+[Unit]
+Description=Check ChatHTML production health, backups, disk, and spend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/chathtml-monitor

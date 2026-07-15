@@ -82,6 +82,7 @@ function harness(options: {
   sessions?: ChatSession[];
   activeSessionId?: string;
   capturePage?: BugReportControllerDependencies["capturePage"];
+  captureOnOpen?: boolean;
   encodeBlob?: BugReportControllerDependencies["encodeBlob"];
   submitReport?: BugReportControllerDependencies["submitReport"];
   now?: () => number;
@@ -126,6 +127,9 @@ function harness(options: {
       }
     },
     {
+      ...(options.captureOnOpen !== undefined
+        ? { captureOnOpen: options.captureOnOpen }
+        : {}),
       capturePage:
         options.capturePage ??
         (async () => new Blob(["png"], { type: "image/png" })),
@@ -387,6 +391,28 @@ describe("bug report controller open and drafts", () => {
     assert.deepEqual(
       test.states.map((state) => state.phase),
       ["capturing", "closed"]
+    );
+  });
+
+  it("captures only after explicit consent when automatic capture is disabled", async () => {
+    let captures = 0;
+    const test = harness({
+      captureOnOpen: false,
+      capturePage: async () => {
+        captures += 1;
+        return new Blob(["png"], { type: "image/png" });
+      }
+    });
+
+    assert.equal(await test.controller.open(), "opened");
+    assert.equal(captures, 0);
+    assert.equal(test.controller.getState().phase, "editing");
+
+    assert.equal(await test.controller.captureScreenshot(), "opened");
+    assert.equal(captures, 1);
+    assert.equal(
+      test.sessions.get("session-a")?.bugReportDraft?.images[0]?.captured,
+      true
     );
   });
 

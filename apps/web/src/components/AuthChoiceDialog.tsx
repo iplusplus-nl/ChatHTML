@@ -77,8 +77,13 @@ export function AuthChoiceDialogContent({
 
       <p className="auth-choice-footnote">
         Your key and provider requests stay in this browser and never pass
-        through the ChatHTML server. Your browser stores local-mode chats on
-        this device.
+        through the ChatHTML server. The key lasts only for this browser
+        session. Local-mode chats and files are browser data: clearing site
+        data, using private browsing, or losing this device can permanently
+        erase them.
+        {" "}<a href="/alpha.html" target="_blank" rel="noreferrer">Alpha notice</a>
+        {" · "}
+        <a href="/privacy.html" target="_blank" rel="noreferrer">Privacy</a>
       </p>
     </section>
   );

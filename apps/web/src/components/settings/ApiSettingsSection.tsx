@@ -209,6 +209,12 @@ export function ApiSettingsSection({
                   )}
                 </span>
               ) : null}
+              {settings.apiKeySource === "manual" ? (
+                <span className="settings-hint">
+                  Kept only for this browser session and sent directly to the
+                  selected provider.
+                </span>
+              ) : null}
             </div>
           </label>
         </>

@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly ChatHTML backup
+
+[Timer]
+OnCalendar=*-*-* 02:20:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

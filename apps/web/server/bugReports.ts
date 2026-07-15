@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import "./env.js";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -32,6 +32,34 @@ const sessionsDir = path.resolve(
 const bugReportsDir = path.resolve(
   process.env.CHATHTML_BUG_REPORT_DIR || path.join(sessionsDir, "bug-reports")
 );
+
+export async function cleanupExpiredBugReports(
+  retentionDays = Number(process.env.CHATHTML_BUG_REPORT_RETENTION_DAYS ?? 30),
+  now = Date.now()
+): Promise<number> {
+  const safeDays = Math.max(7, Math.min(365, Math.round(retentionDays) || 30));
+  const cutoff = now - safeDays * 24 * 60 * 60 * 1_000;
+  let entries;
+  try {
+    entries = await readdir(bugReportsDir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "ENOENT") return 0;
+    throw error;
+  }
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(entry.name)) {
+      continue;
+    }
+    const timestamp = Date.parse(`${entry.name}T00:00:00.000Z`);
+    if (!Number.isFinite(timestamp) || timestamp >= cutoff) continue;
+    const target = path.resolve(bugReportsDir, entry.name);
+    if (!target.startsWith(`${bugReportsDir}${path.sep}`)) continue;
+    await rm(target, { recursive: true, force: true });
+    removed += 1;
+  }
+  return removed;
+}
 
 type BugReportImageInput = {
   id?: unknown;
@@ -289,14 +317,27 @@ function createBugReportIssueInput(
     submittedAt: report.submittedAt,
     sessionId: report.sessionId,
     sessionTitle: report.sessionTitle,
-    clientId: report.clientId,
+    clientId: undefined,
     pageUrl: report.pageUrl,
     userAgent: report.userAgent,
     viewport: report.viewport,
-    remoteAddress: report.remoteAddress,
+    remoteAddress: undefined,
     text: report.text,
     images
   };
+}
+
+function diagnosticPageUrl(value: unknown): string | undefined {
+  const raw = stringValue(value).trim().slice(0, 2_000);
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const url = new URL(raw);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return undefined;
+  }
 }
 
 function sanitizeGitHubError(error: unknown): string {
@@ -452,13 +493,13 @@ export async function handleCreateBugReport(
       sessionTitle:
         stringValue(body.sessionTitle).trim().slice(0, 240) || undefined,
       clientId: stringValue(body.clientId).trim().slice(0, 180) || undefined,
-      pageUrl: stringValue(body.pageUrl).trim().slice(0, 2_000) || undefined,
+      pageUrl: diagnosticPageUrl(body.pageUrl),
       userAgent: stringValue(body.userAgent).trim().slice(0, 1_000) || undefined,
       viewport:
         body.viewport && typeof body.viewport === "object"
           ? body.viewport
           : undefined,
-      remoteAddress: req.ip,
+      remoteAddress: undefined,
       text,
       images: images.map((image) => image.metadata)
     };

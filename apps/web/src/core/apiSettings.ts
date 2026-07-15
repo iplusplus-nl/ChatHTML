@@ -52,6 +52,7 @@ export type ApiProviderPreset = {
 };
 
 export const API_SETTINGS_STORAGE_KEY = "streamui.apiSettings.v1";
+const MANUAL_API_KEY_SESSION_STORAGE_KEY = "chathtml.manualApiKey.session.v1";
 export const MAX_MODEL_OPTIONS = 120;
 export const MAX_MODEL_ID_LENGTH = 180;
 export const MAX_USER_PREFERENCE_PROMPT_LENGTH = 4_000;
@@ -564,9 +565,25 @@ export function loadApiSettings(): ApiSettings {
   }
 
   try {
-    return normalizeApiSettings(
+    const persisted = normalizeApiSettings(
       JSON.parse(window.localStorage.getItem(API_SETTINGS_STORAGE_KEY) ?? "null")
     );
+    const sessionKey =
+      window.sessionStorage.getItem(MANUAL_API_KEY_SESSION_STORAGE_KEY) ??
+      (persisted.apiKeySource === "manual" ? persisted.apiKey : "");
+    if (persisted.apiKey) {
+      if (persisted.apiKeySource === "manual" && sessionKey) {
+        window.sessionStorage.setItem(
+          MANUAL_API_KEY_SESSION_STORAGE_KEY,
+          sessionKey
+        );
+      }
+      window.localStorage.setItem(
+        API_SETTINGS_STORAGE_KEY,
+        JSON.stringify({ ...persisted, apiKey: "" })
+      );
+    }
+    return normalizeApiSettings({ ...persisted, apiKey: sessionKey });
   } catch {
     return DEFAULT_API_SETTINGS;
   }
@@ -585,10 +602,19 @@ export function saveApiSettings(settings: ApiSettings): void {
     return;
   }
 
+  const normalized = normalizeApiSettings(settings);
   window.localStorage.setItem(
     API_SETTINGS_STORAGE_KEY,
-    JSON.stringify(normalizeApiSettings(settings))
+    JSON.stringify({ ...normalized, apiKey: "" })
   );
+  if (normalized.apiKeySource === "manual" && normalized.apiKey) {
+    window.sessionStorage.setItem(
+      MANUAL_API_KEY_SESSION_STORAGE_KEY,
+      normalized.apiKey
+    );
+  } else {
+    window.sessionStorage.removeItem(MANUAL_API_KEY_SESSION_STORAGE_KEY);
+  }
 }
 
 export function serializeApiSettings(settings: ApiSettings): ApiSettings {

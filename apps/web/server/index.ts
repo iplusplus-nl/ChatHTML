@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleModelsRequest } from "./models.js";
 import {
+  cleanupExpiredBugReports,
   handleBugReportImageRequest,
   handleCreateBugReport
 } from "./bugReports.js";
@@ -30,20 +31,38 @@ import {
   isAuthenticationRequired
 } from "./chatHtmlService.js";
 import {
+  deleteAccountSessionData,
   handleCreateSessionFile,
   handleDeleteSessionFile,
   handleGetFileContent,
   handleGetSessionIndex,
   handleGetSessionFiles,
   handleGetSessions,
+  handleExportAccountData,
   handleSaveSessions
 } from "./sessions.js";
+import {
+  createConcurrencyLimit,
+  createRateLimit,
+  requestIp
+} from "./requestLimits.js";
+import { getAuthenticatedStateKey } from "./chatHtmlService.js";
+import { checkSessionRepositoryHealth } from "./sessionRepository.js";
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const clientDist = path.join(projectRoot, "dist");
 const chatHtmlService = createChatHtmlServiceGateway();
+const maintenanceTimer = setInterval(() => {
+  void cleanupExpiredBugReports().catch((error) =>
+    console.warn("Bug-report retention cleanup failed.", error)
+  );
+}, 6 * 60 * 60 * 1_000);
+maintenanceTimer.unref();
+void cleanupExpiredBugReports().catch((error) =>
+  console.warn("Bug-report retention cleanup failed.", error)
+);
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 8787);
@@ -88,15 +107,39 @@ function authorizeDeployAdmin(req: Request, res: Response): boolean {
 }
 
 app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.set({
+    "Content-Security-Policy":
+      "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https: http://127.0.0.1:* http://localhost:*; frame-src 'self' blob:; worker-src 'self' blob:",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Permissions-Policy":
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN"
+  });
+  next();
+});
 app.use(express.json({ limit: "40mb" }));
+app.use(
+  "/api",
+  createRateLimit({ key: requestIp, scope: "ip", max: 600 })
+);
 
-app.get("/api/health", (_req, res) => {
-  res.json({
-    ok: true,
+app.get("/api/health", async (_req, res) => {
+  const [database, accountService] = await Promise.all([
+    checkSessionRepositoryHealth(),
+    chatHtmlService.checkHealth()
+  ]);
+  const ok = database && accountService;
+  res.status(ok ? 200 : 503).json({
+    ok,
     uptimeSec: Math.round(process.uptime()),
     startedAt,
     node: process.version,
-    activity: getOpenRouterActivitySnapshot()
+    activity: getOpenRouterActivitySnapshot(),
+    checks: { database, accountService }
   });
 });
 
@@ -144,7 +187,13 @@ app.post("/api/auth/native/start", chatHtmlService.handleNativeOAuthStart);
 app.post("/api/auth/native/callback", chatHtmlService.handleNativeOAuthCallback);
 app.post("/api/auth/logout", chatHtmlService.handleAuthLogout);
 app.get("/api/settings", handleGetRuntimeSettings);
-app.get("/api/files/:fileId/content", handleGetFileContent);
+app.get(
+  "/api/files/:fileId/content",
+  isAuthenticationRequired()
+    ? chatHtmlService.requireAuthenticatedUser
+    : chatHtmlService.attachOptionalAuthenticatedUser,
+  handleGetFileContent
+);
 app.get(
   "/api/bug-reports/:date/:reportId/images/:fileName",
   handleBugReportImageRequest
@@ -156,6 +205,22 @@ app.use(
     ? chatHtmlService.requireAuthenticatedUser
     : chatHtmlService.attachOptionalAuthenticatedUser
 );
+app.use(
+  "/api",
+  createRateLimit({
+    key: getAuthenticatedStateKey,
+    scope: "account",
+    max: 300
+  })
+);
+app.use(
+  "/api",
+  createConcurrencyLimit({
+    key: getAuthenticatedStateKey,
+    exclusive: (req) => req.method === "DELETE" && req.path === "/account"
+  })
+);
+app.post("/api/auth/recovery-code", chatHtmlService.handleRecoveryCode);
 
 app.post(
   "/api/chat",
@@ -182,6 +247,17 @@ app.post("/api/retrieve", handleRetrievalRequest);
 app.get("/api/export-resource", handleExportResourceRequest);
 app.get("/api/media-image", handleMediaImageRequest);
 app.get("/api/sessions", handleGetSessions);
+app.get("/api/account/export", handleExportAccountData);
+app.delete("/api/account", async (req, res) => {
+  try {
+    await deleteAccountSessionData(req);
+    await chatHtmlService.handleDeleteAccount(req, res, () => undefined);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
 app.get("/api/sessions/index", handleGetSessionIndex);
 app.post("/api/sessions", handleSaveSessions);
 app.put("/api/sessions", handleSaveSessions);
@@ -222,6 +298,7 @@ async function gracefulShutdown(signal: NodeJS.Signals): Promise<void> {
     return;
   }
   shutdownStarted = true;
+  clearInterval(maintenanceTimer);
 
   const started = Date.now();
   const initialActivity = setOpenRouterDraining(true);

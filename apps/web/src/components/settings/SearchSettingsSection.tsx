@@ -272,7 +272,7 @@ export function SearchSettingsSection({
               }`}
             >
               {settings.apiKey.trim()
-                ? "Manual search key entered"
+                ? "Manual search key entered for this browser session"
                 : "Manual search key missing"}
             </span>
           ) : null}

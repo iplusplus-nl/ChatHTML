@@ -44,6 +44,7 @@ export type BugReportViewController = {
   captureError: string | null;
   submitError: string | null;
   open(): Promise<BugReportOpenOutcome>;
+  captureScreenshot(): Promise<BugReportOpenOutcome>;
   changeDraft(draft: BugReportDraft): boolean;
   close(): void;
   discard(): boolean;
@@ -52,6 +53,8 @@ export type BugReportViewController = {
 
 function browserDependencies(): BugReportControllerDependencies {
   return {
+    // Opening support must not capture private on-screen content.
+    captureOnOpen: false,
     capturePage: captureCurrentPageScreenshotBlob,
     encodeBlob: blobToDataUrl,
     submitReport: submitBugReport,
@@ -139,6 +142,7 @@ export function useBugReportController({
     captureError: viewState.captureError,
     submitError: viewState.submitError,
     open: controller.open,
+    captureScreenshot: controller.captureScreenshot,
     changeDraft: controller.changeDraft,
     close: controller.close,
     discard: controller.discard,

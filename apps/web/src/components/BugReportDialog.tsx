@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   Bug,
+  Camera,
   CheckCircle2,
   ImagePlus,
   LoaderCircle,
@@ -46,6 +47,7 @@ type BugReportDialogProps = {
   isSubmitting?: boolean;
   isSubmitted?: boolean;
   onChange(draft: BugReportDraft): void;
+  onCapture(): void;
   onClose(): void;
   onDiscard(): void;
   onSubmit(): void;
@@ -139,6 +141,7 @@ export function BugReportDialog({
   isSubmitting = false,
   isSubmitted = false,
   onChange,
+  onCapture,
   onClose,
   onDiscard,
   onSubmit
@@ -390,6 +393,21 @@ export function BugReportDialog({
               <Upload size={15} strokeWidth={2.1} aria-hidden="true" />
               <span>Add Image</span>
             </button>
+            <button
+              className="bug-report-upload-button"
+              type="button"
+              disabled={
+                isCapturing ||
+                isSubmitting ||
+                isSubmitted ||
+                draft.images.length >= MAX_BUG_REPORT_IMAGES ||
+                draft.images.some((image) => image.captured)
+              }
+              onClick={onCapture}
+            >
+              <Camera size={15} strokeWidth={2.1} aria-hidden="true" />
+              <span>Capture screenshot</span>
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -418,6 +436,14 @@ export function BugReportDialog({
               }}
             />
           </label>
+
+          <p className="settings-hint">
+            Reports are stored by ChatHTML support with this session&apos;s title,
+            the current page path, browser details, and viewport size. No
+            screenshot is captured automatically; only a screenshot you
+            explicitly capture or images you add are submitted. Remove secrets
+            and personal information before sending.
+          </p>
 
           {captureError || localError || submitError ? (
             <div className="bug-report-error" role="status">

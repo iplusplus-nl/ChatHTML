@@ -86,7 +86,8 @@ export function LocalSessionMergeDialogContent({
 
       <p className="auth-choice-footnote">
         Nothing is removed from this browser unless the account upload finishes
-        and is verified.
+        and every imported message and file is verified. Sessions kept only on
+        this device can be lost if browser site data is cleared.
       </p>
     </section>
   );

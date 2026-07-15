@@ -70,6 +70,9 @@ export type SettingsDialogProps = {
   onDisplaySettingsChange(settings: DisplaySettings): void;
   onProfileSettingsChange(settings: ProfileSettings): void;
   onLogout?(): void;
+  onExportAccount?(): void;
+  onDeleteAccount?(): void;
+  onGenerateRecoveryCode?(): Promise<string>;
 };
 
 export function SettingsDialog({
@@ -89,7 +92,10 @@ export function SettingsDialog({
   onSearchSettingsChange,
   onDisplaySettingsChange,
   onProfileSettingsChange,
-  onLogout
+  onLogout,
+  onExportAccount,
+  onDeleteAccount,
+  onGenerateRecoveryCode
 }: SettingsDialogProps) {
   const [draftApiSettings, setDraftApiSettings] = useState(apiSettings);
   const [draftSearchSettings, setDraftSearchSettings] = useState(searchSettings);
@@ -433,6 +439,9 @@ export function SettingsDialog({
                   setPreferenceImportError(null);
                 }}
                 onLogout={onLogout}
+                onExportAccount={onExportAccount}
+                onDeleteAccount={onDeleteAccount}
+                onGenerateRecoveryCode={onGenerateRecoveryCode}
               />
             ) : section === "display" ? (
               <DisplaySettingsSection

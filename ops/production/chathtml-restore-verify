@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKUP_DIR="${CHATHTML_BACKUP_DIR:-/var/backups/chathtml}"
+KEY_FILE="${CHATHTML_BACKUP_KEY_FILE:-/etc/chathtml-backup.key}"
+MONITOR_DIR="${CHATHTML_MONITOR_DIR:-/var/lib/chathtml-monitor}"
+ARCHIVE="${1:-}"
+if [[ -z "$ARCHIVE" ]]; then
+  ARCHIVE="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'chathtml-*.tar.gz.gpg' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
+fi
+if [[ -z "$ARCHIVE" || ! -s "$ARCHIVE" || ! -s "$KEY_FILE" ]]; then
+  echo "A backup archive and encryption key are required." >&2
+  exit 1
+fi
+
+WORK="$(mktemp -d /var/tmp/chathtml-restore.XXXXXX)"
+VERIFY_DB="chathtml_restore_verify_$$"
+created_database=0
+cleanup() {
+  if [[ "$created_database" == "1" ]]; then
+    sudo -u postgres dropdb --if-exists "$VERIFY_DB" >/dev/null 2>&1 || true
+  fi
+  rm -rf -- "$WORK"
+}
+trap cleanup EXIT
+
+gpg --batch --yes --quiet --decrypt --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" --output "$WORK/payload.tar.gz" "$ARCHIVE"
+mkdir "$WORK/payload"
+tar -C "$WORK/payload" -xzf "$WORK/payload.tar.gz"
+(
+  cd "$WORK/payload"
+  sha256sum -c SHA256SUMS
+)
+pg_restore --list "$WORK/payload/postgres.dump" >/dev/null
+sudo -u postgres createdb "$VERIFY_DB"
+created_database=1
+sudo -u postgres pg_restore --no-owner --no-acl \
+  --dbname="$VERIFY_DB" "$WORK/payload/postgres.dump"
+sudo -u postgres psql --dbname="$VERIFY_DB" -Atqc "SELECT 1" | grep -qx 1
+sqlite3 "$WORK/payload/service.sqlite" "PRAGMA integrity_check;" | grep -qx ok
+tar -tzf "$WORK/payload/chathtml-data.tar.gz" >/dev/null
+
+install -d -m 0700 "$MONITOR_DIR"
+date -u +%s > "$MONITOR_DIR/last-restore-ok"
+chmod 0600 "$MONITOR_DIR/last-restore-ok"
+echo "Restore verification passed for $ARCHIVE"

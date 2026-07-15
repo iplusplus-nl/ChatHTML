@@ -46,6 +46,7 @@ export type ScheduledBugReportTask = {
 };
 
 export type BugReportControllerDependencies = {
+  captureOnOpen?: boolean;
   capturePage(): Promise<Blob>;
   encodeBlob(blob: Blob): Promise<string>;
   submitReport(
@@ -82,6 +83,7 @@ export type BugReportSubmitOutcome =
 export type BugReportController = {
   getState(): BugReportViewState;
   open(): Promise<BugReportOpenOutcome>;
+  captureScreenshot(): Promise<BugReportOpenOutcome>;
   changeDraft(draft: BugReportDraft): boolean;
   close(): void;
   discard(): boolean;
@@ -146,6 +148,7 @@ export function createBugReportController(
     invalidateOperations();
     const existingDraft = targetSession.bugReportDraft;
     const shouldCapture =
+      dependencies.captureOnOpen !== false &&
       (existingDraft?.images.length ?? 0) < MAX_BUG_REPORT_IMAGES &&
       !existingDraft?.screenshotCapturedAt &&
       !existingDraft?.images.some((image) => image.captured);
@@ -274,6 +277,116 @@ export function createBugReportController(
     invalidateOperations();
     resetClosed();
     ports.saveNow();
+  };
+
+  const captureScreenshot = async (): Promise<BugReportOpenOutcome> => {
+    if (activeCaptureToken !== null || activeSubmitToken !== null) {
+      return "busy";
+    }
+    if (state.phase !== "editing" || !state.sessionId) {
+      return "missing";
+    }
+    const targetSessionId = state.sessionId;
+    const targetSession = ports.getSession(targetSessionId);
+    if (!targetSession) {
+      resetClosed();
+      return "missing";
+    }
+    const existingDraft = targetSession.bugReportDraft;
+    if (
+      (existingDraft?.images.length ?? 0) >= MAX_BUG_REPORT_IMAGES ||
+      existingDraft?.images.some((image) => image.captured)
+    ) {
+      return "busy";
+    }
+
+    invalidateOperations();
+    const token = generation;
+    activeCaptureToken = token;
+    emit({
+      phase: "capturing",
+      sessionId: targetSessionId,
+      captureError: null,
+      submitError: null
+    });
+
+    try {
+      const blob = await dependencies.capturePage();
+      const dataUrl = await dependencies.encodeBlob(blob);
+      if (activeCaptureToken !== token || generation !== token) {
+        return "cancelled";
+      }
+      if (!ports.getSession(targetSessionId)) {
+        resetClosed();
+        return "missing";
+      }
+
+      const createdAt = dependencies.now();
+      const viewport = dependencies.getViewport();
+      const screenshot: BugReportImage = {
+        id: dependencies.createImageId(),
+        name: "page-screenshot.png",
+        mimeType: "image/png",
+        size: blob.size,
+        dataUrl,
+        width: viewport.width,
+        height: viewport.height,
+        captured: true,
+        createdAt
+      };
+      const updated = ports.updateSession(targetSessionId, (session) => {
+        const now = dependencies.now();
+        const currentDraft =
+          session.bugReportDraft ?? createEmptyBugReportDraft(now);
+        const hasRoom = currentDraft.images.length < MAX_BUG_REPORT_IMAGES;
+        const hasCapturedImage = currentDraft.images.some(
+          (image) => image.captured
+        );
+        const nextDraft = {
+          ...currentDraft,
+          images:
+            hasRoom && !hasCapturedImage
+              ? [screenshot, ...currentDraft.images]
+              : currentDraft.images,
+          screenshotCapturedAt:
+            currentDraft.screenshotCapturedAt ?? screenshot.createdAt,
+          updatedAt: now
+        };
+        return {
+          ...session,
+          updatedAt: now,
+          bugReportDraft: normalizeBugReportDraft(nextDraft, now)
+        };
+      });
+      if (!updated) {
+        resetClosed();
+        return "missing";
+      }
+
+      emit({
+        phase: "editing",
+        sessionId: targetSessionId,
+        captureError: null,
+        submitError: null
+      });
+      return "opened";
+    } catch (error) {
+      if (activeCaptureToken !== token || generation !== token) {
+        return "cancelled";
+      }
+      dependencies.warn("Could not capture bug report screenshot.", error);
+      emit({
+        phase: "editing",
+        sessionId: targetSessionId,
+        captureError: CAPTURE_ERROR,
+        submitError: null
+      });
+      return "opened-with-capture-error";
+    } finally {
+      if (activeCaptureToken === token) {
+        activeCaptureToken = null;
+      }
+    }
   };
 
   const discard = (): boolean => {
@@ -407,6 +520,7 @@ export function createBugReportController(
   return {
     getState: () => state,
     open,
+    captureScreenshot,
     changeDraft,
     close,
     discard,

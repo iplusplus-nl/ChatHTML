@@ -611,6 +611,41 @@ export async function closeSessionRepository(): Promise<void> {
   }
 }
 
+export async function checkSessionRepositoryHealth(): Promise<boolean> {
+  try {
+    if (getSessionRepositoryBackend() === "postgres") {
+      const pool = await getPostgresPool();
+      const result = await pool.query("SELECT 1 AS ok");
+      return result.rows[0]?.ok === 1;
+    }
+    const db = await getSqliteDatabase();
+    const row = (await db.get("SELECT 1 AS ok")) as { ok?: unknown } | undefined;
+    return Number(row?.ok) === 1;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteSessionState(
+  stateKey: string
+): Promise<void> {
+  if (getSessionRepositoryBackend() === "postgres") {
+    const context = transactionContext.getStore();
+    const executor = context?.client ?? (await getPostgresPool());
+    await executor.query(
+      "DELETE FROM chathtml_file_capability WHERE state_key = $1",
+      [stateKey]
+    );
+    await executor.query("DELETE FROM chathtml_state WHERE state_key = $1", [
+      stateKey
+    ]);
+    return;
+  }
+  const db = await getSqliteDatabase();
+  await db.run("DELETE FROM streamui_file_capability WHERE state_key = ?", stateKey);
+  await db.run("DELETE FROM streamui_state WHERE key = ?", stateKey);
+}
+
 export async function enqueueSessionStateUpdate(
   stateKey: string,
   updater: (state: StoredSessionState) => void | StoredSessionState

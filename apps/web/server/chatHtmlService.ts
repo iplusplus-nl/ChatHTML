@@ -18,6 +18,11 @@ export type ServiceUser = {
   role: "admin" | "user";
   balanceUsd?: string;
   balanceMicros?: number;
+  spentInWindowUsd?: string;
+  usageLimitUsd?: string;
+  remainingUsd?: string;
+  usageWindowHours?: number;
+  retryAfterSeconds?: number;
 };
 
 const authenticatedUsers = new WeakMap<Request, ServiceUser>();
@@ -374,6 +379,19 @@ export function createChatHtmlServiceGateway(
       signal: AbortSignal.timeout(30_000)
     });
 
+  const checkHealth = async (): Promise<boolean> => {
+    try {
+      const response = await fetchImpl(`${serviceOrigin}/health`, {
+        redirect: "error",
+        signal: AbortSignal.timeout(5_000)
+      });
+      await response.body?.cancel().catch(() => undefined);
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+
   const authenticateToken = async (token: string): Promise<ServiceUser | null> => {
     if (!token) {
       return null;
@@ -689,6 +707,52 @@ export function createChatHtmlServiceGateway(
     }
   };
 
+  const handleDeleteAccount: RequestHandler = async (req, res) => {
+    const token = readCookie(req, SESSION_COOKIE_NAME);
+    try {
+      if (!token) {
+        res.status(401).json({ error: "Sign in to delete this account." });
+        return;
+      }
+      await requireSuccessfulJson(
+        await serviceRequest("/auth/account", {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        "Could not delete the account."
+      );
+      forgetToken(token);
+      res.setHeader(
+        "Set-Cookie",
+        expiredSessionCookie(useSecureCookie(req, nodeEnv))
+      );
+      res.json({ ok: true });
+    } catch (error) {
+      sendGatewayError(res, error);
+    }
+  };
+
+  const handleRecoveryCode: RequestHandler = async (req, res) => {
+    const token = readCookie(req, SESSION_COOKIE_NAME);
+    try {
+      if (!token) {
+        res.status(401).json({ error: "Sign in to create a recovery code." });
+        return;
+      }
+      const payload = await requireSuccessfulJson(
+        await serviceRequest("/auth/recovery-code", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        "Could not create a recovery code."
+      );
+      res.setHeader("Cache-Control", "no-store");
+      res.json(payload);
+    } catch (error) {
+      sendGatewayError(res, error);
+    }
+  };
+
   const injectManagedApiSettings = (
     req: Request,
     res: Response,
@@ -731,12 +795,15 @@ export function createChatHtmlServiceGateway(
 
   return {
     attachOptionalAuthenticatedUser,
+    checkHealth,
     handleAuthMe,
     handleOAuthStart,
     handleOAuthCallback,
     handleNativeOAuthStart,
     handleNativeOAuthCallback,
     handleAuthLogout,
+    handleDeleteAccount,
+    handleRecoveryCode,
     injectManagedApiSettings,
     requireAuthenticatedUser
   };

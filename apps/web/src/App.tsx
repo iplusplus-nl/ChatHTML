@@ -21,6 +21,11 @@ import {
   saveAccountMode,
   type AccountMode
 } from "./core/accountMode";
+import {
+  deleteAccount as deleteCloudAccount,
+  downloadAccountExport,
+  generateRecoveryCode
+} from "./core/cloudAuth";
 import { providerSupportsReasoning } from "./core/apiSettings";
 import {
   createId,
@@ -410,6 +415,32 @@ export default function App() {
     pendingVisualRepairSlot,
     resetSessionState
   ]);
+  const handleExportAccount = useCallback(() => {
+    void downloadAccountExport().catch((error) => {
+      setSessionSyncError(
+        error instanceof Error ? error.message : "Account export failed."
+      );
+    });
+  }, []);
+  const handleDeleteAccount = useCallback(async () => {
+    if (
+      !window.confirm(
+        "Permanently delete this account, all sessions, and uploaded files? This cannot be undone."
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteCloudAccount();
+      await refreshAuthSummary();
+      clearBrowserLocalWorkspace();
+      resetSessionState();
+    } catch (error) {
+      setSessionSyncError(
+        error instanceof Error ? error.message : "Account deletion failed."
+      );
+    }
+  }, [refreshAuthSummary, resetSessionState]);
 
   const authenticatedUserIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -727,6 +758,7 @@ export default function App() {
     captureError: bugReportCaptureError,
     submitError: bugReportSubmitError,
     open: handleBugReportOpen,
+    captureScreenshot: handleBugReportScreenshotCapture,
     changeDraft: handleBugReportDraftChange,
     close: handleBugReportClose,
     discard: handleBugReportDiscard,
@@ -1360,6 +1392,9 @@ export default function App() {
               onProfileSettingsChange={handleProfileSettingsChange}
               onLoginRequest={handleAuthOverlayRequest}
               onLogout={handleLogout}
+              onExportAccount={handleExportAccount}
+              onDeleteAccount={() => void handleDeleteAccount()}
+              onGenerateRecoveryCode={generateRecoveryCode}
               onBugReportOpen={() => void handleBugReportOpen()}
               isBugReportCapturing={isBugReportCapturing}
               providerSettingsRequestVersion={providerSettingsRequestVersion}
@@ -1436,6 +1471,7 @@ export default function App() {
           isSubmitting={isBugReportSubmitting}
           isSubmitted={isBugReportSubmitted}
           onChange={handleBugReportDraftChange}
+          onCapture={() => void handleBugReportScreenshotCapture()}
           onClose={handleBugReportClose}
           onDiscard={handleBugReportDiscard}
           onSubmit={() => void handleBugReportSubmit()}

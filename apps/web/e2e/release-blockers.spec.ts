@@ -577,6 +577,8 @@ test("Bug Report capture opens, reports progress, and attaches a screenshot", as
   await page.getByRole("button", { name: "Bug Report" }).click();
   const dialog = page.getByRole("dialog", { name: "Bug Report" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("No images attached")).toBeVisible();
+  await dialog.getByRole("button", { name: "Capture screenshot" }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -763,7 +765,7 @@ test("required account mode offers browser-direct BYO without leaking keys or lo
   await expect(settings).toBeVisible();
   await expect(settings).toContainText("cannot fall back through the ChatHTML server");
   await settings
-    .getByRole("textbox", { name: "API Key", exact: true })
+    .getByRole("textbox", { name: /^API Key/ })
     .fill("sk-or-browser-only-test");
   await settings.getByRole("button", { name: "Done" }).click();
 

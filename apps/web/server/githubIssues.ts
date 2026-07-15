@@ -72,6 +72,10 @@ export function parseGitHubRepositorySlug(value: string): string | undefined {
 }
 
 export function getGitHubIssueConfig(): GitHubIssueConfig | undefined {
+  const enabled = envString("CHATHTML_GITHUB_ISSUE_SYNC_ENABLED").toLowerCase();
+  if (enabled !== "true" && enabled !== "1" && enabled !== "yes") {
+    return undefined;
+  }
   const token = envString(
     "CHATHTML_GITHUB_ISSUES_TOKEN",
     "GITHUB_ISSUES_TOKEN"
@@ -173,10 +177,9 @@ export function buildGitHubIssueBody(report: BugReportIssueInput): string {
     markdownListItem("Session", report.sessionTitle || report.sessionId),
     markdownListItem("Session ID", report.sessionId ? `\`${report.sessionId}\`` : undefined),
     "- **User ID:**",
-    markdownListItem("Page URL", report.pageUrl),
-    markdownListItem("User agent", report.userAgent),
+    markdownListItem("Page", report.pageUrl),
+    markdownListItem("Browser", report.userAgent),
     markdownListItem("Viewport", formatViewport(report.viewport)),
-    markdownListItem("Remote address", report.remoteAddress),
     "",
     "## Automation",
     "",

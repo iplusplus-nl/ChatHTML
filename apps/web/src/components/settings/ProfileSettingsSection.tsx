@@ -1,5 +1,5 @@
 import { Camera, Download, Eraser, LogOut, Plus, Trash2, Upload } from "lucide-react";
-import type { ChangeEvent, RefObject } from "react";
+import { useState, type ChangeEvent, type RefObject } from "react";
 import {
   MAX_MEMORY_ITEMS,
   MAX_MEMORY_ITEM_TEXT_LENGTH,
@@ -31,6 +31,9 @@ type ProfileSettingsSectionProps = {
   onExportPreferences(): void;
   onClearPreferences(): void;
   onLogout?(): void;
+  onExportAccount?(): void;
+  onDeleteAccount?(): void;
+  onGenerateRecoveryCode?(): Promise<string>;
 };
 
 export function ProfileSettingsSection({
@@ -52,8 +55,13 @@ export function ProfileSettingsSection({
   onImportPreferences,
   onExportPreferences,
   onClearPreferences,
-  onLogout
+  onLogout,
+  onExportAccount,
+  onDeleteAccount,
+  onGenerateRecoveryCode
 }: ProfileSettingsSectionProps) {
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [recoveryError, setRecoveryError] = useState("");
   return (
     <>
       <div className="settings-profile-hero">
@@ -116,6 +124,84 @@ export function ProfileSettingsSection({
                 <LogOut size={14} strokeWidth={2.1} aria-hidden="true" />
                 <span>Sign out</span>
               </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {authUser ? (
+        <div className="settings-row">
+          <span>Managed usage</span>
+          <div className="settings-control-stack">
+            <span className="settings-account-copy">
+              ${authUser.spentInWindowUsd ?? "0.000000"} used of $
+              {authUser.usageLimitUsd ?? "20.000000"} in the rolling{" "}
+              {authUser.usageWindowHours ?? 24}-hour window; $
+              {authUser.remainingUsd ?? "20.000000"} currently available.
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {authUser && (onExportAccount || onDeleteAccount) ? (
+        <div className="settings-row">
+          <span>Account data</span>
+          <div className="settings-preference-actions">
+            {onExportAccount ? (
+              <button
+                className="settings-small-button"
+                type="button"
+                onClick={onExportAccount}
+              >
+                <Download size={14} strokeWidth={2.1} aria-hidden="true" />
+                <span>Export account</span>
+              </button>
+            ) : null}
+            {onDeleteAccount ? (
+              <button
+                className="settings-small-button"
+                type="button"
+                onClick={onDeleteAccount}
+              >
+                <Trash2 size={14} strokeWidth={2.1} aria-hidden="true" />
+                <span>Delete account</span>
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {authUser && onGenerateRecoveryCode ? (
+        <div className="settings-row">
+          <span>Account recovery</span>
+          <div className="settings-control-stack">
+            <button
+              className="settings-small-button"
+              type="button"
+              onClick={() => {
+                setRecoveryError("");
+                void onGenerateRecoveryCode()
+                  .then(setRecoveryCode)
+                  .catch((error) =>
+                    setRecoveryError(
+                      error instanceof Error
+                        ? error.message
+                        : "Could not create a recovery code."
+                    )
+                  );
+              }}
+            >
+              Create new recovery code
+            </button>
+            {recoveryCode ? (
+              <code className="settings-account-copy">{recoveryCode}</code>
+            ) : null}
+            <span className="settings-hint">
+              Save the newest code in a password manager. Creating one
+              invalidates the previous code.
+            </span>
+            {recoveryError ? (
+              <span className="settings-profile-error">{recoveryError}</span>
             ) : null}
           </div>
         </div>

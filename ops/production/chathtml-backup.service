@@ -1,0 +1,13 @@
+[Unit]
+Description=Create and restore-verify an encrypted ChatHTML backup
+After=postgresql.service chathtml-service.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/chathtml-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/backups/chathtml /var/lib/chathtml-monitor /var/tmp

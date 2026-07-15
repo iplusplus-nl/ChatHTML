@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+BACKUP_DIR="${CHATHTML_BACKUP_DIR:-/var/backups/chathtml}"
+MONITOR_DIR="${CHATHTML_MONITOR_DIR:-/var/lib/chathtml-monitor}"
+SERVICE_ENV="${CHATHTML_SERVICE_ENV:-/etc/chathtml-service.env}"
+ALERT_ENV="${CHATHTML_ALERT_ENV:-/etc/chathtml-monitor.env}"
+failures=()
+
+if [[ -f "$ALERT_ENV" ]]; then
+  # Root-owned file containing only optional monitor delivery settings.
+  # shellcheck disable=SC1090
+  source "$ALERT_ENV"
+fi
+
+check_json_health() {
+  local name="$1"
+  local url="$2"
+  local body
+  body="$(curl --fail --silent --show-error --max-time 10 "$url" 2>/dev/null)" || {
+    failures+=("$name health request failed")
+    return
+  }
+  grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' <<<"$body" || \
+    failures+=("$name reported unhealthy")
+}
+
+check_json_health "public ChatHTML" "https://chat.aietheia.com/api/health"
+check_json_health "account Service" "http://127.0.0.1:18790/health"
+
+disk_percent="$(df -P / | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }')"
+if [[ ! "$disk_percent" =~ ^[0-9]+$ ]] || (( disk_percent >= 85 )); then
+  failures+=("root disk usage is ${disk_percent:-unknown}%")
+fi
+
+latest_backup="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'chathtml-*.tar.gz.gpg' -mmin -1800 -print -quit 2>/dev/null)"
+[[ -n "$latest_backup" ]] || failures+=("no encrypted backup newer than 30 hours")
+
+restore_stamp="$MONITOR_DIR/last-restore-ok"
+if [[ ! -f "$restore_stamp" ]] || \
+  (( $(date -u +%s) - $(cat "$restore_stamp" 2>/dev/null || echo 0) > 108000 )); then
+  failures+=("no successful restore verification newer than 30 hours")
+fi
+
+database_path="$(sed -n 's/^DATABASE_PATH=//p' "$SERVICE_ENV" | tail -n 1)"
+limit_usd="$(sed -n 's/^GLOBAL_USAGE_LIMIT_USD=//p' "$SERVICE_ENV" | tail -n 1)"
+limit_usd="${limit_usd:-200}"
+if [[ -n "$database_path" && -f "$database_path" ]]; then
+  since_ms="$(( $(date -u +%s) * 1000 - 86400000 ))"
+  spent_micros="$(sqlite3 "$database_path" "SELECT COALESCE(SUM(cost_micros),0) FROM api_requests WHERE created_at >= $since_ms;" 2>/dev/null || echo invalid)"
+  threshold_micros="$(awk -v usd="$limit_usd" 'BEGIN { printf "%.0f", usd * 1000000 * 0.8 }')"
+  if [[ ! "$spent_micros" =~ ^[0-9]+$ ]]; then
+    failures+=("managed-spend accounting could not be read")
+  elif (( spent_micros >= threshold_micros )); then
+    failures+=("managed spend reached at least 80% of the global 24-hour ceiling")
+  fi
+fi
+
+if (( ${#failures[@]} == 0 )); then
+  echo "ChatHTML production checks passed."
+  exit 0
+fi
+
+message="ChatHTML production alert on $(hostname): $(IFS='; '; echo "${failures[*]}")"
+echo "$message" >&2
+if [[ "${CHATHTML_ALERT_WEBHOOK_URL:-}" == https://* ]]; then
+  escaped="${message//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  curl --fail --silent --show-error --max-time 10 \
+    -H 'Content-Type: application/json' \
+    --data "{\"text\":\"$escaped\",\"content\":\"$escaped\"}" \
+    "$CHATHTML_ALERT_WEBHOOK_URL" >/dev/null || true
+fi
+exit 1

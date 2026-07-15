@@ -134,6 +134,36 @@ function mergeImportedSessions(
   };
 }
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalize(entry)])
+    );
+  }
+  return value;
+}
+
+function sessionVerificationFingerprint(session: ChatSession): string {
+  const serialized = JSON.parse(
+    serializeSessionStateForSave(
+      { sessions: [session], activeSessionId: session.id },
+      "local-import-verification",
+      [],
+      1
+    )
+  ) as { sessions?: ChatSession[] };
+  const normalized = normalizeStoredSessionState(
+    { sessions: serialized.sessions ?? [], activeSessionId: session.id }
+  ).sessions[0];
+  return JSON.stringify(canonicalize(normalized));
+}
+
 async function readAccountState(
   clientId: string,
   dependencies: LocalWorkspaceMergeDependencies
@@ -275,11 +305,20 @@ export async function mergeLocalWorkspaceIntoAccount(
   );
 
   const verifiedState = await readAccountState(clientId, dependencies);
-  const verifiedIds = new Set(verifiedState.sessions.map((session) => session.id));
-  if (
-    completedImports.some((session) => !verifiedIds.has(session.id))
-  ) {
-    throw new Error("The imported sessions could not be verified on the account.");
+  const verifiedById = new Map(
+    verifiedState.sessions.map((session) => [session.id, session])
+  );
+  for (const expected of completedImports) {
+    const actual = verifiedById.get(expected.id);
+    if (
+      !actual ||
+      sessionVerificationFingerprint(actual) !==
+        sessionVerificationFingerprint(expected)
+    ) {
+      throw new Error(
+        "The imported session content and files could not be verified on the account. Your browser copy was kept."
+      );
+    }
   }
   return verifiedState;
 }

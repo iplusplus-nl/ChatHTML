@@ -6,6 +6,11 @@ export type AuthUser = {
   role: "admin" | "user";
   balanceUsd?: string;
   balanceMicros?: number;
+  spentInWindowUsd?: string;
+  usageLimitUsd?: string;
+  remainingUsd?: string;
+  usageWindowHours?: number;
+  retryAfterSeconds?: number;
 };
 
 export type AuthAvailability = {
@@ -51,4 +56,44 @@ export async function logout(): Promise<AuthSummary> {
   });
 
   return readJson<AuthSummary>(response, "Logout");
+}
+
+export async function downloadAccountExport(): Promise<void> {
+  const response = await fetch(apiUrl("/account/export"), {
+    credentials: "same-origin"
+  });
+  if (!response.ok) {
+    await readJson(response, "Account export");
+    return;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "chathtml-account-export.json";
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+export async function deleteAccount(): Promise<void> {
+  const response = await fetch(apiUrl("/account"), {
+    method: "DELETE",
+    credentials: "same-origin"
+  });
+  await readJson(response, "Account deletion");
+}
+
+export async function generateRecoveryCode(): Promise<string> {
+  const response = await fetch(apiUrl("/auth/recovery-code"), {
+    method: "POST",
+    credentials: "same-origin"
+  });
+  const payload = await readJson<{ recoveryCode?: unknown }>(
+    response,
+    "Recovery-code generation"
+  );
+  if (typeof payload.recoveryCode !== "string" || !payload.recoveryCode) {
+    throw new Error("The Service returned an invalid recovery code.");
+  }
+  return payload.recoveryCode;
 }

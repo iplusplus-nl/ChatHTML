@@ -22,6 +22,8 @@ export type SearchSettings = {
 };
 
 export const SEARCH_SETTINGS_STORAGE_KEY = "streamui.searchSettings.v1";
+const SEARCH_API_KEY_SESSION_STORAGE_KEY =
+  "chathtml.searchApiKey.session.v1";
 
 export const SEARCH_PROVIDER_OPTIONS: Array<{
   value: SearchProvider;
@@ -158,9 +160,25 @@ export function loadSearchSettings(): SearchSettings {
   }
 
   try {
-    return normalizeSearchSettings(
+    const persisted = normalizeSearchSettings(
       JSON.parse(window.localStorage.getItem(SEARCH_SETTINGS_STORAGE_KEY) ?? "null")
     );
+    const sessionKey =
+      window.sessionStorage.getItem(SEARCH_API_KEY_SESSION_STORAGE_KEY) ??
+      (persisted.apiKeySource === "manual" ? persisted.apiKey : "");
+    if (persisted.apiKey) {
+      if (persisted.apiKeySource === "manual" && sessionKey) {
+        window.sessionStorage.setItem(
+          SEARCH_API_KEY_SESSION_STORAGE_KEY,
+          sessionKey
+        );
+      }
+      window.localStorage.setItem(
+        SEARCH_SETTINGS_STORAGE_KEY,
+        JSON.stringify({ ...persisted, apiKey: "" })
+      );
+    }
+    return normalizeSearchSettings({ ...persisted, apiKey: sessionKey });
   } catch {
     return DEFAULT_SEARCH_SETTINGS;
   }
@@ -171,10 +189,19 @@ export function saveSearchSettings(settings: SearchSettings): void {
     return;
   }
 
+  const normalized = normalizeSearchSettings(settings);
   window.localStorage.setItem(
     SEARCH_SETTINGS_STORAGE_KEY,
-    JSON.stringify(normalizeSearchSettings(settings))
+    JSON.stringify({ ...normalized, apiKey: "" })
   );
+  if (normalized.apiKeySource === "manual" && normalized.apiKey) {
+    window.sessionStorage.setItem(
+      SEARCH_API_KEY_SESSION_STORAGE_KEY,
+      normalized.apiKey
+    );
+  } else {
+    window.sessionStorage.removeItem(SEARCH_API_KEY_SESSION_STORAGE_KEY);
+  }
 }
 
 export function serializeSearchSettings(settings: SearchSettings): SearchSettings {

@@ -29,6 +29,7 @@ import {
   enqueueSessionStateInspection,
   enqueueSessionStateUpdate,
   findStoredFileCapability,
+  deleteSessionState,
   readSessionState,
   readSessionStateSnapshot,
   readSessionStateVersion,
@@ -70,6 +71,75 @@ export type {
 
 const SESSION_CLIENT_ID_HEADER = "x-chathtml-client-id";
 const LEGACY_SESSION_CLIENT_ID_HEADER = "x-streamui-client-id";
+
+function positiveQuota(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const MAX_ACCOUNT_SESSIONS = positiveQuota(
+  process.env.CHATHTML_MAX_ACCOUNT_SESSIONS,
+  200
+);
+const MAX_ACCOUNT_MESSAGES = positiveQuota(
+  process.env.CHATHTML_MAX_ACCOUNT_MESSAGES,
+  5_000
+);
+const MAX_ACCOUNT_FILES = positiveQuota(
+  process.env.CHATHTML_MAX_ACCOUNT_FILES,
+  200
+);
+const MAX_ACCOUNT_FILE_BYTES = positiveQuota(
+  process.env.CHATHTML_MAX_ACCOUNT_FILE_BYTES,
+  100 * 1024 * 1024
+);
+
+class AccountQuotaError extends Error {}
+
+function assertAccountQuota(
+  state: StoredSessionState,
+  additionalFileBytes = 0,
+  additionalFiles = 0
+): void {
+  const sessions = state.sessions.length;
+  const messages = state.sessions.reduce(
+    (total, session) => total + session.messages.length,
+    0
+  );
+  const files = state.sessions.reduce(
+    (total, session) => total + (session.files?.length ?? 0),
+    0
+  );
+  const fileBytes = state.sessions.reduce(
+    (total, session) =>
+      total +
+      (session.files ?? []).reduce(
+        (sessionTotal, file) => sessionTotal + Math.max(0, file.size ?? 0),
+        0
+      ),
+    0
+  );
+  if (sessions > MAX_ACCOUNT_SESSIONS) {
+    throw new AccountQuotaError(
+      `An account can store at most ${MAX_ACCOUNT_SESSIONS} sessions during alpha.`
+    );
+  }
+  if (messages > MAX_ACCOUNT_MESSAGES) {
+    throw new AccountQuotaError(
+      `An account can store at most ${MAX_ACCOUNT_MESSAGES} messages during alpha.`
+    );
+  }
+  if (files + additionalFiles > MAX_ACCOUNT_FILES) {
+    throw new AccountQuotaError(
+      `An account can store at most ${MAX_ACCOUNT_FILES} files during alpha.`
+    );
+  }
+  if (fileBytes + additionalFileBytes > MAX_ACCOUNT_FILE_BYTES) {
+    throw new AccountQuotaError(
+      `The account's ${Math.floor(MAX_ACCOUNT_FILE_BYTES / 1024 / 1024)} MB file-storage allowance has been reached.`
+    );
+  }
+}
 
 export function getSessionStateKeyFromClientId(_input: unknown): string {
   return DEFAULT_SESSION_STATE_KEY;
@@ -450,6 +520,75 @@ export async function handleGetSessionIndex(
   }
 }
 
+export async function handleExportAccountData(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const state = await readSessionState(getRequestStateKey(req));
+    const sessions = await Promise.all(
+      state.sessions.map(async (session) => ({
+        ...session,
+        files: await Promise.all(
+          (session.files ?? [])
+            .filter((file) => !file.draft)
+            .map(async (file) => {
+              const { buffer, mimeType } = await getFileBuffer(file);
+              return {
+                ...file,
+                accessToken: undefined,
+                embedUrl: undefined,
+                downloadUrl: undefined,
+                exportedContent: {
+                  encoding: "base64",
+                  mimeType,
+                  data: buffer.toString("base64")
+                }
+              };
+            })
+        )
+      }))
+    );
+    res
+      .status(200)
+      .set({
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": 'attachment; filename="chathtml-account-export.json"',
+        "Content-Type": "application/json; charset=utf-8"
+      })
+      .send(
+        JSON.stringify({
+          format: "chathtml-account-export",
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          state: { ...state, sessions }
+        })
+      );
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+export async function deleteAccountSessionData(req: Request): Promise<void> {
+  const stateKey = getRequestStateKey(req);
+  await enqueueSessionRepositoryOperation(stateKey, async () => {
+    const state = await readSessionState(stateKey);
+    const storageKeys = Array.from(
+      new Set(
+        state.sessions.flatMap((session) =>
+          (session.files ?? [])
+            .map((file) => file.storageKey)
+            .filter((key): key is string => Boolean(key))
+        )
+      )
+    );
+    await Promise.all(storageKeys.map((key) => deleteStoredFile(key)));
+    await deleteSessionState(stateKey);
+  });
+}
+
 export async function handleSaveSessions(
   req: Request,
   res: Response
@@ -494,6 +633,7 @@ export async function handleSaveSessions(
           }
 
           const merged = resolution.state;
+          assertAccountQuota(merged);
           const tombstones = new Set(merged.deletedSessionIds ?? []);
           for (const session of current.sessions) {
             if (!tombstones.has(session.id)) {
@@ -542,7 +682,13 @@ export async function handleSaveSessions(
     );
   } catch (error) {
     res
-      .status(error instanceof ActiveEphemeralFileDeletionError ? 409 : 500)
+      .status(
+        error instanceof ActiveEphemeralFileDeletionError
+          ? 409
+          : error instanceof AccountQuotaError
+            ? 413
+            : 500
+      )
       .json({
         error: error instanceof Error ? error.message : String(error)
       });
@@ -601,10 +747,14 @@ export async function handleCreateSessionFile(
       dataUrl: stringValue(body.dataUrl) || undefined,
       text: stringValue(body.text) || undefined
     };
+    const requestedBytes = input.dataUrl
+      ? decodeDataUrl(input.dataUrl).buffer.byteLength
+      : Buffer.byteLength(input.text ?? "", "utf8");
     const file = await runSessionFileUploadTransaction({
       assertUploadAllowed: () =>
         enqueueSessionStateInspection(stateKey, (state) => {
           assertSessionFileUploadAllowed(state, sessionId);
+          assertAccountQuota(state, requestedBytes, 1);
         }),
       storeBlob: () => putStoredFile(fileId, input),
       createFile: (stored): StoredSessionFile => ({
@@ -643,7 +793,13 @@ export async function handleCreateSessionFile(
 
     res.json({ file: withFileUrls(req, file) });
   } catch (error) {
-    res.status(error instanceof TombstonedSessionUploadError ? 409 : 400).json({
+    res.status(
+      error instanceof TombstonedSessionUploadError
+        ? 409
+        : error instanceof AccountQuotaError
+          ? 413
+          : 400
+    ).json({
       error: error instanceof Error ? error.message : String(error)
     });
   }
@@ -653,7 +809,7 @@ export type SessionFileContentHandlerDependencies = {
   findCapability?(
     fileId: string,
     accessToken: string
-  ): Promise<{ file: StoredSessionFile } | null>;
+  ): Promise<{ stateKey?: string; file: StoredSessionFile } | null>;
   readStates?(): Promise<StoredSessionState[]>;
   readFile(file: StoredSessionFile): Promise<{
     buffer: Buffer;
@@ -685,7 +841,10 @@ export function createSessionFileContentHandler(
       if (
         !found ||
         !found.file.accessToken ||
-        token !== found.file.accessToken
+        token !== found.file.accessToken ||
+        ("stateKey" in found &&
+          found.stateKey !== undefined &&
+          found.stateKey !== getRequestStateKey(req))
       ) {
         res.status(404).send("File not found.");
         return;
@@ -697,11 +856,12 @@ export function createSessionFileContentHandler(
         ? "attachment"
         : policy.disposition;
       res.status(200).type(policy.contentType).set({
-        "Cache-Control": "private, max-age=31536000, immutable",
+        "Cache-Control": "private, no-store",
         "Content-Disposition": `${disposition}; ${filenameHeader(found.file.name)}`,
         "Content-Length": String(buffer.byteLength),
         "Content-Security-Policy": "default-src 'none'; sandbox",
         "Cross-Origin-Resource-Policy": policy.crossOriginResourcePolicy,
+        "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff"
       });
       if (policy.allowCrossOriginRead) {

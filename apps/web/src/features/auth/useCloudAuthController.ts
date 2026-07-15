@@ -111,6 +111,20 @@ export function useCloudAuthController({
     );
   }, [stableDependencies]);
 
+  useEffect(() => {
+    if (!cloudEnabled || !summary?.user) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      void refresh().catch((error) => {
+        console.warn("Could not refresh ChatHTML Cloud account usage.", error);
+      });
+    }, 60_000);
+
+    return () => window.clearInterval(timer);
+  }, [cloudEnabled, refresh, summary?.user?.id]);
+
   return useMemo(
     () => ({
       summary,
