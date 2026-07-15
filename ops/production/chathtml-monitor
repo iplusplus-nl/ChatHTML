@@ -5,6 +5,9 @@ BACKUP_DIR="${CHATHTML_BACKUP_DIR:-/var/backups/chathtml}"
 MONITOR_DIR="${CHATHTML_MONITOR_DIR:-/var/lib/chathtml-monitor}"
 SERVICE_ENV="${CHATHTML_SERVICE_ENV:-/etc/chathtml-service.env}"
 ALERT_ENV="${CHATHTML_ALERT_ENV:-/etc/chathtml-monitor.env}"
+CHATHTML_CERTIFICATE="${CHATHTML_CERTIFICATE:-/etc/letsencrypt/live/stream.aiz.ink/fullchain.pem}"
+SERVICE_CERTIFICATE="${CHATHTML_SERVICE_CERTIFICATE:-/etc/letsencrypt/live/service.aietheia.com/fullchain.pem}"
+CERTIFICATE_WARNING_SECONDS="${CHATHTML_CERTIFICATE_WARNING_SECONDS:-1209600}"
 failures=()
 
 if [[ -f "$ALERT_ENV" ]]; then
@@ -27,6 +30,22 @@ check_json_health() {
 
 check_json_health "public ChatHTML" "https://chat.aietheia.com/api/health"
 check_json_health "account Service" "http://127.0.0.1:18790/health"
+
+check_certificate() {
+  local name="$1"
+  local certificate="$2"
+  if [[ ! -r "$certificate" ]]; then
+    failures+=("$name certificate is unavailable")
+    return
+  fi
+  if ! openssl x509 -checkend "$CERTIFICATE_WARNING_SECONDS" -noout \
+    -in "$certificate" >/dev/null 2>&1; then
+    failures+=("$name certificate expires within the configured warning period or is invalid")
+  fi
+}
+
+check_certificate "ChatHTML" "$CHATHTML_CERTIFICATE"
+check_certificate "account Service" "$SERVICE_CERTIFICATE"
 
 disk_percent="$(df -P / | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }')"
 if [[ ! "$disk_percent" =~ ^[0-9]+$ ]] || (( disk_percent >= 85 )); then

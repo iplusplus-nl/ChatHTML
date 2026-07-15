@@ -39,7 +39,7 @@ npm run dev
 
 The root script delegates to `@chathtml/web`. The Vite app runs at `http://127.0.0.1:5173`, and the Express proxy runs at `http://127.0.0.1:8787`.
 
-Environment and managed credentials use `POST /api/chat`; the backend reads the key from server configuration and never sends it to the browser. A user-selected Manual key uses a separate browser-direct transport instead: chat, model-list, and artifact-edit requests go from the browser to the configured provider and cannot fall back through the ChatHTML server. Manual keys are stored in that browser's local storage, so this mode requires a provider with browser CORS support. Plain HTTP provider URLs are rejected except for loopback development endpoints.
+Environment and managed credentials use `POST /api/chat`; the backend reads the key from server configuration and never sends it to the browser. A user-selected Manual key uses a separate browser-direct transport instead: chat, model-list, and artifact-edit requests go from the browser to the configured provider and cannot fall back through the ChatHTML server. Manual keys are stored in browser `sessionStorage` and are removed when that browser session ends; non-secret provider settings remain in local storage. This mode requires a provider with browser CORS support. Plain HTTP provider URLs are rejected except for loopback development endpoints.
 
 ## HTML Hosting
 

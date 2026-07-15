@@ -343,31 +343,9 @@ export function createChatHtmlServiceGateway(
       DEFAULT_CHATHTML_APP_OAUTH_REDIRECT_URI
   );
   const serviceOrigin = new URL(baseUrl).origin;
-  const authCache = new Map<
-    string,
-    { expiresAt: number; user: ServiceUser }
-  >();
-
-  const tokenCacheKey = (token: string) =>
-    createHash("sha256").update(token).digest("hex");
-
-  const cacheUser = (token: string, user: ServiceUser): void => {
-    const key = tokenCacheKey(token);
-    authCache.delete(key);
-    authCache.set(key, { user, expiresAt: Date.now() + 15_000 });
-    if (authCache.size > 10_000) {
-      const oldest = authCache.keys().next().value;
-      if (typeof oldest === "string") {
-        authCache.delete(oldest);
-      }
-    }
-  };
-
-  const forgetToken = (token: string): void => {
-    if (token) {
-      authCache.delete(tokenCacheKey(token));
-    }
-  };
+  // Never positively cache token introspection. Password recovery, password
+  // changes, logout, and account deletion revoke Service sessions; a positive
+  // cache would otherwise let a revoked cookie retain access until its TTL.
 
   const serviceRequest = async (
     path: string,
@@ -396,12 +374,6 @@ export function createChatHtmlServiceGateway(
     if (!token) {
       return null;
     }
-    const key = tokenCacheKey(token);
-    const cached = authCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.user;
-    }
-    authCache.delete(key);
     const response = await serviceRequest("/auth/me", {
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -412,7 +384,6 @@ export function createChatHtmlServiceGateway(
     const user = asUser(
       await requireSuccessfulJson(response, "Could not authenticate the request.")
     );
-    cacheUser(token, user);
     return user;
   };
 
@@ -425,7 +396,6 @@ export function createChatHtmlServiceGateway(
     try {
       const user = await authenticateToken(token);
       if (!user) {
-        forgetToken(token);
         res.setHeader(
           "Set-Cookie",
           expiredSessionCookie(useSecureCookie(req, nodeEnv))
@@ -479,7 +449,6 @@ export function createChatHtmlServiceGateway(
       }
       const user = await authenticateToken(token);
       if (!user) {
-        forgetToken(token);
         res.setHeader(
           "Set-Cookie",
           expiredSessionCookie(useSecureCookie(req, nodeEnv))
@@ -612,7 +581,6 @@ export function createChatHtmlServiceGateway(
         "Set-Cookie",
         sessionCookie(session.accessToken, session.expiresAt, secure)
       );
-      cacheUser(session.accessToken, session.user);
       res.setHeader("Cache-Control", "no-store");
       input.respond(session);
     } catch (error) {
@@ -691,14 +659,12 @@ export function createChatHtmlServiceGateway(
           await response.body?.cancel().catch(() => undefined);
         }
       }
-      forgetToken(token);
       res.setHeader(
         "Set-Cookie",
         expiredSessionCookie(useSecureCookie(req, nodeEnv))
       );
       res.json(authSummary(null));
     } catch (error) {
-      forgetToken(token);
       res.setHeader(
         "Set-Cookie",
         expiredSessionCookie(useSecureCookie(req, nodeEnv))
@@ -721,7 +687,6 @@ export function createChatHtmlServiceGateway(
         }),
         "Could not delete the account."
       );
-      forgetToken(token);
       res.setHeader(
         "Set-Cookie",
         expiredSessionCookie(useSecureCookie(req, nodeEnv))

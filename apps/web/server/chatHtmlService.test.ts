@@ -94,6 +94,13 @@ describe("ChatHTML Service gateway", () => {
       assert.equal(response.status, 200);
       assert.deepEqual(await response.json(), { stateKey: `user:${user.id}` });
     }
+
+    const revokedToken = "account-a-token-abcdefghijklmnopqrstuvwxyz";
+    usersByToken.delete(revokedToken);
+    const revoked = await fetch(`${origin}/protected`, {
+      headers: { Cookie: `chathtml_service_session=${revokedToken}` }
+    });
+    assert.equal(revoked.status, 401);
   });
 
   it("keeps OAuth callbacks and transient cookies inside a deployment subpath", async () => {
@@ -212,8 +219,9 @@ describe("ChatHTML Service gateway", () => {
     });
     assert.equal(me.status, 200);
     assert.equal(((await me.json()) as { user: { id: string } }).user.id, "user-1");
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
     assert.match(calls[0]?.url ?? "", /\/oauth\/token$/);
+    assert.match(calls[1]?.url ?? "", /\/auth\/me$/);
 
     const logout = await fetch(`${origin}/api/auth/logout`, {
       method: "POST",
