@@ -652,3 +652,79 @@ test("Bug Report capture opens, reports progress, and attaches a screenshot", as
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
+
+test("required account mode clears legacy history and never loads sessions anonymously", async ({
+  page
+}) => {
+  let sessionRequests = 0;
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "streamui.sessions.v1",
+      JSON.stringify([
+        {
+          id: "leaked-session",
+          title: "Old machine private task",
+          createdAt: 1,
+          updatedAt: 1,
+          messages: [
+            { id: "leaked-message", role: "user", content: "cached secret" }
+          ]
+        }
+      ])
+    );
+    window.localStorage.setItem("streamui.activeSession.v1", "leaked-session");
+    window.localStorage.setItem(
+      "streamui.sessionIndex.v1",
+      JSON.stringify({
+        activeSessionId: "leaked-session",
+        sessions: [
+          { id: "leaked-session", title: "Old machine private task", updatedAt: 1 }
+        ]
+      })
+    );
+  });
+  await page.context().route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (!path.startsWith("/api/")) {
+      await route.continue();
+      return;
+    }
+    if (path === "/api/settings") {
+      const settings = runtimeSettings();
+      settings.cloud.enabled = true;
+      settings.cloud.authRequired = true;
+      await fulfillJson(route, settings);
+      return;
+    }
+    if (path === "/api/auth/me") {
+      await fulfillJson(route, {
+        user: null,
+        auth: { available: true, requiresInvite: false, firstUser: false }
+      });
+      return;
+    }
+    if (path === "/api/sessions" || path === "/api/sessions/index") {
+      sessionRequests += 1;
+      await fulfillJson(route, { error: "Anonymous session request" }, 401);
+      return;
+    }
+    await fulfillJson(route, { error: `Unexpected test request: ${path}` }, 404);
+  });
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Sign in to ChatHTML" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue locally" })).toHaveCount(0);
+  await expect(page.getByText("Old machine private task")).toHaveCount(0);
+  await expect(page.getByText("cached secret")).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        active: window.localStorage.getItem("streamui.activeSession.v1"),
+        index: window.localStorage.getItem("streamui.sessionIndex.v1"),
+        sessions: window.localStorage.getItem("streamui.sessions.v1")
+      }))
+    )
+    .toEqual({ active: null, index: null, sessions: null });
+  expect(sessionRequests).toBe(0);
+});

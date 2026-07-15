@@ -22,4 +22,19 @@ describe("authentication choice dialog", () => {
     assert.match(markup, /OpenRouter, OpenAI, local/);
     assert.doesNotMatch(markup, /accessToken|code_verifier/);
   });
+
+  it("does not offer a local bypass when account isolation is required", () => {
+    const markup = renderToStaticMarkup(
+      <AuthChoiceDialogContent
+        required
+        onClose={() => undefined}
+        onSignIn={() => undefined}
+        onContinueLocal={() => undefined}
+      />
+    );
+
+    assert.match(markup, /Sign in to ChatHTML/);
+    assert.match(markup, /private to you/);
+    assert.doesNotMatch(markup, /Continue locally|auth-choice-close/);
+  });
 });

@@ -54,7 +54,9 @@ import {
   submitComposerMessage
 } from "./features/chat/composerSubmissionController";
 import {
-  loadSessionClientId
+  clearLegacyLocalSessions,
+  loadSessionClientId,
+  saveCachedSessionListPreview
 } from "./features/sessions/sessionPersistence";
 import { useSessionSync } from "./features/sessions/useSessionSync";
 import { useSessionSave } from "./features/sessions/useSessionSave";
@@ -112,6 +114,7 @@ export default function App() {
     deletedSessionIdsRef,
     transientEmptySessionIdRef,
     replaceState: setSessionStateAndRef,
+    reset: resetSessionState,
     setSessionsLoaded,
     setSessionsHydrated
   } = useSessionStateController();
@@ -123,6 +126,7 @@ export default function App() {
     profileSettings,
     runtimeSettings,
     cloudEnabled,
+    authRequired,
     replaceApiSettings: handleApiSettingsChange,
     replaceSearchSettings: handleSearchSettingsChange,
     replaceDisplaySettings: handleDisplaySettingsChange,
@@ -132,11 +136,16 @@ export default function App() {
   } = useAppSettings();
   const {
     user: authenticatedUser,
+    loaded: authLoaded,
     open: startOAuthAuthentication,
     close: closeAuthOverlay,
     refresh: refreshAuthSummary,
     logout: logoutCloudAccount
   } = useCloudAuthController({ cloudEnabled });
+  const sessionAccessEnabled = Boolean(
+    runtimeSettings &&
+      (!authRequired || (authLoaded && authenticatedUser))
+  );
   const [accountMode, setAccountMode] = useState<AccountMode>(loadAccountMode);
   const [isAuthChoiceOpen, setIsAuthChoiceOpen] = useState(false);
   const [providerSettingsRequestVersion, setProviderSettingsRequestVersion] =
@@ -265,10 +274,39 @@ export default function App() {
     try {
       await logoutCloudAccount();
     } finally {
+      resetSessionState();
       pendingManagedRequestSlot.clear();
       pendingVisualRepairSlot.clear();
     }
-  }, [logoutCloudAccount, pendingManagedRequestSlot, pendingVisualRepairSlot]);
+  }, [
+    logoutCloudAccount,
+    pendingManagedRequestSlot,
+    pendingVisualRepairSlot,
+    resetSessionState
+  ]);
+
+  const authenticatedUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const nextUserId = authenticatedUser?.id ?? null;
+    if (authenticatedUserIdRef.current !== nextUserId) {
+      resetSessionState();
+      authenticatedUserIdRef.current = nextUserId;
+    }
+  }, [authenticatedUser?.id, resetSessionState]);
+
+  useEffect(() => {
+    if (authRequired && authLoaded && !authenticatedUser) {
+      setIsAuthChoiceOpen(true);
+    }
+  }, [authLoaded, authRequired, authenticatedUser]);
+
+  useEffect(() => {
+    if (!authRequired) {
+      return;
+    }
+    saveCachedSessionListPreview(null);
+    clearLegacyLocalSessions();
+  }, [authRequired]);
 
   useEffect(() => {
     isSendingRef.current = isSending;
@@ -297,6 +335,8 @@ export default function App() {
   }, [cloudEnabled, pendingManagedRequestSlot, pendingVisualRepairSlot]);
 
   const sessionListPreview = useSessionIndex({
+    enabled: sessionAccessEnabled,
+    cacheEnabled: Boolean(runtimeSettings && !authRequired),
     sessionState,
     sessionsHydrated,
     sessionClientIdRef,
@@ -304,6 +344,7 @@ export default function App() {
   });
 
   useSessionSync({
+    enabled: sessionAccessEnabled,
     sessionsLoaded,
     intervalMs: SESSION_SYNC_INTERVAL_MS,
     sessionClientIdRef,
@@ -324,11 +365,15 @@ export default function App() {
     onSuccess: handleSessionSyncSuccess
   });
 
-  useStaleArtifactEditSweep(sessionsLoaded, setSessionStateAndRef);
+  useStaleArtifactEditSweep(
+    sessionAccessEnabled && sessionsLoaded,
+    setSessionStateAndRef
+  );
 
   const saveCurrentSessionStateNow = useSessionSave({
     sessionState,
-    sessionsLoaded: sessionsLoaded && sessionsHydrated,
+    sessionsLoaded:
+      sessionAccessEnabled && sessionsLoaded && sessionsHydrated,
     debounceMs: SESSION_SAVE_DEBOUNCE_MS,
     sessionStateRef,
     sessionsLoadedRef: sessionSaveReadyRef,
@@ -1005,6 +1050,7 @@ export default function App() {
           onClose={handleAuthChoiceClose}
           onSignIn={handleAuthChoiceSignIn}
           onContinueLocal={handleContinueLocal}
+          required={authRequired}
         />
       ) : null}
       {isBugReportOpen && bugReportSession ? (

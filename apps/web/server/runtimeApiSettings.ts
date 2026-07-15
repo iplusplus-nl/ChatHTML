@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { isAuthenticationRequired } from "./chatHtmlService.js";
 import { createRequire } from "node:module";
 import {
   assertProviderCredentialEndpointTrusted,
@@ -359,7 +360,7 @@ export function getRuntimeSettingsSummary(): RuntimeSettingsSummary {
     },
     cloud: {
       enabled: true,
-      authRequired: true,
+      authRequired: isAuthenticationRequired(),
       billingEnabled: false,
       managedProviderEnabled: true,
       brandName: "ChatHTML Cloud"

@@ -49,6 +49,7 @@ export type AppSettingsController = {
   profileSettings: ProfileSettings;
   runtimeSettings: RuntimeSettingsSummary | null;
   cloudEnabled: boolean;
+  authRequired: boolean;
   replaceApiSettings(settings: ApiSettings): void;
   replaceSearchSettings(settings: SearchSettings): void;
   replaceDisplaySettings(settings: DisplaySettings): void;
@@ -149,6 +150,7 @@ export function useAppSettings(
       profileSettings,
       runtimeSettings,
       cloudEnabled: Boolean(runtimeSettings?.cloud?.enabled),
+      authRequired: Boolean(runtimeSettings?.cloud?.authRequired),
       replaceApiSettings,
       replaceSearchSettings,
       replaceDisplaySettings,

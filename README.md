@@ -53,9 +53,9 @@ web app only after those proxy routes are configured.
 
 ## Open Source and Hosted Cloud
 
-This repository is the single public source tree for ChatHTML. The current
-product deployment is open: no account gate, no billing gate, and one shared
-conversation history while the product is still early.
+This repository is the single public source tree for ChatHTML. Hosted
+production deployments require an account by default; local development stays
+account-optional unless `CHATHTML_AUTH_REQUIRED=true` is configured.
 
 The optional hosted backend can report `cloud.enabled: true` from
 `GET /api/settings` to expose account, billing, and managed-provider surfaces.
@@ -70,17 +70,50 @@ See `docs/cloud-api.md` for the HTTP and native bridge contracts.
 
 ## Session Storage
 
-Chat sessions are stored persistently in SQLite as one shared early-product state, so every browser connected to the same deployment can see the same chat history. The client periodically syncs from the backend while the page is open, and session saves are merged so an older tab is less likely to overwrite chats created elsewhere.
+Chat sessions are keyed by the immutable authenticated user id. Session,
+upload, model-tool, active-run, run-event, and cancellation operations all use
+that server-derived key; a browser-supplied client id is never trusted for
+ownership. Hosted account mode also disables and clears browser-side session
+preview and legacy-session caches.
 
-By default the backend writes to `sessions/state.sqlite`. Existing `sessions/state.json` data is migrated into SQLite the first time the shared state is empty.
+PostgreSQL is recommended for production. Updates are atomic, updates for the
+same user are serialized with a row lock, and different users can read and
+write concurrently through the connection pool:
 
-For production, set `STREAMUI_SESSION_DB` to a path on a persistent disk or volume, for example:
+```bash
+CHATHTML_DATABASE_URL=postgresql://chathtml_app:password@127.0.0.1:5432/chathtml
+CHATHTML_DATABASE_POOL_SIZE=10
+CHATHTML_AUTH_REQUIRED=true
+```
+
+SQLite remains the default zero-setup backend when no PostgreSQL URL is set.
+It uses WAL mode and one serialized write queue, which is suitable for local
+development and small single-instance installs. By default it writes to
+`sessions/state.sqlite`; existing `sessions/state.json` data is imported the
+first time the legacy global state is empty. To place SQLite on persistent
+storage:
 
 ```bash
 STREAMUI_SESSION_DB=/data/chathtml/state.sqlite
 ```
 
-If the SQLite file lives in an ephemeral deploy directory, sessions will still disappear after an instance restart or redeploy. This shared-history mode is intended for testing; hosted multi-user deployments should provide authenticated session storage from their backend.
+If the SQLite file lives in an ephemeral deploy directory, sessions disappear
+after an instance restart or redeploy. SQLite also serializes writes across all
+users and should not be used for a horizontally scaled hosted deployment.
+
+To move a legacy SQLite state into one existing account, back up the database,
+configure the PostgreSQL URL and immutable user UUID, then run:
+
+```bash
+STREAMUI_SESSION_DB=/data/chathtml/state.sqlite \
+CHATHTML_DATABASE_URL=postgresql://... \
+CHATHTML_MIGRATION_USER_ID=00000000-0000-4000-8000-000000000000 \
+npm run migrate:sessions
+```
+
+The migration is transactional and idempotent, refuses to overwrite real
+target content, verifies hashes and record counts, and rotates every stored
+file capability so old cached attachment URLs stop working.
 
 You can also run workspace scripts directly:
 

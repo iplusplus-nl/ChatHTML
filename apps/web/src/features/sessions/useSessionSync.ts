@@ -12,6 +12,7 @@ type ValueRef<T> = { current: T };
 type SizeLike = { readonly size: number };
 
 export type UseSessionSyncInput = {
+  enabled?: boolean;
   sessionsLoaded: boolean;
   intervalMs: number;
   sessionClientIdRef: ValueRef<string>;
@@ -34,6 +35,7 @@ export type UseSessionSyncInput = {
 };
 
 export function useSessionSync({
+  enabled = true,
   sessionsLoaded,
   intervalMs,
   sessionClientIdRef,
@@ -60,7 +62,7 @@ export function useSessionSync({
   }, [sessionsHydratedRef, setSessionsHydrated]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || !enabled) {
       return undefined;
     }
 
@@ -105,6 +107,7 @@ export function useSessionSync({
     };
   }, [
     deletedSessionIdsRef,
+    enabled,
     attachmentDraftsRef,
     cancelledRunIdsRef,
     dependencies,
@@ -121,7 +124,7 @@ export function useSessionSync({
   ]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !sessionsLoaded) {
+    if (typeof window === "undefined" || !enabled || !sessionsLoaded) {
       return undefined;
     }
 
@@ -171,6 +174,7 @@ export function useSessionSync({
     cancelledRunIdsRef,
     attachmentDraftsRef,
     deletedSessionIdsRef,
+    enabled,
     dependencies,
     intervalMs,
     markSessionsHydrated,

@@ -12,12 +12,14 @@ export type AuthChoiceDialogProps = {
   onClose(): void;
   onSignIn(): void;
   onContinueLocal(): void;
+  required?: boolean;
 };
 
 export function AuthChoiceDialogContent({
   onClose,
   onSignIn,
-  onContinueLocal
+  onContinueLocal,
+  required = false
 }: Omit<AuthChoiceDialogProps, "themeMode">) {
   const dialogRef = useRef<HTMLElement>(null);
   useModalFocusTrap({ dialogRef });
@@ -31,23 +33,28 @@ export function AuthChoiceDialogContent({
       aria-labelledby="auth-choice-title"
       aria-describedby="auth-choice-description"
     >
-      <button
-        className="auth-choice-close"
-        type="button"
-        aria-label="Close sign-in options"
-        onClick={onClose}
-      >
-        <X size={18} strokeWidth={2} aria-hidden="true" />
-      </button>
+      {!required ? (
+        <button
+          className="auth-choice-close"
+          type="button"
+          aria-label="Close sign-in options"
+          onClick={onClose}
+        >
+          <X size={18} strokeWidth={2} aria-hidden="true" />
+        </button>
+      ) : null}
 
       <div className="auth-choice-mark" aria-hidden="true">
         CH
       </div>
       <div className="auth-choice-heading">
-        <h2 id="auth-choice-title">Choose how to use ChatHTML</h2>
+        <h2 id="auth-choice-title">
+          {required ? "Sign in to ChatHTML" : "Choose how to use ChatHTML"}
+        </h2>
         <p id="auth-choice-description">
-          Sign in for the managed service, or keep everything local and connect
-          your own model provider.
+          {required
+            ? "Your account keeps conversations and files private to you."
+            : "Sign in for the managed service, or keep everything local and connect your own model provider."}
         </p>
       </div>
 
@@ -60,20 +67,24 @@ export function AuthChoiceDialogContent({
           <LogIn size={17} strokeWidth={2} aria-hidden="true" />
           <span>Sign in</span>
         </button>
-        <button
-          className="auth-choice-secondary"
-          type="button"
-          onClick={onContinueLocal}
-        >
-          <Laptop size={17} strokeWidth={2} aria-hidden="true" />
-          <span>Continue locally</span>
-        </button>
+        {!required ? (
+          <button
+            className="auth-choice-secondary"
+            type="button"
+            onClick={onContinueLocal}
+          >
+            <Laptop size={17} strokeWidth={2} aria-hidden="true" />
+            <span>Continue locally</span>
+          </button>
+        ) : null}
       </div>
 
-      <p className="auth-choice-footnote">
-        Local mode stays signed out. You can add an OpenRouter, OpenAI, local,
-        or custom API connection next.
-      </p>
+      {!required ? (
+        <p className="auth-choice-footnote">
+          Local mode stays signed out. You can add an OpenRouter, OpenAI, local,
+          or custom API connection next.
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -82,11 +93,12 @@ export function AuthChoiceDialog({
   themeMode,
   onClose,
   onSignIn,
-  onContinueLocal
+  onContinueLocal,
+  required = false
 }: AuthChoiceDialogProps) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!isEscapeDismissKey(event.key)) {
+      if (required || !isEscapeDismissKey(event.key)) {
         return;
       }
       event.preventDefault();
@@ -95,7 +107,7 @@ export function AuthChoiceDialog({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, required]);
 
   if (typeof document === "undefined") {
     return null;
@@ -107,7 +119,10 @@ export function AuthChoiceDialog({
       data-theme={themeMode}
       role="presentation"
       onPointerDown={(event) => {
-        if (isDirectOverlayInteraction(event.target, event.currentTarget)) {
+        if (
+          !required &&
+          isDirectOverlayInteraction(event.target, event.currentTarget)
+        ) {
           onClose();
         }
       }}
@@ -116,6 +131,7 @@ export function AuthChoiceDialog({
         onClose={onClose}
         onSignIn={onSignIn}
         onContinueLocal={onContinueLocal}
+        required={required}
       />
     </div>,
     document.body

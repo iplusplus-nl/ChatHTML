@@ -31,7 +31,8 @@ export function requestSessionIndex(
   fetchImpl: FetchLike = fetch
 ): Promise<Response> {
   return fetchImpl(apiUrl("/sessions/index"), {
-    headers: sessionRequestHeaders(clientId)
+    headers: sessionRequestHeaders(clientId),
+    cache: "no-cache"
   });
 }
 
@@ -40,7 +41,8 @@ export function requestSessions(
   fetchImpl: FetchLike = fetch
 ): Promise<Response> {
   return fetchImpl(apiUrl("/sessions"), {
-    headers: sessionRequestHeaders(clientId)
+    headers: sessionRequestHeaders(clientId),
+    cache: "no-cache"
   });
 }
 

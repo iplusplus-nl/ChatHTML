@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { getAuthenticatedStateKey } from "./chatHtmlService.js";
 import {
   canPersistGeneratedArtifactBatch,
   finalizeGeneratedArtifactBatchPatch,
@@ -133,6 +134,10 @@ let activeChatFinalizations = 0;
 let activeArtifactEdits = 0;
 let openRouterIdleSinceMs = Date.now();
 let openRouterDraining = false;
+
+function chatRunKey(stateKey: string, runId: string): string {
+  return JSON.stringify([stateKey, runId]);
+}
 
 function getRunningChatRunCount(): number {
   let count = 0;
@@ -420,7 +425,7 @@ function scheduleRunCleanup(run: ChatRun): void {
 
   run.cleanupTimer = setTimeout(() => {
     if (!run.subscribers.size) {
-      chatRuns.delete(run.id);
+      chatRuns.delete(chatRunKey(run.input.stateKey, run.id));
     }
   }, CHAT_RUN_TTL_MS);
 }
@@ -638,8 +643,9 @@ function startChatRun(input: ChatRunInput): ChatRun {
     })
   };
 
-  chatRuns.set(run.id, run);
-  const preCancelled = chatRunCancellationIntents.consume(run.id);
+  const storageKey = chatRunKey(run.input.stateKey, run.id);
+  chatRuns.set(storageKey, run);
+  const preCancelled = chatRunCancellationIntents.consume(storageKey);
   void executeChatRun(run, preCancelled);
   return run;
 }
@@ -702,19 +708,20 @@ export async function handleOpenRouterChat(
       req.get("x-streamui-client-id")
   };
   const requestId = Math.random().toString(36).slice(2, 9);
+  const stateKey = getAuthenticatedStateKey(req);
 
   try {
     const requestedRunId = stringValue(body.runId, 160);
     if (requestedRunId) {
-      const existingRun = chatRuns.get(requestedRunId);
+      const existingRun = chatRuns.get(chatRunKey(stateKey, requestedRunId));
       if (existingRun) {
         attachChatRun(res, existingRun, getAfterSequence(req.query.after));
         return;
       }
     }
 
-    const input = createChatRunInput(body, requestId);
-    const existingRun = chatRuns.get(input.runId);
+    const input = createChatRunInput(body, requestId, Date.now(), stateKey);
+    const existingRun = chatRuns.get(chatRunKey(stateKey, input.runId));
     if (!existingRun && openRouterDraining) {
       res.status(503).json({
         error: "Server is draining for deployment. Try again shortly.",
@@ -744,7 +751,7 @@ export async function handleChatRunEvents(
   res: Response
 ): Promise<void> {
   const runId = stringValue(req.params.runId, 160);
-  const run = chatRuns.get(runId);
+  const run = chatRuns.get(chatRunKey(getAuthenticatedStateKey(req), runId));
   if (!run) {
     res.status(404).json({ error: "Chat run not found." });
     return;
@@ -754,8 +761,10 @@ export async function handleChatRunEvents(
 }
 
 export const handleCancelChatRun = createChatRunCancellationHandler({
-  findRun: (runId) => {
-    const run = chatRuns.get(runId);
+  findRun: (runId, req) => {
+    const run = chatRuns.get(
+      chatRunKey(getAuthenticatedStateKey(req), runId)
+    );
     return run
       ? {
           runId: run.id,
@@ -764,6 +773,8 @@ export const handleCancelChatRun = createChatRunCancellationHandler({
         }
       : undefined;
   },
-  registerUnknownRunCancellation: (runId) =>
-    chatRunCancellationIntents.register(runId)
+  registerUnknownRunCancellation: (runId, req) =>
+    chatRunCancellationIntents.register(
+      chatRunKey(getAuthenticatedStateKey(req), runId)
+    )
 });

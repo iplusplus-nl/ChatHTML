@@ -24,7 +24,10 @@ import {
 } from "./exportResources.js";
 import { handleRetrievalRequest } from "./retrieval.js";
 import { handleGetRuntimeSettings } from "./runtimeApiSettings.js";
-import { createChatHtmlServiceGateway } from "./chatHtmlService.js";
+import {
+  createChatHtmlServiceGateway,
+  isAuthenticationRequired
+} from "./chatHtmlService.js";
 import {
   handleCreateSessionFile,
   handleDeleteSessionFile,
@@ -139,6 +142,20 @@ app.get("/api/auth/callback", chatHtmlService.handleOAuthCallback);
 app.post("/api/auth/native/start", chatHtmlService.handleNativeOAuthStart);
 app.post("/api/auth/native/callback", chatHtmlService.handleNativeOAuthCallback);
 app.post("/api/auth/logout", chatHtmlService.handleAuthLogout);
+app.get("/api/settings", handleGetRuntimeSettings);
+app.get("/api/files/:fileId/content", handleGetFileContent);
+app.get(
+  "/api/bug-reports/:date/:reportId/images/:fileName",
+  handleBugReportImageRequest
+);
+
+app.use(
+  "/api",
+  isAuthenticationRequired()
+    ? chatHtmlService.requireAuthenticatedUser
+    : chatHtmlService.attachOptionalAuthenticatedUser
+);
+
 app.post(
   "/api/chat",
   chatHtmlService.injectManagedApiSettings,
@@ -157,14 +174,9 @@ app.post(
   handleModelsRequest
 );
 app.post("/api/bug-reports", handleCreateBugReport);
-app.get(
-  "/api/bug-reports/:date/:reportId/images/:fileName",
-  handleBugReportImageRequest
-);
 app.post("/api/retrieve", handleRetrievalRequest);
 app.get("/api/export-resource", handleExportResourceRequest);
 app.get("/api/media-image", handleMediaImageRequest);
-app.get("/api/settings", handleGetRuntimeSettings);
 app.get("/api/sessions", handleGetSessions);
 app.get("/api/sessions/index", handleGetSessionIndex);
 app.post("/api/sessions", handleSaveSessions);
@@ -172,7 +184,6 @@ app.put("/api/sessions", handleSaveSessions);
 app.get("/api/sessions/:sessionId/files", handleGetSessionFiles);
 app.post("/api/sessions/:sessionId/files", handleCreateSessionFile);
 app.delete("/api/sessions/:sessionId/files/:fileId", handleDeleteSessionFile);
-app.get("/api/files/:fileId/content", handleGetFileContent);
 
 if (existsSync(clientDist)) {
   app.use(express.static(clientDist));

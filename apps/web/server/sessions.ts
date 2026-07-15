@@ -28,10 +28,13 @@ import {
   enqueueSessionRepositoryOperation,
   enqueueSessionStateInspection,
   enqueueSessionStateUpdate,
-  readAllSessionStates,
+  findStoredFileCapability,
   readSessionState,
+  readSessionStateSnapshot,
+  readSessionStateVersion,
   writeSessionState
 } from "./sessionRepository.js";
+import { getAuthenticatedStateKey } from "./chatHtmlService.js";
 import {
   compactEmptyStoredSessions,
   ensureStoredSession,
@@ -94,7 +97,7 @@ function getRequestClientId(req: Request): string {
 
 function getRequestStateKey(req: Request): string {
   getRequestClientId(req);
-  return DEFAULT_SESSION_STATE_KEY;
+  return getAuthenticatedStateKey(req);
 }
 
 function getRequestBasePath(req: Request): string {
@@ -184,6 +187,50 @@ function presentSessionIndex(state: StoredSessionState) {
   };
 }
 
+function stateEtag(kind: "sessions" | "session-index", version: number): string {
+  return `"chathtml-${kind}-${version}"`;
+}
+
+function requestHasEtag(req: Request, etag: string): boolean {
+  return (req.get("if-none-match") ?? "")
+    .split(",")
+    .some((candidate) => {
+      const normalized = candidate.trim();
+      return normalized === etag || normalized === `W/${etag}`;
+    });
+}
+
+function setPrivateStateCacheHeaders(res: Response, etag: string): void {
+  res.setHeader("Cache-Control", "private, no-cache");
+  res.setHeader("Vary", "Cookie");
+  res.setHeader("ETag", etag);
+}
+
+async function sendVersionedState(
+  req: Request,
+  res: Response,
+  kind: "sessions" | "session-index"
+): Promise<void> {
+  const stateKey = getRequestStateKey(req);
+  const knownVersion = await readSessionStateVersion(stateKey);
+  if (knownVersion !== null) {
+    const knownEtag = stateEtag(kind, knownVersion);
+    if (requestHasEtag(req, knownEtag)) {
+      setPrivateStateCacheHeaders(res, knownEtag);
+      res.status(304).end();
+      return;
+    }
+  }
+
+  const snapshot = await readSessionStateSnapshot(stateKey);
+  setPrivateStateCacheHeaders(res, stateEtag(kind, snapshot.version));
+  res.json(
+    kind === "sessions"
+      ? presentState(req, snapshot.state)
+      : presentSessionIndex(snapshot.state)
+  );
+}
+
 export async function deleteEphemeralSessionFiles({
   stateKey = DEFAULT_SESSION_STATE_KEY,
   sessionId,
@@ -198,7 +245,7 @@ export async function deleteEphemeralSessionFiles({
   }
 
   let removedCount = 0;
-  await enqueueSessionRepositoryOperation(() =>
+  await enqueueSessionRepositoryOperation(stateKey, () =>
     runSessionFileDeletionTransaction({
       prepare: async () => {
         const state = await readSessionState(stateKey);
@@ -382,7 +429,7 @@ export async function handleGetSessions(
   res: Response
 ): Promise<void> {
   try {
-    res.json(presentState(req, await readSessionState(getRequestStateKey(req))));
+    await sendVersionedState(req, res, "sessions");
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error)
@@ -395,7 +442,7 @@ export async function handleGetSessionIndex(
   res: Response
 ): Promise<void> {
   try {
-    res.json(presentSessionIndex(await readSessionState(getRequestStateKey(req))));
+    await sendVersionedState(req, res, "session-index");
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error)
@@ -424,7 +471,7 @@ export async function handleSaveSessions(
     let applied = true;
     let saveRevision: number | undefined;
     let currentSaveRevision: number | undefined;
-    await enqueueSessionRepositoryOperation(() => {
+    await enqueueSessionRepositoryOperation(stateKey, () => {
       const sessionIdsByStorageKey = new Map<string, Set<string>>();
       return runSessionFileDeletionTransaction({
         prepare: async () => {
@@ -603,7 +650,11 @@ export async function handleCreateSessionFile(
 }
 
 export type SessionFileContentHandlerDependencies = {
-  readStates(): Promise<StoredSessionState[]>;
+  findCapability?(
+    fileId: string,
+    accessToken: string
+  ): Promise<{ file: StoredSessionFile } | null>;
+  readStates?(): Promise<StoredSessionState[]>;
   readFile(file: StoredSessionFile): Promise<{
     buffer: Buffer;
     mimeType: string;
@@ -612,24 +663,25 @@ export type SessionFileContentHandlerDependencies = {
 
 export function createSessionFileContentHandler(
   dependencies: SessionFileContentHandlerDependencies = {
-    readStates: readAllSessionStates,
+    findCapability: findStoredFileCapability,
     readFile: getFileBuffer
   }
 ): (req: Request, res: Response) => Promise<void> {
   return async (req, res) => {
     try {
-      const states = await dependencies.readStates();
-      const found = states
-        .map((state) => findFileById(state, req.params.fileId))
-        .find(
-          (
-            candidate
-          ): candidate is {
-            session: StoredSession;
-            file: StoredSessionFile;
-          } => Boolean(candidate)
-        );
       const token = stringValue(req.query.token);
+      const found = dependencies.findCapability
+        ? await dependencies.findCapability(req.params.fileId, token)
+        : (await dependencies.readStates?.())
+            ?.map((state) => findFileById(state, req.params.fileId))
+            .find(
+              (
+                candidate
+              ): candidate is {
+                session: StoredSession;
+                file: StoredSessionFile;
+              } => Boolean(candidate)
+            );
       if (
         !found ||
         !found.file.accessToken ||
@@ -673,7 +725,7 @@ export async function handleDeleteSessionFile(
   const stateKey = getRequestStateKey(req);
 
   try {
-    await enqueueSessionRepositoryOperation(() =>
+    await enqueueSessionRepositoryOperation(stateKey, () =>
       runSessionFileDeletionTransaction({
         prepare: async () => {
           const state = await readSessionState(stateKey);

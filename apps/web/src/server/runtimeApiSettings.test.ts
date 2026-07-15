@@ -33,15 +33,25 @@ test("managed credentials can only be supplied by the authenticated gateway", ()
 });
 
 test("published cloud defaults do not expose the service endpoint", () => {
+  const previousAuthRequired = process.env.CHATHTML_AUTH_REQUIRED;
+  process.env.CHATHTML_AUTH_REQUIRED = "true";
   const summary = getRuntimeSettingsSummary();
 
-  assert.equal(summary.cloud?.enabled, true);
-  assert.equal(summary.cloud?.authRequired, true);
-  assert.equal(summary.cloud?.managedProviderEnabled, true);
-  assert.equal(summary.api.defaults.providerId, "chathtml-cloud");
-  assert.equal(summary.api.defaults.apiKeySource, "managed");
-  assert.equal(summary.api.defaults.baseUrl, "");
-  assert.equal(summary.api.defaults.modelsEndpoint, "");
+  try {
+    assert.equal(summary.cloud?.enabled, true);
+    assert.equal(summary.cloud?.authRequired, true);
+    assert.equal(summary.cloud?.managedProviderEnabled, true);
+    assert.equal(summary.api.defaults.providerId, "chathtml-cloud");
+    assert.equal(summary.api.defaults.apiKeySource, "managed");
+    assert.equal(summary.api.defaults.baseUrl, "");
+    assert.equal(summary.api.defaults.modelsEndpoint, "");
+  } finally {
+    if (previousAuthRequired === undefined) {
+      delete process.env.CHATHTML_AUTH_REQUIRED;
+    } else {
+      process.env.CHATHTML_AUTH_REQUIRED = previousAuthRequired;
+    }
+  }
 });
 
 test("environment credentials cannot be resolved for a client-selected origin", () => {

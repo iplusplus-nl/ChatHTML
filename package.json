@@ -13,6 +13,7 @@
     "dev": "npm --workspace @chathtml/web run dev",
     "dev:webdemo": "npm --workspace @chathtml/webdemo run dev",
     "server": "npm --workspace @chathtml/web run server",
+    "migrate:sessions": "npm --workspace @chathtml/web run migrate:sessions",
     "build": "npm --workspace @chathtml/web run build",
     "build:webdemo": "npm --workspace @chathtml/webdemo run build",
     "preview": "npm --workspace @chathtml/web run preview",

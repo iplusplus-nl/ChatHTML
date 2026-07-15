@@ -672,7 +672,8 @@ function createChatRunId(now = Date.now()): string {
 export function createChatRunInput(
   body: ChatRequestBody,
   requestId: string,
-  now = Date.now()
+  now = Date.now(),
+  trustedStateKey?: string
 ): ChatRunInput {
   const apiSettings = readRuntimeApiSettings(body.apiSettings);
   const model = apiSettings.model;
@@ -689,7 +690,8 @@ export function createChatRunInput(
     ? { ...normalizedAssistantMessage, generationOutcome: undefined }
     : undefined;
   const requestedRunId = stringValue(body.runId, 160);
-  const stateKey = getSessionStateKeyFromClientId(body.clientId);
+  const stateKey =
+    trustedStateKey || getSessionStateKeyFromClientId(body.clientId);
   const runId =
     requestedRunId ||
     stringValue(assistantMessage?.generationRunId, 160) ||

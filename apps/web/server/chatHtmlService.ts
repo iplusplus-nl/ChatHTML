@@ -12,13 +12,37 @@ const OAUTH_CLIENT_ID = "chathtml";
 const OAUTH_TRANSIENT_TTL_SECONDS = 10 * 60;
 const MAX_SERVICE_RESPONSE_BYTES = 256 * 1024;
 
-type ServiceUser = {
+export type ServiceUser = {
   id: string;
   email: string;
   role: "admin" | "user";
   balanceUsd?: string;
   balanceMicros?: number;
 };
+
+const authenticatedUsers = new WeakMap<Request, ServiceUser>();
+
+export function getAuthenticatedServiceUser(req: Request): ServiceUser | null {
+  return authenticatedUsers.get(req) ?? null;
+}
+
+export function getAuthenticatedStateKey(req: Request): string {
+  const user = getAuthenticatedServiceUser(req);
+  return user ? `user:${user.id}` : "global";
+}
+
+export function isAuthenticationRequired(
+  nodeEnv = process.env.NODE_ENV ?? "development"
+): boolean {
+  const configured = process.env.CHATHTML_AUTH_REQUIRED?.trim().toLowerCase();
+  if (configured === "true" || configured === "1" || configured === "yes") {
+    return true;
+  }
+  if (configured === "false" || configured === "0" || configured === "no") {
+    return false;
+  }
+  return nodeEnv === "production";
+}
 
 type ServiceAuthSession = {
   user: ServiceUser;
@@ -314,6 +338,31 @@ export function createChatHtmlServiceGateway(
       DEFAULT_CHATHTML_APP_OAUTH_REDIRECT_URI
   );
   const serviceOrigin = new URL(baseUrl).origin;
+  const authCache = new Map<
+    string,
+    { expiresAt: number; user: ServiceUser }
+  >();
+
+  const tokenCacheKey = (token: string) =>
+    createHash("sha256").update(token).digest("hex");
+
+  const cacheUser = (token: string, user: ServiceUser): void => {
+    const key = tokenCacheKey(token);
+    authCache.delete(key);
+    authCache.set(key, { user, expiresAt: Date.now() + 15_000 });
+    if (authCache.size > 10_000) {
+      const oldest = authCache.keys().next().value;
+      if (typeof oldest === "string") {
+        authCache.delete(oldest);
+      }
+    }
+  };
+
+  const forgetToken = (token: string): void => {
+    if (token) {
+      authCache.delete(tokenCacheKey(token));
+    }
+  };
 
   const serviceRequest = async (
     path: string,
@@ -324,6 +373,75 @@ export function createChatHtmlServiceGateway(
       redirect: "error",
       signal: AbortSignal.timeout(30_000)
     });
+
+  const authenticateToken = async (token: string): Promise<ServiceUser | null> => {
+    if (!token) {
+      return null;
+    }
+    const key = tokenCacheKey(token);
+    const cached = authCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.user;
+    }
+    authCache.delete(key);
+    const response = await serviceRequest("/auth/me", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (response.status === 401) {
+      await response.body?.cancel().catch(() => undefined);
+      return null;
+    }
+    const user = asUser(
+      await requireSuccessfulJson(response, "Could not authenticate the request.")
+    );
+    cacheUser(token, user);
+    return user;
+  };
+
+  const requireAuthenticatedUser: RequestHandler = async (req, res, next) => {
+    const token = readCookie(req, SESSION_COOKIE_NAME);
+    if (!token) {
+      res.status(401).json({ error: "Sign in to use ChatHTML." });
+      return;
+    }
+    try {
+      const user = await authenticateToken(token);
+      if (!user) {
+        forgetToken(token);
+        res.setHeader(
+          "Set-Cookie",
+          expiredSessionCookie(useSecureCookie(req, nodeEnv))
+        );
+        res.status(401).json({ error: "Your ChatHTML session has expired." });
+        return;
+      }
+      authenticatedUsers.set(req, user);
+      next();
+    } catch (error) {
+      sendGatewayError(res, error);
+    }
+  };
+
+  const attachOptionalAuthenticatedUser: RequestHandler = async (
+    req,
+    res,
+    next
+  ) => {
+    const token = readCookie(req, SESSION_COOKIE_NAME);
+    if (!token) {
+      next();
+      return;
+    }
+    try {
+      const user = await authenticateToken(token);
+      if (user) {
+        authenticatedUsers.set(req, user);
+      }
+      next();
+    } catch (error) {
+      sendGatewayError(res, error);
+    }
+  };
 
   const loadAvailability = async (): Promise<AuthAvailability> =>
     asAvailability(
@@ -341,10 +459,9 @@ export function createChatHtmlServiceGateway(
         res.json(authSummary(null, availability.firstUser));
         return;
       }
-      const response = await serviceRequest("/auth/me", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (response.status === 401) {
+      const user = await authenticateToken(token);
+      if (!user) {
+        forgetToken(token);
         res.setHeader(
           "Set-Cookie",
           expiredSessionCookie(useSecureCookie(req, nodeEnv))
@@ -353,9 +470,6 @@ export function createChatHtmlServiceGateway(
         res.json(authSummary(null, availability.firstUser));
         return;
       }
-      const user = asUser(
-        await requireSuccessfulJson(response, "Could not load the current user.")
-      );
       res.json(authSummary(user));
     } catch (error) {
       sendGatewayError(res, error);
@@ -480,6 +594,7 @@ export function createChatHtmlServiceGateway(
         "Set-Cookie",
         sessionCookie(session.accessToken, session.expiresAt, secure)
       );
+      cacheUser(session.accessToken, session.user);
       res.setHeader("Cache-Control", "no-store");
       input.respond(session);
     } catch (error) {
@@ -558,12 +673,14 @@ export function createChatHtmlServiceGateway(
           await response.body?.cancel().catch(() => undefined);
         }
       }
+      forgetToken(token);
       res.setHeader(
         "Set-Cookie",
         expiredSessionCookie(useSecureCookie(req, nodeEnv))
       );
       res.json(authSummary(null));
     } catch (error) {
+      forgetToken(token);
       res.setHeader(
         "Set-Cookie",
         expiredSessionCookie(useSecureCookie(req, nodeEnv))
@@ -613,12 +730,14 @@ export function createChatHtmlServiceGateway(
   };
 
   return {
+    attachOptionalAuthenticatedUser,
     handleAuthMe,
     handleOAuthStart,
     handleOAuthCallback,
     handleNativeOAuthStart,
     handleNativeOAuthCallback,
     handleAuthLogout,
-    injectManagedApiSettings
+    injectManagedApiSettings,
+    requireAuthenticatedUser
   };
 }

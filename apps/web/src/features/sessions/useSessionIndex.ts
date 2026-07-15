@@ -7,12 +7,15 @@ import {
 } from "./sessionIndexController";
 import {
   loadCachedSessionListPreview,
+  saveCachedSessionListPreview,
   type SessionListPreview
 } from "./sessionPersistence";
 
 type ValueRef<T> = { current: T };
 
 export type UseSessionIndexInput = {
+  enabled?: boolean;
+  cacheEnabled?: boolean;
   sessionState: SessionState;
   sessionsHydrated: boolean;
   sessionClientIdRef: ValueRef<string>;
@@ -21,6 +24,8 @@ export type UseSessionIndexInput = {
 };
 
 export function useSessionIndex({
+  enabled = true,
+  cacheEnabled = true,
   sessionState,
   sessionsHydrated,
   sessionClientIdRef,
@@ -28,8 +33,10 @@ export function useSessionIndex({
   dependencies
 }: UseSessionIndexInput): SessionListPreview | null {
   const [preview, setPreview] = useState<SessionListPreview | null>(
-    loadCachedSessionListPreview
+    () => (cacheEnabled ? loadCachedSessionListPreview() : null)
   );
+  const cacheEnabledRef = useRef(cacheEnabled);
+  cacheEnabledRef.current = cacheEnabled;
   const controllerRef = useRef<SessionIndexController | null>(null);
   if (!controllerRef.current) {
     controllerRef.current = createSessionIndexController(
@@ -38,13 +45,30 @@ export function useSessionIndex({
         isSessionsHydrated: () => sessionsHydratedRef.current,
         setPreview
       },
-      dependencies
+      {
+        ...dependencies,
+        saveCachedPreview: (value) => {
+          if (cacheEnabledRef.current) {
+            (dependencies?.saveCachedPreview ?? saveCachedSessionListPreview)(value);
+          }
+        }
+      }
     );
   }
   const controller = controllerRef.current;
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (!cacheEnabled) {
+      setPreview(null);
+      return;
+    }
+    if (!sessionsHydrated) {
+      setPreview(loadCachedSessionListPreview());
+    }
+  }, [cacheEnabled, sessionsHydrated]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !enabled) {
       return undefined;
     }
 
@@ -60,11 +84,13 @@ export function useSessionIndex({
     return () => {
       cancelled = true;
     };
-  }, [controller, sessionClientIdRef]);
+  }, [controller, enabled, sessionClientIdRef]);
 
   useEffect(() => {
-    controller.syncFromState(sessionState, sessionsHydrated);
-  }, [controller, sessionState, sessionsHydrated]);
+    if (enabled) {
+      controller.syncFromState(sessionState, sessionsHydrated);
+    }
+  }, [controller, enabled, sessionState, sessionsHydrated]);
 
-  return preview;
+  return enabled ? preview : null;
 }

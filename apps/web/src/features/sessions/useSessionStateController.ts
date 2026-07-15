@@ -31,6 +31,19 @@ export function useSessionStateController() {
     setSessionState(next);
   }, []);
 
+  const reset = useCallback(() => {
+    const next = createInitialSessionState();
+    sessionStateRef.current = next;
+    activeSessionIdRef.current = next.activeSessionId;
+    sessionsLoadedRef.current = false;
+    sessionsHydratedRef.current = false;
+    deletedSessionIdsRef.current = new Set();
+    transientEmptySessionIdRef.current = null;
+    setSessionState(next);
+    setSessionsLoaded(false);
+    setSessionsHydrated(false);
+  }, []);
+
   useEffect(() => {
     sessionStateRef.current = sessionState;
     activeSessionIdRef.current = sessionState.activeSessionId;
@@ -51,6 +64,7 @@ export function useSessionStateController() {
     deletedSessionIdsRef,
     transientEmptySessionIdRef,
     replaceState,
+    reset,
     setSessionsLoaded,
     setSessionsHydrated
   };

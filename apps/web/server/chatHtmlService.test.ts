@@ -6,7 +6,8 @@ import express from "express";
 import type { Server } from "node:http";
 import {
   DEFAULT_CHATHTML_SERVICE_BASE_URL,
-  createChatHtmlServiceGateway
+  createChatHtmlServiceGateway,
+  getAuthenticatedStateKey
 } from "./chatHtmlService.js";
 
 const servers: Server[] = [];
@@ -30,6 +31,9 @@ async function startGateway(
   app.post("/api/auth/native/start", gateway.handleNativeOAuthStart);
   app.post("/api/auth/native/callback", gateway.handleNativeOAuthCallback);
   app.post("/api/auth/logout", gateway.handleAuthLogout);
+  app.get("/protected", gateway.requireAuthenticatedUser, (req, res) => {
+    res.json({ stateKey: getAuthenticatedStateKey(req) });
+  });
   app.post("/managed", gateway.injectManagedApiSettings, (req, res) => {
     res.json(req.body);
   });
@@ -58,6 +62,38 @@ describe("ChatHTML Service gateway", () => {
       DEFAULT_CHATHTML_SERVICE_BASE_URL,
       "https://service.aietheia.com/v1"
     );
+  });
+
+  it("rejects anonymous requests and derives an immutable state key per account", async () => {
+    const usersByToken = new Map([
+      [
+        "account-a-token-abcdefghijklmnopqrstuvwxyz",
+        { id: "user-a", email: "a@example.com", role: "user" as const }
+      ],
+      [
+        "account-b-token-abcdefghijklmnopqrstuvwxyz",
+        { id: "user-b", email: "b@example.com", role: "user" as const }
+      ]
+    ]);
+    const origin = await startGateway(async (_input, init) => {
+      const authorization = new Headers(init?.headers).get("authorization") ?? "";
+      const token = authorization.replace(/^Bearer\s+/i, "");
+      const user = usersByToken.get(token);
+      return user
+        ? Response.json({ user })
+        : Response.json({ error: "Unauthorized" }, { status: 401 });
+    }, "production");
+
+    const anonymous = await fetch(`${origin}/protected`);
+    assert.equal(anonymous.status, 401);
+
+    for (const [token, user] of usersByToken) {
+      const response = await fetch(`${origin}/protected`, {
+        headers: { Cookie: `chathtml_service_session=${token}` }
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { stateKey: `user:${user.id}` });
+    }
   });
 
   it("keeps OAuth callbacks and transient cookies inside a deployment subpath", async () => {
@@ -176,7 +212,8 @@ describe("ChatHTML Service gateway", () => {
     });
     assert.equal(me.status, 200);
     assert.equal(((await me.json()) as { user: { id: string } }).user.id, "user-1");
-    assert.equal(calls.at(-1)?.authorization, `Bearer ${token}`);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]?.url ?? "", /\/oauth\/token$/);
 
     const logout = await fetch(`${origin}/api/auth/logout`, {
       method: "POST",
@@ -184,6 +221,7 @@ describe("ChatHTML Service gateway", () => {
     });
     assert.equal(logout.status, 200);
     assert.match(logout.headers.get("set-cookie") ?? "", /Max-Age=0/);
+    assert.match(calls.at(-1)?.url ?? "", /\/auth\/logout$/);
     assert.equal(calls.at(-1)?.authorization, `Bearer ${token}`);
   });
 

@@ -11,8 +11,8 @@ export type ChatRunCancellationTarget = {
 };
 
 export function createChatRunCancellationHandler(options: {
-  findRun(runId: string): ChatRunCancellationTarget | undefined;
-  registerUnknownRunCancellation?(runId: string): boolean;
+  findRun(runId: string, req: Request): ChatRunCancellationTarget | undefined;
+  registerUnknownRunCancellation?(runId: string, req: Request): boolean;
   warn?(message: string, error: unknown): void;
 }) {
   return async function handleCancelChatRun(
@@ -23,11 +23,11 @@ export function createChatRunCancellationHandler(options: {
     const runId = typeof rawRunId === "string"
       ? rawRunId.trim().slice(0, 160)
       : "";
-    const run = options.findRun(runId);
+    const run = options.findRun(runId, req);
     if (!run) {
       if (runId && options.registerUnknownRunCancellation) {
         try {
-          const transitioned = options.registerUnknownRunCancellation(runId);
+          const transitioned = options.registerUnknownRunCancellation(runId, req);
           res.json({ runId, outcome: "cancelled", transitioned });
         } catch (error) {
           (options.warn ?? console.warn)(
