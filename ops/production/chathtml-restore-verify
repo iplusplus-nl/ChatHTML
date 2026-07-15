@@ -33,6 +33,9 @@ tar -C "$WORK/payload" -xzf "$WORK/payload.tar.gz"
   sha256sum -c SHA256SUMS
 )
 pg_restore --list "$WORK/payload/postgres.dump" >/dev/null
+chgrp postgres "$WORK" "$WORK/payload" "$WORK/payload/postgres.dump"
+chmod 0710 "$WORK" "$WORK/payload"
+chmod 0640 "$WORK/payload/postgres.dump"
 sudo -u postgres createdb "$VERIFY_DB"
 created_database=1
 sudo -u postgres pg_restore --no-owner --no-acl \
