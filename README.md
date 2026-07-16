@@ -41,6 +41,22 @@ The root script delegates to `@chathtml/web`. The Vite app runs at `http://127.0
 
 Environment and managed credentials use `POST /api/chat`; the backend reads the key from server configuration and never sends it to the browser. A user-selected Manual key uses a separate browser-direct transport instead: chat, model-list, and artifact-edit requests go from the browser to the configured provider and cannot fall back through the ChatHTML server. Manual keys are stored in browser `sessionStorage` and are removed when that browser session ends; non-secret provider settings remain in local storage. This mode requires a provider with browser CORS support. Plain HTTP provider URLs are rejected except for loopback development endpoints.
 
+## Production Release Audits
+
+The browser audits exercise the public application with disposable accounts.
+They require an explicit confirmation flag because they write production data;
+the full audit also runs one managed generation. Both scripts delete their test
+account before exiting and return a non-zero status when the audit is not clean.
+
+```bash
+node scripts/auth-relogin-repro.mjs --confirm-production-audit
+node scripts/production-alpha-audit.mjs --confirm-production-audit
+```
+
+Reports are written under the ignored `test-results/` directory. Override the
+default production endpoints with `CHATHTML_AUDIT_APP_BASE` and
+`CHATHTML_AUDIT_SERVICE_BASE` when auditing another environment.
+
 ## HTML Hosting
 
 HTML artifact hosting is provided by the standalone

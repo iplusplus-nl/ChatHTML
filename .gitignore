@@ -3,6 +3,7 @@
 .codex/
 node_modules/
 dist/
+/test-results/
 /sessions/
 deploy/node-sg/
 plan.md
