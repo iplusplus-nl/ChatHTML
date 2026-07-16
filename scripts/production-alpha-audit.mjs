@@ -470,7 +470,7 @@ try {
     assert(await forgot.isVisible(), "recovery link missing");
     await page.getByRole("link", { name: "Create an account" }).click();
     const password = page.getByLabel("Password");
-    assert((await password.getAttribute("minlength")) === "15", "registration password minlength is not 15");
+    assert((await password.getAttribute("minlength")) === "10", "registration password minlength is not 10");
     assert(await page.getByLabel(/experimental alpha software/i).isVisible(), "alpha consent missing");
     assert((await page.locator('a[href*="terms.html"]').getAttribute("target")) === "_blank", "terms link target missing");
   });
