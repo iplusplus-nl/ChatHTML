@@ -930,7 +930,7 @@ try {
       if (event.kind === "http-error" && /service\.aietheia\.com/.test(event.text) && / 401 | 404 /.test(` ${event.text} `)) return false;
       if (event.kind === "console-warning" && /^Could not load ChatHTML sessions?( index)?\. TypeError: Failed to fetch/.test(event.text)) return false;
       if (event.kind === "console-warning" && /Layout was forced before the page was fully loaded/.test(event.text)) return false;
-      if (event.kind === "requestfailed" && /^PUT \/api\/sessions: NS_BINDING_ABORTED$/.test(event.text)) return false;
+      if (event.kind === "requestfailed" && /^PUT \/api\/sessions: (?:NS_BINDING_ABORTED|Load request cancelled)$/.test(event.text)) return false;
       if (event.kind === "pageerror" && event.text === "ResizeObserver loop completed with undelivered notifications.") return false;
       if (account.deleted && event.kind === "http-error" && /^401 (?:GET|PUT) .*\/api\/sessions$/.test(event.text)) return false;
       if (account.deleted && event.kind === "console-error" && /status of 401/.test(event.text)) return false;
