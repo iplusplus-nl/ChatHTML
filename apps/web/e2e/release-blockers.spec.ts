@@ -55,6 +55,7 @@ type MockSessionState = {
 type FixtureOptions = {
   artifactWithSessionImage?: boolean;
   artifactWithPositionedBody?: boolean;
+  multipleSessions?: boolean;
 };
 
 type ApiTraffic = {
@@ -108,7 +109,26 @@ function initialSessionState(options: FixtureOptions = {}): MockSessionState {
         model: MODELS[0],
         messages,
         files: []
-      }
+      },
+      ...(options.multipleSessions
+        ? [
+            {
+              id: "e2e-secondary-session",
+              title: "Secondary release gate",
+              createdAt: NOW - 1_000,
+              updatedAt: NOW - 1_000,
+              model: MODELS[0],
+              messages: [
+                {
+                  id: "e2e-secondary-message",
+                  role: "user",
+                  content: "Secondary release gate fixture"
+                }
+              ],
+              files: []
+            }
+          ]
+        : [])
     ]
   };
 }
@@ -496,6 +516,54 @@ test("mobile drawer closes with Escape and its real backdrop", async ({ page }) 
   await expect(drawer).toBeHidden();
   await expect(backdrop).toBeHidden();
   await expect(openButton).toBeFocused();
+});
+
+test.describe("touch session actions", () => {
+  test.use({ hasTouch: true });
+
+  test("non-active session actions remain visible and tappable", async ({ page }) => {
+    await openApp(
+      page,
+      { width: 375, height: 812 },
+      { multipleSessions: true }
+    );
+
+    await page.getByRole("button", { name: "Expand sidebar" }).click();
+    const drawer = page.getByRole("dialog", { name: "Session history" });
+    const secondary = drawer
+      .locator(".session-list-item")
+      .filter({ hasText: "Secondary release gate fixture" });
+    const actions = secondary.getByRole("button", {
+      name: "Session actions: Secondary release gate fixture"
+    });
+
+    await expect(actions).toHaveCSS("opacity", "1");
+    await expect(actions).toHaveCSS("pointer-events", "auto");
+    await actions.tap();
+    await expect(secondary.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+  });
+});
+
+test("keyboard focus reveals non-active session actions", async ({ page }) => {
+  await openApp(
+    page,
+    { width: 1024, height: 768 },
+    { multipleSessions: true }
+  );
+
+  const secondary = page
+    .locator(".session-list-item")
+    .filter({ hasText: "Secondary release gate fixture" });
+  const actions = secondary.getByRole("button", {
+    name: "Session actions: Secondary release gate fixture"
+  });
+
+  await actions.focus();
+  await expect(actions).toBeFocused();
+  await expect(actions).toHaveCSS("opacity", "1");
+  await expect(actions).toHaveCSS("pointer-events", "auto");
+  await page.keyboard.press("Enter");
+  await expect(secondary.getByRole("menuitem", { name: "Delete" })).toBeVisible();
 });
 
 test("opaque artifact preview loads a tokenized same-origin session image", async ({

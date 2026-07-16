@@ -759,7 +759,11 @@ try {
     "Generated artifact follows the requested long-list content",
     async () => {
       const frame = page.locator(".assistant-artifact-block").last().locator("iframe").contentFrame();
-      const numberedRows = await frame.locator("li").count();
+      const artifactText = await frame.locator("body").innerText();
+      const numberedRows = artifactText
+        .split("\n")
+        .filter((line) => /^(?:0?[1-9]|[12]\d|3[0-5])(?:\s|[.):\-])/.test(line.trim()))
+        .length;
       assert(numberedRows >= 20, `only ${numberedRows} numbered rows were rendered`);
       return { numberedRows };
     },

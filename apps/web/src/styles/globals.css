@@ -428,9 +428,17 @@ button {
 
 .session-list-item:hover .session-actions-button,
 .session-list-item.is-active .session-actions-button,
-.session-list-item.is-menu-open .session-actions-button {
+.session-list-item.is-menu-open .session-actions-button,
+.session-actions-button:focus-visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .session-actions-button {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .session-list-item:hover .session-actions-button:disabled,
