@@ -1,0 +1,320 @@
+<sessiontitle>Poster Studio</sessiontitle>
+<chat></chat>
+<streamui>
+<style>
+  .studio-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--streamui-text);
+    background: var(--streamui-page-bg);
+    min-height: 100%;
+    box-sizing: border-box;
+    padding: 1rem 0;
+  }
+  @media (min-width: 800px) {
+    .studio-layout {
+      flex-direction: row;
+      align-items: flex-start;
+    }
+  }
+  .controls-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 1.5rem;
+    border: 1px solid var(--streamui-secondary-border);
+    border-radius: 12px;
+    background: transparent;
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+</style>
+
+<div class="studio-layout">
+  <aside class="controls-panel">
+    <div class="control-group">
+      <label style="font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em;">Headline</label>
+      <textarea id="headline-input" rows="3" style="width: 100%; padding: 0.75rem; background: transparent; border: 1px solid var(--streamui-secondary-border); color: var(--streamui-text); border-radius: 6px; font-family: inherit; resize: vertical; line-height: 1.3;">MOVE
+WITH
+INTENT</textarea>
+    </div>
+
+    <style>
+      .palette-chooser {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .swatch {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 2px solid var(--streamui-secondary-border);
+        cursor: pointer;
+        transition: transform 0.2s;
+      }
+      .swatch:hover { transform: scale(1.1); }
+      .swatch.active { border-color: var(--streamui-text); }
+
+      .slider {
+        width: 100%;
+        accent-color: var(--streamui-text);
+      }
+      .align-group {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .btn-align {
+        flex: 1;
+        padding: 0.5rem;
+        background: transparent;
+        border: 1px solid var(--streamui-secondary-border);
+        color: var(--streamui-text);
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.8rem;
+      }
+      .btn-align.active {
+        background: var(--streamui-text);
+        color: var(--streamui-page-bg);
+      }
+    </style>
+
+    <div class="control-group">
+      <label style="font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em;">Palette</label>
+      <div class="palette-chooser">
+        <button class="swatch active" data-palette="mono" style="background: linear-gradient(135deg, #EAEAEA 50%, #FF3300 50%);" title="Mono Red"></button>
+        <button class="swatch" data-palette="bauhaus" style="background: linear-gradient(135deg, #F4EFE6 50%, #0055FF 50%);" title="Bauhaus"></button>
+        <button class="swatch" data-palette="cyber" style="background: linear-gradient(135deg, #0D0D0D 50%, #CCFF00 50%);" title="Cyber"></button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label style="font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em;">Type Scale</label>
+      <input type="range" id="scale-slider" class="slider" min="3" max="15" step="0.5" value="7">
+    </div>
+
+    <div class="control-group">
+      <label style="font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em;">Grain Density</label>
+      <input type="range" id="grain-slider" class="slider" min="0" max="0.5" step="0.05" value="0.15">
+    </div>
+
+    <div class="control-group">
+      <label style="font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em;">Alignment</label>
+      <div class="align-group">
+        <button class="btn-align active" data-align="left">LEFT</button>
+        <button class="btn-align" data-align="center">CTR</button>
+        <button class="btn-align" data-align="right">RIGHT</button>
+      </div>
+    </div>
+
+    <button id="btn-shuffle" style="margin-top: auto; padding: 1rem; background: var(--streamui-text); color: var(--streamui-page-bg); border: none; border-radius: 8px; font-weight: bold; cursor: pointer; text-transform: uppercase; letter-spacing: 0.1em;">Shuffle Shapes</button>
+  </aside>
+
+  <style>
+    .canvas-area {
+      flex: 2;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      perspective: 1000px;
+    }
+    .poster-board {
+      --p-bg: #EAEAEA;
+      --p-fg: #111111;
+      --p-accent1: #FF3300;
+      --p-accent2: #111111;
+
+      background: var(--p-bg);
+      color: var(--p-fg);
+      width: 100%;
+      max-width: 440px;
+      aspect-ratio: 3 / 4;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 24px 48px rgba(0,0,0,0.2);
+      transition: background 0.4s ease, color 0.4s ease;
+    }
+
+    .poster-noise {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+      opacity: 0.15;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+    }
+
+    .shape {
+      position: absolute;
+      transition: all 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+      mix-blend-mode: multiply;
+    }
+
+    [data-theme="cyber"] .shape {
+      mix-blend-mode: screen;
+    }
+
+    #shape-1 {
+      width: 300px; height: 300px;
+      background: var(--p-accent1);
+      border-radius: 50%;
+      top: -10%; left: -20%;
+    }
+
+    #shape-2 {
+      width: 150%; height: 150px;
+      background: var(--p-accent2);
+      transform: rotate(-15deg);
+      top: 60%; left: -10%;
+    }
+
+    #shape-3 {
+      width: 200px; height: 200px;
+      border: 5px solid var(--p-fg);
+      border-radius: 0;
+      top: 40%; right: 10%;
+      background: transparent;
+    }
+
+    .poster-text-layer {
+      position: absolute;
+      inset: 2rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      z-index: 5;
+    }
+
+    .poster-headline {
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      font-weight: 900;
+      text-transform: uppercase;
+      line-height: 0.85;
+      letter-spacing: -0.04em;
+      margin: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-size: 7vw; /* initial */
+      transition: font-size 0.2s, text-align 0.2s;
+    }
+
+    /* Container Queries fallback */
+    @media (min-width: 500px) {
+      .poster-headline {
+        font-size: 3rem;
+      }
+    }
+  </style>
+
+  <div class="canvas-area">
+    <div class="poster-board" id="poster-root" data-theme="mono">
+      <div class="poster-noise" id="poster-noise"></div>
+
+      <!-- Abstract shapes -->
+      <div class="shape" id="shape-1"></div>
+      <div class="shape" id="shape-2"></div>
+      <div class="shape" id="shape-3"></div>
+
+      <!-- Typography -->
+      <div class="poster-text-layer">
+        <h1 class="poster-headline" id="poster-text" style="font-size: 7rem; text-align: left;">MOVE
+WITH
+INTENT</h1>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const headlineInput = document.getElementById('headline-input');
+  const posterText = document.getElementById('poster-text');
+  const scaleSlider = document.getElementById('scale-slider');
+  const grainSlider = document.getElementById('grain-slider');
+  const btnShuffle = document.getElementById('btn-shuffle');
+  const posterRoot = document.getElementById('poster-root');
+  const posterNoise = document.getElementById('poster-noise');
+
+  const swatches = document.querySelectorAll('.swatch');
+  const alignBtns = document.querySelectorAll('.btn-align');
+
+  const shapes = [
+    document.getElementById('shape-1'),
+    document.getElementById('shape-2'),
+    document.getElementById('shape-3')
+  ];
+
+  const palettes = {
+    mono: { bg: '#EAEAEA', fg: '#111111', a1: '#FF3300', a2: '#111111' },
+    bauhaus: { bg: '#F4EFE6', fg: '#1A1A1A', a1: '#0055FF', a2: '#FFCC00' },
+    cyber: { bg: '#0D0D0D', fg: '#E0E0E0', a1: '#CCFF00', a2: '#FF00FF' }
+  };
+
+  // Text
+  headlineInput.addEventListener('input', (e) => {
+    posterText.textContent = e.target.value;
+  });
+
+  // Scale
+  scaleSlider.addEventListener('input', (e) => {
+    posterText.style.fontSize = `${e.target.value}rem`;
+  });
+
+  // Grain
+  grainSlider.addEventListener('input', (e) => {
+    posterNoise.style.opacity = e.target.value;
+  });
+
+  // Alignment
+  alignBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      alignBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      posterText.style.textAlign = btn.dataset.align;
+    });
+  });
+
+  // Palette
+  swatches.forEach(btn => {
+    btn.addEventListener('click', () => {
+      swatches.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const theme = btn.dataset.palette;
+      posterRoot.dataset.theme = theme;
+      const colors = palettes[theme];
+
+      posterRoot.style.setProperty('--p-bg', colors.bg);
+      posterRoot.style.setProperty('--p-fg', colors.fg);
+      posterRoot.style.setProperty('--p-accent1', colors.a1);
+      posterRoot.style.setProperty('--p-accent2', colors.a2);
+    });
+  });
+
+  // Shuffle
+  btnShuffle.addEventListener('click', () => {
+    shapes.forEach(shape => {
+      const w = 50 + Math.random() * 300;
+      const h = 50 + Math.random() * 300;
+      const top = -20 + Math.random() * 100;
+      const left = -20 + Math.random() * 100;
+      const rot = Math.random() * 360;
+      const radius = Math.random() > 0.5 ? '50%' : '0';
+
+      shape.style.width = `${w}px`;
+      shape.style.height = `${h}px`;
+      shape.style.top = `${top}%`;
+      shape.style.left = `${left}%`;
+      shape.style.transform = `rotate(${rot}deg)`;
+      shape.style.borderRadius = radius;
+    });
+  });
+</script>
+</streamui>

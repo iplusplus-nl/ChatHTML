@@ -1,0 +1,520 @@
+<sessiontitle>Pomodoro Instrument</sessiontitle>
+<chat></chat>
+<streamui>
+<style>
+  :root {
+    --p-timer-size: clamp(240px, 40vw, 360px);
+    --p-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --p-ring-width: 8px;
+
+    /* Default theme (Focus) */
+    --theme-color: #fca5a5;
+    --theme-bg: #451a1a;
+    --theme-accent: #ef4444;
+  }
+
+  .pomodoro-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 80vh;
+    font-family: var(--p-font);
+    background: transparent;
+    color: var(--streamui-text);
+    padding: 2rem;
+    box-sizing: border-box;
+    transition: background-color 0.8s ease;
+  }
+</style>
+<div class="pomodoro-wrapper" id="pomodoro-root">
+<style>
+  .p-instrument {
+    background: var(--streamui-page-bg);
+    border: 1px solid var(--theme-bg);
+    border-radius: 3rem;
+    padding: 3rem 2.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2rem;
+    box-shadow: 0 30px 60px -15px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+    max-width: 420px;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.6s ease;
+  }
+
+  .p-instrument::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 100%;
+    background: radial-gradient(circle at 50% 0%, var(--theme-bg) 0%, transparent 70%);
+    opacity: 0.4;
+    pointer-events: none;
+    transition: background 0.6s ease;
+  }
+
+  .p-modes {
+    display: flex;
+    gap: 0.5rem;
+    background: rgba(0,0,0,0.2);
+    padding: 0.35rem;
+    border-radius: 2rem;
+    width: 100%;
+    z-index: 1;
+  }
+
+  .p-mode-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--streamui-muted);
+    padding: 0.6rem 0;
+    border-radius: 1.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .p-mode-btn[aria-checked="true"] {
+    background: var(--theme-accent);
+    color: #fff;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+  }
+
+  .p-mode-btn:hover:not([aria-checked="true"]) {
+    color: var(--streamui-text);
+    background: rgba(255,255,255,0.05);
+  }
+</style>
+
+  <div class="p-instrument">
+    <div class="p-modes" role="tablist">
+      <button class="p-mode-btn" role="tab" aria-checked="true" data-mode="focus">Focus</button>
+      <button class="p-mode-btn" role="tab" aria-checked="false" data-mode="short">Short Break</button>
+      <button class="p-mode-btn" role="tab" aria-checked="false" data-mode="long">Long Break</button>
+    </div>
+
+<style>
+  .p-task-field {
+    width: 100%;
+    z-index: 1;
+    position: relative;
+  }
+
+  .p-task-field input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 2px dashed rgba(255,255,255,0.15);
+    color: var(--streamui-text);
+    text-align: center;
+    font-size: 1.1rem;
+    padding: 0.5rem;
+    box-sizing: border-box;
+    transition: border-color 0.3s ease;
+  }
+
+  .p-task-field input:focus {
+    outline: none;
+    border-bottom-style: solid;
+    border-bottom-color: var(--theme-accent);
+  }
+
+  .p-task-field input::placeholder {
+    color: var(--streamui-muted);
+    font-style: italic;
+  }
+</style>
+    <div class="p-task-field">
+      <input type="text" id="p-task" placeholder="What are you working on?" autocomplete="off">
+    </div>
+
+<style>
+  .p-clock-container {
+    position: relative;
+    width: var(--p-timer-size);
+    height: var(--p-timer-size);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1;
+  }
+
+  .p-clock-svg {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+
+  .p-clock-bg {
+    fill: none;
+    stroke: rgba(255,255,255,0.05);
+    stroke-width: var(--p-ring-width);
+  }
+
+  .p-clock-progress {
+    fill: none;
+    stroke: var(--theme-accent);
+    stroke-width: var(--p-ring-width);
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.1s linear, stroke 0.6s ease;
+  }
+
+  .p-clock-ticks {
+    fill: none;
+    stroke: rgba(255,255,255,0.15);
+    stroke-width: 2;
+    stroke-dasharray: 2 12.137; /* approx spacing for 60 ticks on r=135 */
+  }
+
+  .p-time-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .p-time-text {
+    font-size: calc(var(--p-timer-size) * 0.28);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -2px;
+    color: var(--streamui-text);
+    line-height: 1;
+  }
+
+  .p-session-dots {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 1rem;
+  }
+
+  .p-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    transition: background 0.3s ease;
+  }
+
+  .p-dot.active {
+    background: var(--theme-accent);
+    box-shadow: 0 0 8px var(--theme-accent);
+  }
+</style>
+    <div class="p-clock-container">
+      <svg class="p-clock-svg" viewbox="0 0 300 300">
+        <!-- R=135 makes circumference ~ 848.23 -->
+        <circle class="p-clock-bg" cx="150" cy="150" r="135"></circle>
+        <circle class="p-clock-ticks" cx="150" cy="150" r="135"></circle>
+        <circle class="p-clock-progress" id="p-ring" cx="150" cy="150" r="135" stroke-dasharray="848.23" stroke-dashoffset="0"></circle>
+      </svg>
+      <div class="p-time-display">
+        <div class="p-time-text" id="p-time">25:00</div>
+        <div class="p-session-dots" id="p-dots">
+          <div class="p-dot"></div>
+          <div class="p-dot"></div>
+          <div class="p-dot"></div>
+          <div class="p-dot"></div>
+        </div>
+      </div>
+    </div>
+
+<style>
+  .p-controls {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    z-index: 1;
+  }
+
+  .p-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    background: transparent;
+    border: none;
+    color: var(--streamui-text);
+    cursor: pointer;
+    transition: transform 0.1s ease, color 0.3s ease;
+  }
+
+  .p-btn:active {
+    transform: scale(0.95);
+  }
+
+  .p-btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.05);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  .p-btn:hover .p-btn-icon {
+    background: rgba(255,255,255,0.1);
+  }
+
+  .p-btn.primary .p-btn-icon {
+    width: 5rem;
+    height: 5rem;
+    background: var(--theme-accent);
+    color: #fff;
+    border: none;
+    box-shadow: 0 10px 20px -5px var(--theme-bg);
+  }
+  .p-btn.primary:hover .p-btn-icon {
+    filter: brightness(1.1);
+  }
+
+  .p-btn kbd {
+    font-family: inherit;
+    font-size: 0.7rem;
+    color: var(--streamui-muted);
+    background: rgba(255,255,255,0.08);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    border-bottom: 1px solid rgba(0,0,0,0.5);
+    text-transform: uppercase;
+  }
+
+  .p-icon-svg {
+    width: 24px;
+    height: 24px;
+    fill: currentColor;
+  }
+  .p-btn.primary .p-icon-svg {
+    width: 32px;
+    height: 32px;
+  }
+</style>
+    <div class="p-controls">
+      <button class="p-btn" id="p-btn-reset" aria-label="Reset">
+        <div class="p-btn-icon">
+          <svg class="p-icon-svg" viewBox="0 0 24 24"><path d="M17.65 6.35 16.2 4.9O12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        </div>
+        <kbd>R</kbd>
+      </button>
+
+      <button class="p-btn primary" id="p-btn-play" aria-label="Play / Pause">
+        <div class="p-btn-icon">
+           <!-- Play icon initially -->
+          <svg id="p-icon-play" class="p-icon-svg" style="display:block; margin-left: 4px;" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="p-icon-pause" class="p-icon-svg" style="display:none;" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </div>
+        <kbd>Space</kbd>
+      </button>
+
+      <button class="p-btn" id="p-btn-skip" aria-label="Skip">
+        <div class="p-btn-icon">
+          <svg class="p-icon-svg" viewBox="0 0 24 24"><path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </div>
+        <kbd>S</kbd>
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // Scoped execution logic
+  (() => {
+    // Configuration
+    const MODES = {
+      focus: { time: 25 * 60, themeColor: '#fca5a5', themeBg: '#451a1a', themeAccent: '#ef4444' },
+      short: { time: 5 * 60,  themeColor: '#86efac', themeBg: '#14301a', themeAccent: '#22c55e' },
+      long:  { time: 15 * 60, themeColor: '#93c5fd', themeBg: '#1e3a5f', themeAccent: '#3b82f6' }
+    };
+
+    // State
+    let currentMode = 'focus';
+    let timeLeft = MODES[currentMode].time;
+    let totalTime = timeLeft;
+    let timerInterval = null;
+    let isRunning = false;
+    let sessionsCompleted = 0;
+
+    // DOM Elements
+    const root = document.getElementById('pomodoro-root');
+    const timeDisplay = document.getElementById('p-time');
+    const ring = document.getElementById('p-ring');
+    const dots = document.querySelectorAll('#p-dots .p-dot');
+    const modeBtns = document.querySelectorAll('.p-mode-btn');
+    const taskInput = document.getElementById('p-task');
+
+    const btnPlay = document.getElementById('p-btn-play');
+    const iconPlay = document.getElementById('p-icon-play');
+    const iconPause = document.getElementById('p-icon-pause');
+    const btnReset = document.getElementById('p-btn-reset');
+    const btnSkip = document.getElementById('p-btn-skip');
+
+    const RING_CIRCUMFERENCE = 848.23; // 2 * pi * 135
+
+    function formatTime(seconds) {
+      const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+      const s = (seconds % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function updateDisplay() {
+      timeDisplay.textContent = formatTime(timeLeft);
+      const ratio = Math.max(0, timeLeft / totalTime);
+      const offset = RING_CIRCUMFERENCE - (ratio * RING_CIRCUMFERENCE);
+      ring.style.strokeDashoffset = offset;
+      document.title = `${formatTime(timeLeft)} - Pomodoro`;
+    }
+
+    function setMode(modeId) {
+      if (!MODES[modeId]) return;
+
+      pauseTimer();
+      currentMode = modeId;
+      timeLeft = MODES[modeId].time;
+      totalTime = timeLeft;
+
+      // Update theme variables
+      const config = MODES[modeId];
+      root.style.setProperty('--theme-color', config.themeColor);
+      root.style.setProperty('--theme-bg', config.themeBg);
+      root.style.setProperty('--theme-accent', config.themeAccent);
+
+      // Update tabs active state
+      modeBtns.forEach(btn => {
+        btn.setAttribute('aria-checked', btn.dataset.mode === modeId);
+      });
+
+      updateDisplay();
+    }
+
+    function updateDots() {
+      dots.forEach((dot, i) => {
+        if (i < sessionsCompleted % 4) {
+          dot.classList.add('active');
+        } else {
+          dot.classList.remove('active');
+        }
+      });
+      // Handle completing 4 sessions
+      if (sessionsCompleted > 0 && sessionsCompleted % 4 === 0) {
+        dots.forEach(dot => dot.classList.add('active')); // Keep all active before next reset
+      }
+    }
+
+    function handleTimerComplete() {
+      pauseTimer();
+
+      if (currentMode === 'focus') {
+        sessionsCompleted++;
+        updateDots();
+
+        // Auto-switch to long break if 4 sessions are done, else short break
+        if (sessionsCompleted % 4 === 0) {
+          setMode('long');
+        } else {
+          setMode('short');
+        }
+      } else {
+        // After any break, return to focus
+        if (sessionsCompleted > 0 && sessionsCompleted % 4 === 0) {
+           // Clear dots visually for next block
+           sessionsCompleted = 0;
+           updateDots();
+        }
+        setMode('focus');
+      }
+
+      // Optional: Auto-start the next block
+      // startTimer();
+    }
+
+    function startTimer() {
+      if (isRunning || timeLeft <= 0) return;
+      isRunning = true;
+      iconPlay.style.display = 'none';
+      iconPause.style.display = 'block';
+
+      const endTime = Date.now() + (timeLeft * 1000);
+
+      timerInterval = setInterval(() => {
+        const now = Date.now();
+        const delta = Math.round((endTime - now) / 1000);
+
+        if (delta <= 0) {
+          timeLeft = 0;
+          updateDisplay();
+          handleTimerComplete();
+        } else {
+          timeLeft = delta;
+          updateDisplay();
+        }
+      }, 100); // 100ms for smooth sync without huge drift
+    }
+
+    function pauseTimer() {
+      isRunning = false;
+      clearInterval(timerInterval);
+      iconPlay.style.display = 'block';
+      iconPause.style.display = 'none';
+    }
+
+    function toggleTimer() {
+      if (isRunning) pauseTimer();
+      else startTimer();
+    }
+
+    function resetTimer() {
+      pauseTimer();
+      timeLeft = totalTime;
+      updateDisplay();
+    }
+
+    function skipTimer() {
+      if(timeLeft > 0) {
+        timeLeft = 1; // Speed to end to trigger completion block naturally next tick
+        if (!isRunning) startTimer();
+      }
+    }
+
+    // Event Listeners
+    btnPlay.addEventListener('click', toggleTimer);
+    btnReset.addEventListener('click', resetTimer);
+    btnSkip.addEventListener('click', skipTimer);
+
+    modeBtns.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        setMode(e.target.dataset.mode);
+      });
+    });
+
+    // Keyboard Shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Ignore if typing in task input
+      if (document.activeElement === taskInput) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        toggleTimer();
+      } else if (e.code === 'KeyR') {
+        resetTimer();
+      } else if (e.code === 'KeyS') {
+        skipTimer();
+      }
+    });
+
+    // Initialize
+    updateDisplay();
+    updateDots();
+
+  })();
+</script>
+</streamui>

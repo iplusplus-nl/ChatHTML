@@ -1,0 +1,377 @@
+<sessiontitle>Evolution / I–X Gallery</sessiontitle>
+<chat></chat>
+<streamui>
+  <style>
+    .evo-container {
+      max-width: 850px;
+      margin: 0 auto;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--streamui-text, #e5e5e5);
+      background-color: var(--streamui-page-bg, #212121);
+      border: 1px solid var(--streamui-secondary-border, #444);
+      border-radius: 12px;
+      padding: 24px;
+      box-sizing: border-box;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .evo-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2px solid var(--streamui-secondary-border, #444);
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+    }
+
+    .evo-title h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      text-transform: uppercase;
+    }
+
+    .evo-title p {
+      margin: 4px 0 0 0;
+      font-size: 0.875rem;
+      color: var(--streamui-muted, #999);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .evo-filters {
+      display: flex;
+      gap: 8px;
+    }
+
+    .evo-filter-btn {
+      background: transparent;
+      border: 1px solid var(--streamui-secondary-border, #444);
+      color: var(--streamui-text, #e5e5e5);
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .evo-filter-btn:hover {
+      border-color: var(--streamui-text, #fff);
+    }
+
+    .evo-filter-btn.active {
+      background: var(--streamui-text, #e5e5e5);
+      color: var(--streamui-page-bg, #212121);
+      border-color: var(--streamui-text, #e5e5e5);
+    }
+
+    .evo-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .evo-card {
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: zoom-in;
+      background: #111;
+      aspect-ratio: 4/3;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+
+    .evo-card.hidden {
+      display: none;
+    }
+
+    .evo-card:hover .evo-img-wrap img {
+      transform: scale(1.05);
+    }
+
+    .evo-img-wrap {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .evo-img-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.4s ease;
+      display: block;
+    }
+
+    .evo-overlay {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0) 100%);
+      padding: 32px 16px 16px;
+      pointer-events: none;
+    }
+
+    .evo-card-title {
+      margin: 0;
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .evo-card-meta {
+      margin: 4px 0 0 0;
+      font-size: 0.7rem;
+      color: #ccc;
+      line-height: 1.4;
+    }
+
+    .evo-footer {
+      margin-top: 24px;
+      font-size: 0.65rem;
+      color: var(--streamui-muted, #777);
+      text-align: center;
+    }
+
+    /* Lightbox */
+    .evo-lightbox {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(10, 10, 10, 0.95);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      padding: 24px;
+      box-sizing: border-box;
+      backdrop-filter: blur(8px);
+    }
+
+    .evo-lightbox.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .evo-lb-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    .evo-lb-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0;
+      color: #fff;
+    }
+
+    .evo-lb-close {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      color: #fff;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      transition: background 0.2s;
+    }
+
+    .evo-lb-close:hover {
+      background: rgba(255,255,255,0.2);
+    }
+
+    .evo-lb-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .evo-lb-img {
+      max-width: 100%;
+      max-height: calc(100% - 40px);
+      object-fit: contain;
+      border-radius: 4px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+
+    .evo-lb-meta {
+      margin-top: 16px;
+      font-size: 0.85rem;
+      color: #aaa;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      .evo-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+      }
+      .evo-grid {
+        grid-template-columns: 1fr;
+      }
+      .evo-card {
+        aspect-ratio: 16/9;
+      }
+    }
+  </style>
+
+  <div class="evo-container">
+    <div class="evo-header">
+      <div class="evo-title">
+        <h1>Evolution / I–X</h1>
+        <p>Mitsubishi Lancer Retrospective</p>
+      </div>
+      <div class="evo-filters">
+        <button class="evo-filter-btn active" data-filter="all">All</button>
+        <button class="evo-filter-btn" data-filter="III">III</button>
+        <button class="evo-filter-btn" data-filter="VI">VI</button>
+        <button class="evo-filter-btn" data-filter="IX">IX</button>
+        <button class="evo-filter-btn" data-filter="X">X</button>
+      </div>
+    </div>
+
+    <div class="evo-grid">
+      <!-- Card III -->
+      <div class="evo-card" data-gen="III"
+           data-title="Mitsubishi Lancer Evolution III (1995)"
+           data-credit="Photo by Charles from Port Chester, New York • License: CC BY 2.0"
+           data-src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Mitsubishi_Lancer_Evolution_III_%281995%29_%2853619429931%29.jpg/1280px-Mitsubishi_Lancer_Evolution_III_%281995%29_%2853619429931%29.jpg">
+        <div class="evo-img-wrap">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Mitsubishi_Lancer_Evolution_III_%281995%29_%2853619429931%29.jpg/1280px-Mitsubishi_Lancer_Evolution_III_%281995%29_%2853619429931%29.jpg" alt="Evolution III" loading="eager">
+        </div>
+        <div class="evo-overlay">
+          <h2 class="evo-card-title">Evolution III (1995)</h2>
+          <p class="evo-card-meta">Charles from Port Chester, NY | CC BY 2.0</p>
+        </div>
+      </div>
+
+      <!-- Card VI -->
+      <div class="evo-card" data-gen="VI"
+           data-title="Mitsubishi Lancer Evolution VI (1999–2001)"
+           data-credit="Photo by Motoring Weapon R • License: CC BY-SA 3.0"
+           data-src="https://upload.wikimedia.org/wikipedia/commons/d/d3/Mitsubishi_Lancer_Evolution_VI.jpg">
+        <div class="evo-img-wrap">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/d/d3/Mitsubishi_Lancer_Evolution_VI.jpg" alt="Evolution VI" loading="eager">
+        </div>
+        <div class="evo-overlay">
+          <h2 class="evo-card-title">Evolution VI (1999–2001)</h2>
+          <p class="evo-card-meta">Motoring Weapon R | CC BY-SA 3.0</p>
+        </div>
+      </div>
+
+      <!-- Card IX -->
+      <div class="evo-card" data-gen="IX"
+           data-title="Mitsubishi Lancer Evolution IX (2005–2007)"
+           data-credit="Photo by FotoSleuth • License: CC BY 2.0"
+           data-src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Mitsubishi_Lancer_Evolution_IX_%2831677018768%29.jpg/1280px-Mitsubishi_Lancer_Evolution_IX_%2831677018768%29.jpg">
+        <div class="evo-img-wrap">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Mitsubishi_Lancer_Evolution_IX_%2831677018768%29.jpg/1280px-Mitsubishi_Lancer_Evolution_IX_%2831677018768%29.jpg" alt="Evolution IX" loading="eager">
+        </div>
+        <div class="evo-overlay">
+          <h2 class="evo-card-title">Evolution IX (2005–2007)</h2>
+          <p class="evo-card-meta">FotoSleuth | CC BY 2.0</p>
+        </div>
+      </div>
+
+      <!-- Card X -->
+      <div class="evo-card" data-gen="X"
+           data-title="Mitsubishi Lancer Evolution X (2007–2016)"
+           data-credit="Photo by IFCAR • License: Public Domain"
+           data-src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Mitsubishi_Lancer_EVO_X.jpg/1280px-Mitsubishi_Lancer_EVO_X.jpg">
+        <div class="evo-img-wrap">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Mitsubishi_Lancer_EVO_X.jpg/1280px-Mitsubishi_Lancer_EVO_X.jpg" alt="Evolution X" loading="eager">
+        </div>
+        <div class="evo-overlay">
+          <h2 class="evo-card-title">Evolution X (2007–2016)</h2>
+          <p class="evo-card-meta">IFCAR | Public Domain</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="evo-footer">
+      Images provided by Wikimedia Commons contributors. Disclaimer: This fan gallery does not imply endorsement by the photographers or the manufacturer.
+    </div>
+
+    <!-- Lightbox -->
+    <div class="evo-lightbox" id="evoLightbox">
+      <div class="evo-lb-header">
+        <h3 class="evo-lb-title" id="lbTitle">Title</h3>
+        <button class="evo-lb-close" id="lbClose">×</button>
+      </div>
+      <div class="evo-lb-content">
+        <img class="evo-lb-img" id="lbImg" src="" alt="Expanded View" loading="eager">
+        <div class="evo-lb-meta" id="lbMeta">Credits</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      // Filtering logic
+      const filterBtns = document.querySelectorAll('.evo-filter-btn');
+      const cards = document.querySelectorAll('.evo-card');
+
+      filterBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          // Update active tab
+          filterBtns.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+
+          const filterVal = btn.getAttribute('data-filter');
+          cards.forEach(card => {
+            if (filterVal === 'all' || card.getAttribute('data-gen') === filterVal) {
+              card.classList.remove('hidden');
+            } else {
+              card.classList.add('hidden');
+            }
+          });
+        });
+      });
+
+      // Lightbox logic
+      const lightbox = document.getElementById('evoLightbox');
+      const lbTitle = document.getElementById('lbTitle');
+      const lbImg = document.getElementById('lbImg');
+      const lbMeta = document.getElementById('lbMeta');
+      const lbClose = document.getElementById('lbClose');
+
+      cards.forEach(card => {
+        card.addEventListener('click', () => {
+          lbTitle.textContent = card.getAttribute('data-title');
+          lbMeta.textContent = card.getAttribute('data-credit');
+          lbImg.src = card.getAttribute('data-src');
+          lightbox.classList.add('active');
+        });
+      });
+
+      lbClose.addEventListener('click', () => {
+        lightbox.classList.remove('active');
+      });
+
+      // Close on backdrop click
+      lightbox.addEventListener('click', (e) => {
+        if(e.target === lightbox || e.target.classList.contains('evo-lb-content')) {
+          lightbox.classList.remove('active');
+        }
+      });
+    })();
+  </script>
+</streamui>

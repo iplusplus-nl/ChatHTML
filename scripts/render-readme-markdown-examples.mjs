@@ -5,21 +5,76 @@ const outputDirectory = "docs/images";
 
 const examples = [
   {
-    slug: "markdown-meme-ui",
-    height: 900,
+    slug: "markdown-pomodoro-clock",
+    height: 824,
     body: `
-      <p>Sure — here is the meme as HTML. Copy it into a file and open it in a browser:</p>
-      <pre><code>&lt;div class="meme"&gt;
-  &lt;section&gt;
-    &lt;h2&gt;MARKDOWN CHAT&lt;/h2&gt;
-    &lt;pre&gt;Here is the HTML...&lt;/pre&gt;
-  &lt;/section&gt;
-  &lt;section class="live"&gt;
-    &lt;h2&gt;CHATHTML&lt;/h2&gt;
-    &lt;button&gt;Here is the thing&lt;/button&gt;
-  &lt;/section&gt;
+      <p>Here is a compact Pomodoro implementation. Save this as an HTML file to run the timer:</p>
+      <pre><code>&lt;div class="timer"&gt;
+  &lt;button data-mode="focus"&gt;Focus&lt;/button&gt;
+  &lt;output id="clock"&gt;25:00&lt;/output&gt;
+  &lt;button id="start"&gt;Start&lt;/button&gt;
+  &lt;button id="reset"&gt;Reset&lt;/button&gt;
+&lt;/div&gt;
+
+&lt;script&gt;
+  // decrement the remaining seconds each tick
+  // switch to a break when the session ends
+&lt;/script&gt;</code></pre>
+      <p>Add keyboard handlers for <code>Space</code>, <code>R</code>, and <code>S</code>, plus four dots to track completed focus sessions.</p>
+    `
+  },
+  {
+    slug: "markdown-lancer-evolution-gallery",
+    height: 822,
+    body: `
+      <p>Here is a compact retrospective of four Mitsubishi Lancer Evolution generations:</p>
+      <table>
+        <tr><th>Generation</th><th>Years</th><th>Photo credit</th></tr>
+        <tr><td>Evolution III</td><td>1995</td><td>Charles · CC BY 2.0</td></tr>
+        <tr><td>Evolution VI</td><td>1999–2001</td><td>Motoring Weapon R · CC BY-SA 3.0</td></tr>
+        <tr><td>Evolution IX</td><td>2005–2007</td><td>FotoSleuth · CC BY 2.0</td></tr>
+        <tr><td>Evolution X</td><td>2007–2016</td><td>IFCAR · Public domain</td></tr>
+      </table>
+      <h3>Image links</h3>
+      <ul class="compact">
+        <li><a href="#">View Evolution III photo</a></li>
+        <li><a href="#">View Evolution VI photo</a></li>
+        <li><a href="#">View Evolution IX photo</a></li>
+        <li><a href="#">View Evolution X photo</a></li>
+      </ul>
+      <p>All images are hosted by Wikimedia Commons under the licenses shown above.</p>
+    `
+  },
+  {
+    slug: "markdown-game-2048",
+    height: 570,
+    body: `
+      <p>Below is the core board markup for a browser-based 2048 game:</p>
+      <pre><code>&lt;div class="board"&gt;
+  &lt;button&gt;128&lt;/button&gt; &lt;button&gt;64&lt;/button&gt;
+  &lt;button&gt;32&lt;/button&gt;  &lt;button&gt;16&lt;/button&gt;
+  &lt;!-- twelve more cells --&gt;
 &lt;/div&gt;</code></pre>
-      <p>Add a dark background, a bright gradient button, and a little spacing to complete the two-panel layout.</p>
+      <p>Add arrow-key and touch handlers, then merge equal neighboring values after each move.</p>
+    `
+  },
+  {
+    slug: "markdown-poster-studio",
+    height: 700,
+    body: `
+      <p>Use this structure for an editable typographic poster:</p>
+      <pre><code>&lt;article class="poster"&gt;
+  &lt;h1 contenteditable&gt;MOVE&lt;br&gt;WITH&lt;br&gt;INTENT&lt;/h1&gt;
+  &lt;i class="shape circle"&gt;&lt;/i&gt;
+  &lt;i class="shape wedge"&gt;&lt;/i&gt;
+&lt;/article&gt;</code></pre>
+      <h3>Suggested controls</h3>
+      <ul class="compact">
+        <li>Palette and type-scale inputs</li>
+        <li>Grain-density and alignment controls</li>
+        <li>A button that shuffles the CSS shapes</li>
+      </ul>
+      <p>Apply the selected values as CSS custom properties on the poster element.</p>
     `
   },
   {

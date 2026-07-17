@@ -78,11 +78,12 @@ API proxy runs on `http://127.0.0.1:8787`.
 
 ## Markdown chat vs. ChatHTML
 
-The prompt is identical in both columns; the response medium is not. The left
-side shows a representative Markdown-only answer in a neutral, unbranded chat
-shell. The right side is the actual output of this repository's `/api/chat`
-pipeline, rendered by the ChatHTML runtime. No ChatGPT screenshots, third-party
-product UI, or borrowed meme templates are used.
+Each row starts from the same request; the response medium is different. The
+left side shows a representative Markdown-only answer in a neutral, unbranded
+chat shell. The right side is the actual output of this repository's `/api/chat`
+pipeline, rendered by the ChatHTML runtime. No ChatGPT screenshots or
+third-party product UI are used. External gallery photos come from Wikimedia
+Commons and are credited next to the example.
 
 <table>
   <thead>
@@ -93,35 +94,56 @@ product UI, or borrowed meme templates are used.
   </thead>
   <tbody>
     <tr>
-      <td colspan="2"><strong>Prompt 1 · Make it a meme</strong><br><br>Create an original two-panel meme about asking an AI for a UI. The following text must appear verbatim: top heading “MARKDOWN CHAT”; top code-block label “Here is the HTML”; bottom heading “CHATHTML”; bottom button “Here is the thing”. Do not replace, paraphrase, or add brand names to those four phrases. Use only original HTML/CSS artwork, geometric shapes, and typography—no external images, brand marks, copyrighted characters, or borrowed meme templates. Make it immediately readable and funny; no web search.</td>
+      <td colspan="2"><strong>Prompt 1 · Run a Pomodoro clock</strong><br><br>Build a working Pomodoro clock set to 25:00. Include Start/Pause, Reset, skip, Focus/Short Break/Long Break modes, four session progress dots, and a compact task field. Use a bold analog-inspired countdown with subtle motion and keyboard hints. Keep it polished and focused; no web search.</td>
     </tr>
     <tr>
-      <td valign="top"><img src="docs/images/markdown-meme-ui.png" alt="A representative Markdown chat response that returns meme markup as a code block" width="420"></td>
-      <td valign="top"><img src="docs/images/meme-ui.png" alt="An original two-panel meme rendered directly by ChatHTML" width="420"><br><sub><a href="docs/examples/meme-ui.chathtml.html">Generated source</a></sub></td>
+      <td valign="top"><img src="docs/images/markdown-pomodoro-clock.png" alt="A representative Markdown response containing Pomodoro timer markup and implementation notes" width="420"></td>
+      <td valign="top"><img src="docs/images/pomodoro-clock.png" alt="A working Pomodoro clock rendered by ChatHTML" width="420"><br><sub><a href="docs/examples/pomodoro-clock.chathtml.html">Generated source</a></sub></td>
     </tr>
     <tr>
-      <td colspan="2"><strong>Prompt 2 · Explain it interactively</strong><br><br>Teach me how cubic Bezier curves work. Build an interactive playground with a large curve, adjustable control points, the formula, and three named easing presets. Keep it focused and polished; no web search.</td>
+      <td colspan="2"><strong>Prompt 2 · Curate an image gallery</strong><br><br>Create a compact editorial gallery titled “Evolution / I–X” celebrating the Mitsubishi Lancer Evolution. Keep the complete 2-by-2 gallery, filters, captions, and credits visible within a single viewport. Use the four provided Wikimedia Commons images and load every image eagerly. Show model generation, year, photographer, and license on each card, with filters for III, VI, IX, and X and a click-to-expand lightbox. Do not imply endorsement; no web search.</td>
+    </tr>
+    <tr>
+      <td valign="top"><img src="docs/images/markdown-lancer-evolution-gallery.png" alt="A representative Markdown table and link list for four Lancer Evolution generations" width="420"></td>
+      <td valign="top"><img src="docs/images/lancer-evolution-gallery.png" alt="An image-rich Lancer Evolution gallery rendered by ChatHTML" width="420"><br><sub><a href="docs/examples/lancer-evolution-gallery.chathtml.html">Generated source</a><br>Photos: <a href="https://commons.wikimedia.org/wiki/File:Mitsubishi_Lancer_Evolution_III_(1995)_(53619429931).jpg">III · Charles · CC BY 2.0</a> · <a href="https://commons.wikimedia.org/wiki/File:Mitsubishi_Lancer_Evolution_VI.jpg">VI · Motoring Weapon R · CC BY-SA 3.0</a> · <a href="https://commons.wikimedia.org/wiki/File:Mitsubishi_Lancer_Evolution_IX_(31677018768).jpg">IX · FotoSleuth · CC BY 2.0</a> · <a href="https://commons.wikimedia.org/wiki/File:Mitsubishi_Lancer_EVO_X.jpg">X · IFCAR · Public domain</a></sub></td>
+    </tr>
+    <tr>
+      <td colspan="2"><strong>Prompt 3 · Make it playable</strong><br><br>Build a playable 2048 mini-game with arrow-key and swipe controls, score and best counters, a new game button, and a clear visual hierarchy. The initial HTML itself must contain all 16 visible board cells and a plausible mid-game seed; JavaScript may take over for moves after load. Do not access browser storage; keep the best score only in memory for the current artifact. Keep it compact and polished; no web search.</td>
+    </tr>
+    <tr>
+      <td valign="top"><img src="docs/images/markdown-game-2048.png" alt="A representative Markdown response containing partial markup for a 2048 board" width="420"></td>
+      <td valign="top"><img src="docs/images/game-2048.png" alt="A playable seeded 2048 game rendered by ChatHTML" width="420"><br><sub><a href="docs/examples/game-2048.chathtml.html">Generated source</a></sub></td>
+    </tr>
+    <tr>
+      <td colspan="2"><strong>Prompt 4 · Direct a visual</strong><br><br>Build an interactive typographic poster studio. Show a bold live poster preview with the editable headline “MOVE / WITH / INTENT”, controls for palette, type scale, grain, alignment, and a shuffle button. Use only CSS shapes and typography; no external assets. Make it editorial, expressive, and polished; no web search.</td>
+    </tr>
+    <tr>
+      <td valign="top"><img src="docs/images/markdown-poster-studio.png" alt="A representative Markdown response containing poster markup and suggested controls" width="420"></td>
+      <td valign="top"><img src="docs/images/poster-studio.png" alt="An interactive typographic poster studio rendered by ChatHTML" width="420"><br><sub><a href="docs/examples/poster-studio.chathtml.html">Generated source</a></sub></td>
+    </tr>
+    <tr>
+      <td colspan="2"><strong>Prompt 5 · Explain it interactively</strong><br><br>Teach me how cubic Bezier curves work. Build an interactive playground with a large curve, adjustable control points, the formula, and three named easing presets. Keep it focused and polished; no web search.</td>
     </tr>
     <tr>
       <td valign="top"><img src="docs/images/markdown-bezier-playground.png" alt="A representative Markdown explanation of cubic Bezier curves" width="420"></td>
       <td valign="top"><img src="docs/images/bezier-playground.png" alt="An interactive cubic Bezier curve playground rendered by ChatHTML" width="420"><br><sub><a href="https://chat.aietheia.com/artifacts/share-mrnomgvb-8b47470d9f0e40b28b">Live example</a> · <a href="docs/examples/bezier-playground.chathtml.html">Generated source</a></sub></td>
     </tr>
     <tr>
-      <td colspan="2"><strong>Prompt 3 · Build a working utility</strong><br><br>Build a tip and split calculator for a EUR 186.50 dinner shared by 4 people. Include editable bill, tip, and party-size controls, update totals live, and show the calculation clearly. Keep it compact and polished; no web search.</td>
+      <td colspan="2"><strong>Prompt 6 · Build a working utility</strong><br><br>Build a tip and split calculator for a EUR 186.50 dinner shared by 4 people. Include editable bill, tip, and party-size controls, update totals live, and show the calculation clearly. Keep it compact and polished; no web search.</td>
     </tr>
     <tr>
       <td valign="top"><img src="docs/images/markdown-split-calculator.png" alt="A representative Markdown tip calculation with a static table and formula" width="420"></td>
       <td valign="top"><img src="docs/images/split-calculator.png" alt="An interactive tip and split calculator rendered by ChatHTML" width="420"><br><sub><a href="https://chat.aietheia.com/artifacts/share-mrnomhcn-460bb1e619794742b9">Live example</a> · <a href="docs/examples/split-calculator.chathtml.html">Generated source</a></sub></td>
     </tr>
     <tr>
-      <td colspan="2"><strong>Prompt 4 · Step through a process</strong><br><br>Explain what happens after I type https://example.com into a browser and press Enter. Make an annotated, animated-looking pipeline from DNS through TCP and TLS, HTTP, and rendering, with controls to step through each stage. No web search.</td>
+      <td colspan="2"><strong>Prompt 7 · Step through a process</strong><br><br>Explain what happens after I type https://example.com into a browser and press Enter. Make an annotated, animated-looking pipeline from DNS through TCP and TLS, HTTP, and rendering, with controls to step through each stage. No web search.</td>
     </tr>
     <tr>
       <td valign="top"><img src="docs/images/markdown-request-pipeline.png" alt="A representative Markdown numbered list of the browser request pipeline" width="420"></td>
       <td valign="top"><img src="docs/images/request-pipeline.png" alt="An interactive browser request pipeline rendered by ChatHTML" width="420"><br><sub><a href="https://chat.aietheia.com/artifacts/share-mrnomhs2-75a3c0aacc1348268a">Live example</a> · <a href="docs/examples/request-pipeline.chathtml.html">Generated source</a></sub></td>
     </tr>
     <tr>
-      <td colspan="2"><strong>Prompt 5 · Explore live data</strong><br><br>Build an accessible color palette lab. Include HSL sliders, five live swatches with hex values, a foreground/background contrast checker, and AA/AAA status badges. Make it vivid, compact, and polished; no web search.</td>
+      <td colspan="2"><strong>Prompt 8 · Explore live data</strong><br><br>Build an accessible color palette lab. Include HSL sliders, five live swatches with hex values, a foreground/background contrast checker, and AA/AAA status badges. Make it vivid, compact, and polished; no web search.</td>
     </tr>
     <tr>
       <td valign="top"><img src="docs/images/markdown-color-lab.png" alt="A representative Markdown color palette table with accessibility guidance" width="420"></td>
