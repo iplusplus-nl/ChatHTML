@@ -1,40 +1,41 @@
-# ChatHTML
+<table>
+  <tr>
+    <td width="150" align="center"><h1>💬</h1></td>
+    <td>
+      <h1>ChatHTML</h1>
+      <p><strong>Beautiful AI responses, beyond plain Markdown.</strong></p>
+    </td>
+  </tr>
+</table>
 
-[![CI](https://github.com/aietheia/ChatHTML/actions/workflows/ci.yml/badge.svg)](https://github.com/aietheia/ChatHTML/actions/workflows/ci.yml)
+<p>
+  <a href="https://github.com/aietheia/ChatHTML/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/aietheia/ChatHTML/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/aietheia/ChatHTML/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/aietheia/ChatHTML?style=flat"></a>
+  <img alt="Node.js 22.13 or newer" src="https://img.shields.io/badge/node-%E2%89%A522.13-339933?logo=nodedotjs&logoColor=white">
+  <a href="https://chat.aietheia.com"><img alt="Live demo" src="https://img.shields.io/badge/live-demo-7c3aed"></a>
+</p>
 
-**Turn a prompt into a live, streaming HTML response.**
-
-ChatHTML is an open-source runtime for model-generated interfaces. Instead of
-placing code in a fenced block or waiting for a complete page, it streams HTML
-into the conversation and progressively renders it as the model writes. The
-result can be explanatory, visual, interactive, or simply a well-typeset answer.
+ChatHTML turns a prompt into a live, streaming HTML response. It progressively
+renders model-generated interfaces as they are written, so an answer can be
+explanatory, visual, interactive, or simply beautifully typeset.
 
 ChatHTML is focused on the response medium: it is not a ChatGPT clone and it is
 not an app-builder workflow. The chat shell exists so a normal message can
 become a sandboxed UI artifact.
 
-## Why ChatHTML?
-
-- **See the response take shape.** Partial markup is speculatively completed so
-  the artifact remains visible while tokens arrive.
-- **Interact with the answer.** Completed artifacts can use forms, controls,
-  small vanilla scripts, and buttons that continue the conversation.
-- **Keep generated code contained.** Artifacts run in a sandboxed iframe with a
-  restrictive CSP and runtime guards around sensitive browser APIs.
-- **Give the model useful context.** Native tools can retrieve web resources,
-  inspect session files, read images, and update long-term memory.
-- **Iterate instead of starting over.** Select a rendered region, request an
-  edit, regenerate a branch, or repair an artifact from a screenshot.
-- **Take the result with you.** Copy the code or text, or export HTML, PNG, SVG,
-  and diagnostics.
+<table>
+  <tr>
+    <td width="25%" valign="top"><strong>⚡ Beautiful by default</strong><br><br>Responsive HTML, CSS, typography, and motion instead of a fenced code block.</td>
+    <td width="25%" valign="top"><strong>🧩 Interactive</strong><br><br>Forms, controls, small vanilla scripts, and buttons that continue the conversation.</td>
+    <td width="25%" valign="top"><strong>🛡️ Private &amp; contained</strong><br><br>Server keys stay server-side; generated artifacts run in a guarded sandbox.</td>
+    <td width="25%" valign="top"><strong>🚀 Built for iteration</strong><br><br>Select, edit, regenerate, repair, copy, or export the result.</td>
+  </tr>
+</table>
 
 ## Quick start
 
-### Requirements
-
-- Node.js 22.13 or newer
-- npm
-- An [OpenRouter](https://openrouter.ai/) API key
+Requires Node.js 22.13 or newer, npm, and an
+[OpenRouter](https://openrouter.ai/) API key.
 
 ### 1. Install
 
@@ -46,17 +47,8 @@ npm install
 
 ### 2. Configure
 
-Copy `.env.example` to `.env`:
-
-```bash
-# macOS / Linux
-cp .env.example .env
-
-# Windows PowerShell
-Copy-Item .env.example .env
-```
-
-At minimum, set the server-side provider key:
+Copy `.env.example` to `.env` (`cp .env.example .env` on macOS/Linux or
+`Copy-Item .env.example .env` in Windows PowerShell), then set at least:
 
 ```dotenv
 OPENROUTER_API_KEY=your_openrouter_key_here
@@ -76,7 +68,7 @@ npm run dev
 Open <http://127.0.0.1:5173>. The Vite client runs on port `5173`; its Express
 API proxy runs on `http://127.0.0.1:8787`.
 
-## Plain Markdown vs. ChatHTML
+## Examples: Plain Markdown vs. ChatHTML
 
 Each row starts from the same request; the response medium is different. The
 left side is the raw response from the same configured model after sending the
@@ -199,7 +191,19 @@ used by the app, then creates or updates its stable link on
 `https://chat.aietheia.com`. Omit the slugs to publish every README example; set
 `CHATHTML_README_SHARE_ORIGIN` to use another compatible host.
 
-## How it works
+💜 If ChatHTML is useful to you, consider giving it a star. Bugs can be reported
+in the app or opened directly in [GitHub Issues](https://github.com/aietheia/ChatHTML/issues).
+
+## Deployment notes & tutorials
+
+Everything below covers how ChatHTML works, how to configure it, and what to
+check before running it beyond local development. For the shortest production
+path, start with [Configuration](#configuration), choose a
+[persistence](#persistence) backend, review the [security model](#security-model),
+and then use the checked-in [production operations](ops/production/README.md)
+assets.
+
+### How it works
 
 ```mermaid
 flowchart LR
@@ -224,7 +228,7 @@ flowchart LR
 5. Once the stream is complete, scripts and artifact actions are enabled in a
    fresh sandbox document.
 
-## Capabilities
+### Capabilities
 
 | Area | What is included |
 | --- | --- |
@@ -237,7 +241,7 @@ flowchart LR
 | Persistence | SQLite for zero-setup local use; PostgreSQL with per-user state and concurrent access for production |
 | Export | Copy source/text, standalone HTML, PNG, SVG, diagnostics, and optional hosted share links |
 
-## Provider and key modes
+### Provider and key modes
 
 | Mode | Request path | Secret handling | Best for |
 | --- | --- | --- | --- |
@@ -250,7 +254,7 @@ settings are kept in local storage, while the key disappears with the browser
 session. Plain HTTP provider URLs are rejected except for loopback development
 endpoints.
 
-## Configuration
+### Configuration
 
 The complete, annotated list lives in [`.env.example`](.env.example). The most
 useful settings are:
@@ -276,7 +280,7 @@ The retrieval policy blocks private network targets by default. Domain allow
 and block lists, timeouts, page limits, and context budgets are configurable in
 `.env`.
 
-## Persistence
+### Persistence
 
 SQLite is the zero-setup default. It uses WAL mode and a serialized write queue,
 which is appropriate for local development and small single-instance installs.
@@ -313,7 +317,7 @@ The migration is transactional and idempotent. It verifies counts and hashes,
 refuses to overwrite non-empty target data, and rotates stored file
 capabilities.
 
-## Runtime protocol
+### Runtime protocol
 
 The wire protocol retains the legacy `<streamui>` name for compatibility with
 existing sessions and renderer code:
@@ -347,7 +351,7 @@ existing sessions and renderer code:
 If a response has no valid `<streamui>` block, it is displayed as a normal
 assistant message.
 
-### Artifact actions
+#### Artifact actions
 
 Generated controls can ask the host to perform safe actions without calling
 sensitive browser APIs directly:
@@ -364,7 +368,7 @@ sensitive browser APIs directly:
 
 The host confirms capability actions and performs them outside the artifact.
 
-## Security model
+### Security model
 
 - Server-managed provider credentials are never serialized into frontend
   settings.
@@ -383,7 +387,7 @@ The sandbox is a defense boundary for generated artifacts, not permission to
 run untrusted modifications to the ChatHTML host itself. Review the policy and
 deployment configuration before exposing a customized runtime publicly.
 
-## Sharing artifacts
+### Sharing artifacts
 
 Standalone HTML hosting is supplied by the separate
 [`aietheia/oops`](https://github.com/aietheia/oops) service. A production proxy
@@ -396,7 +400,7 @@ VITE_CHATHTML_ARTIFACT_SHARE_LINKS=true
 
 Local HTML, PNG, and SVG export works without the hosting service.
 
-## Development
+### Development
 
 This repository is an npm workspace:
 
@@ -435,7 +439,7 @@ Important implementation entry points:
 - [`apps/web/server/sessionRepository.ts`](apps/web/server/sessionRepository.ts)
   — SQLite/PostgreSQL persistence
 
-## Production checks
+### Production checks
 
 The production browser audits create disposable accounts and the full audit
 runs one managed generation. They modify production data and therefore require
@@ -454,8 +458,3 @@ audit is not clean. Use `CHATHTML_AUDIT_APP_BASE` and
 For hosted authentication, account, and native-wrapper integration, see the
 [Cloud API contract](docs/cloud-api.md). For operational assets and backup
 expectations, see [Production operations](ops/production/README.md).
-
-## Feedback
-
-Bug reports can be submitted in the app, or opened directly in
-[GitHub Issues](https://github.com/aietheia/ChatHTML/issues).
