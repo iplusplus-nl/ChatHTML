@@ -279,7 +279,7 @@ test("#17 stop response updates the UI before cancellation confirmation", async 
   await cancellationResponse;
 });
 
-test("#19 and #20 wheel handoff preserves residual touchpad delta without a jump", async ({
+test("#19 and #20 wheel handoff stays native until a smooth boundary transfer", async ({
   page
 }) => {
   const rawStream = `<chat></chat><streamui>
@@ -296,11 +296,73 @@ test("#19 and #20 wheel handoff preserves residual touchpad delta without a jump
   await openIssueFixture(page, [completedArtifact(rawStream)]);
 
   const outer = page.locator(".message-list");
+  const waitForOuterScrollToSettle = async (
+    before: number,
+    minimumDelta: number,
+    maximumDelta: number
+  ) => {
+    let previousPosition = Number.NaN;
+    let stableSamples = 0;
+    await expect
+      .poll(
+        async () => {
+          const currentPosition = await outer.evaluate(
+            (element) => element.scrollTop
+          );
+          if (Math.abs(currentPosition - previousPosition) < 0.1) {
+            stableSamples += 1;
+          } else {
+            stableSamples = 0;
+          }
+          previousPosition = currentPosition;
+          const delta = currentPosition - before;
+          return (
+            stableSamples >= 2 &&
+            delta >= minimumDelta &&
+            delta <= maximumDelta
+          );
+        },
+        { intervals: [50] }
+      )
+      .toBe(true);
+  };
   const iframe = page.locator('iframe[title="ChatHTML artifact preview"]');
   await expect(iframe).toBeVisible();
   await iframe.scrollIntoViewIfNeeded();
   const inner = iframe.contentFrame().locator("#inner-scroll");
   await expect(inner).toBeVisible();
+
+  await inner.evaluate((element) => {
+    const frameWindow = element.ownerDocument.defaultView as Window & {
+      __streamuiWheelDefaultPrevented?: boolean;
+    };
+    element.ownerDocument.addEventListener(
+      "wheel",
+      (event) => {
+        frameWindow.__streamuiWheelDefaultPrevented = event.defaultPrevented;
+      },
+      { once: true }
+    );
+  });
+  await inner.hover({ position: { x: 80, y: 80 } });
+  const nativeOuterBefore = await outer.evaluate((element) => element.scrollTop);
+  await page.mouse.wheel(0, 64);
+  await expect
+    .poll(() => inner.evaluate((element) => element.scrollTop))
+    .toBeGreaterThanOrEqual(60);
+  expect(
+    await inner.evaluate(
+      (element) =>
+        (
+          element.ownerDocument.defaultView as Window & {
+            __streamuiWheelDefaultPrevented?: boolean;
+          }
+        ).__streamuiWheelDefaultPrevented
+    )
+  ).toBe(false);
+  expect(await outer.evaluate((element) => element.scrollTop)).toBe(
+    nativeOuterBefore
+  );
 
   const remainingInside = 12;
   const innerMaximum = await inner.evaluate((element, remaining) => {
@@ -310,36 +372,52 @@ test("#19 and #20 wheel handoff preserves residual touchpad delta without a jump
   }, remainingInside);
   await inner.hover({ position: { x: 80, y: 80 } });
   const outerBefore = await outer.evaluate((element) => element.scrollTop);
+  await outer.evaluate((element) => {
+    const hostWindow = window as typeof window & {
+      __streamuiWheelHandoffSamples?: number[];
+    };
+    hostWindow.__streamuiWheelHandoffSamples = [element.scrollTop];
+    element.addEventListener(
+      "scroll",
+      () => hostWindow.__streamuiWheelHandoffSamples?.push(element.scrollTop),
+      { passive: true }
+    );
+  });
   await page.mouse.wheel(0, 72);
 
   await expect
     .poll(() => inner.evaluate((element) => element.scrollTop))
     .toBe(innerMaximum);
-  await expect
-    .poll(() =>
-      outer.evaluate((element, before) => element.scrollTop - before, outerBefore)
-    )
-    .toBeGreaterThanOrEqual(55);
+  await waitForOuterScrollToSettle(outerBefore, 55, 72);
   const firstOuterDelta = await outer.evaluate(
     (element, before) => element.scrollTop - before,
     outerBefore
   );
+  expect(firstOuterDelta).toBeGreaterThanOrEqual(55);
   expect(firstOuterDelta).toBeLessThanOrEqual(72);
+  const intermediateSamples = await outer.evaluate((element, before) => {
+    const samples =
+      (
+        window as typeof window & {
+          __streamuiWheelHandoffSamples?: number[];
+        }
+      ).__streamuiWheelHandoffSamples ?? [];
+    return new Set(
+      samples
+        .filter((position) => position > before + 0.5 && position < before + 59.5)
+        .map((position) => Math.round(position * 10) / 10)
+    ).size;
+  }, outerBefore);
+  expect(intermediateSamples).toBeGreaterThan(1);
 
   const secondOuterBefore = await outer.evaluate((element) => element.scrollTop);
   await page.mouse.wheel(0, 64);
-  await expect
-    .poll(() =>
-      outer.evaluate(
-        (element, before) => element.scrollTop - before,
-        secondOuterBefore
-      )
-    )
-    .toBeGreaterThanOrEqual(60);
+  await waitForOuterScrollToSettle(secondOuterBefore, 60, 68);
   const secondOuterDelta = await outer.evaluate(
     (element, before) => element.scrollTop - before,
     secondOuterBefore
   );
+  expect(secondOuterDelta).toBeGreaterThanOrEqual(60);
   expect(secondOuterDelta).toBeLessThanOrEqual(68);
 });
 

@@ -184,9 +184,10 @@ describe("sandboxDocument", () => {
     assert.doesNotMatch(document, /rgba\(37, 99, 235/);
   });
 
-  it("consumes wheel input and forwards only the unconsumed delta", () => {
+  it("keeps ordinary wheel input native and forwards only boundary overflow", () => {
     const document = buildIframeDocument("<div>Scrollable content</div>");
 
+    assert.match(document, /canConsumeWheelNatively/);
     assert.match(document, /consumePreviewWheel/);
     assert.match(document, /scrollableDistance/);
     assert.match(document, /event\.preventDefault\(\)/);

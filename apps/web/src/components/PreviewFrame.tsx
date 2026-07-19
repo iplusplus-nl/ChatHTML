@@ -8,6 +8,7 @@ import {
   setIframeCaptureSource
 } from "../core/iframeCaptureSource";
 import { isIgnoredRuntimeError } from "../core/ignoredRuntimeErrors";
+import { createSmoothWheelScroller } from "../core/smoothWheelScroller";
 import type { ArtifactSelectionPayload } from "../core/artifactSelection";
 import {
   normalizeCapabilityLabel,
@@ -82,6 +83,9 @@ export function PreviewFrame({
   const lastAppliedThemeModeRef = useRef<PageThemeMode | null>(null);
   const pendingShrinkRef = useRef<PendingPreviewHeightShrink | null>(null);
   const pendingShrinkTimerRef = useRef<number | null>(null);
+  const wheelScrollerRef = useRef<ReturnType<
+    typeof createSmoothWheelScroller
+  > | null>(null);
   const [height, setHeight] = useState(96);
   const [capabilityAction, setCapabilityAction] =
     useState<PreviewCapabilityAction | null>(null);
@@ -422,7 +426,9 @@ export function PreviewFrame({
               : 1;
         const deltaY = (data.deltaY ?? 0) * deltaScale;
         const maxDelta = Math.max(1, viewport.clientHeight * 0.9);
-        viewport.scrollTop += Math.max(-maxDelta, Math.min(deltaY, maxDelta));
+        const boundedDeltaY = Math.max(-maxDelta, Math.min(deltaY, maxDelta));
+        wheelScrollerRef.current ??= createSmoothWheelScroller();
+        wheelScrollerRef.current.scrollBy(viewport, boundedDeltaY);
         return;
       }
 
@@ -539,7 +545,11 @@ export function PreviewFrame({
     };
 
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      wheelScrollerRef.current?.cancel();
+      wheelScrollerRef.current = null;
+    };
   }, [
     applyMeasuredHeight,
     artifactActionsEnabled,

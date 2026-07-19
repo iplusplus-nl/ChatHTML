@@ -44,6 +44,20 @@ export function buildCoreSource(
           ? Math.max(0, element.scrollTop)
           : Math.max(0, maxScrollTop - element.scrollTop);
       };
+      const canConsumeWheelNatively = (target, deltaY) => {
+        const requiredDistance = Math.abs(deltaY);
+        let element = target instanceof Element ? target : target?.parentElement;
+        while (element && element !== document.documentElement) {
+          const available = scrollableDistance(element, deltaY, true);
+          if (available > 0) {
+            return available + 0.01 >= requiredDistance;
+          }
+          element = element.parentElement;
+        }
+
+        return scrollableDistance(document.scrollingElement, deltaY, false) + 0.01
+          >= requiredDistance;
+      };
       const consumePreviewWheel = (target, deltaY) => {
         let remaining = deltaY;
         let element = target instanceof Element ? target : target?.parentElement;
@@ -86,9 +100,14 @@ export function buildCoreSource(
           : event.deltaMode === 2
             ? window.innerHeight
             : 1;
+        const scaledDeltaY = rawDeltaY * deltaScale;
+        if (canConsumeWheelNatively(event.target, scaledDeltaY)) {
+          return;
+        }
+
         const remainingDeltaY = consumePreviewWheel(
           event.target,
-          rawDeltaY * deltaScale
+          scaledDeltaY
         );
         event.preventDefault();
 
