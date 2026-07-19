@@ -16,6 +16,9 @@ export default defineConfig({
   },
   webServer: {
     command: "npm run dev:e2e",
+    env: {
+      VITE_CHATHTML_ARTIFACT_SHARE_LINKS: "true"
+    },
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000

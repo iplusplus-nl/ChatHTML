@@ -8,11 +8,13 @@ type FixtureOptions = {
   deferBugReport?: boolean;
   deferCancellation?: boolean;
   deferRunEvents?: boolean;
+  shareLinkUrl?: string;
 };
 
 type FixtureControls = {
   bugReportRequests: number;
   cancellationRequests: number;
+  shareLinkRequests: number;
   releaseBugReport(): void;
   releaseCancellation(): void;
   releaseRunEvents(): void;
@@ -105,6 +107,7 @@ async function openIssueFixture(
   const controls: FixtureControls = {
     bugReportRequests: 0,
     cancellationRequests: 0,
+    shareLinkRequests: 0,
     releaseBugReport: releaseBugReportGate,
     releaseCancellation: releaseCancellationGate,
     releaseRunEvents: releaseRunEventsGate
@@ -208,6 +211,12 @@ async function openIssueFixture(
         await bugReportGate;
       }
       await fulfillJson(route, { id: "github-issue-report" }, 201);
+      return;
+    }
+
+    if (path === "/api/html-shares" && options.shareLinkUrl) {
+      controls.shareLinkRequests += 1;
+      await fulfillJson(route, { url: options.shareLinkUrl }, 201);
       return;
     }
 
@@ -681,4 +690,82 @@ test("streaming growth keeps the composer pinned and follows the artifact bottom
       (position, index) => index === 0 || position >= scrollPositions[index - 1]
     )
   ).toBe(true);
+});
+
+test("#26 thinking chevron stays inside its clipping trigger", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1316, height: 746 });
+  await openIssueFixture(page, [
+    {
+      id: "thinking-chevron-assistant",
+      role: "assistant",
+      content: "Finished response",
+      reasoning: "Finished reasoning",
+      status: "complete",
+      generationOutcome: "complete"
+    }
+  ]);
+
+  const trigger = page.locator(".reasoning-trigger");
+  const chevron = trigger.locator(".reasoning-chevron");
+  const rightOverflow = await trigger.evaluate((element) => {
+    const icon = element.querySelector<HTMLElement>(".reasoning-chevron");
+    if (!icon) {
+      throw new Error("Missing thinking chevron.");
+    }
+    return (
+      icon.getBoundingClientRect().right - element.getBoundingClientRect().right
+    );
+  });
+
+  await expect(chevron).toBeVisible();
+  expect(rightOverflow).toBeLessThanOrEqual(0);
+});
+
+test("#27 share link action temporarily becomes Copied", async ({ page }) => {
+  const shareLinkUrl = "https://share.example/artifacts/issue-27";
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (
+            window as typeof window & {
+              __copiedShareLink?: string;
+            }
+          ).__copiedShareLink = text;
+        }
+      }
+    });
+  });
+  const controls = await openIssueFixture(
+    page,
+    [
+      completedArtifact(
+        "<chat></chat><streamui><main><h1>Hello</h1></main></streamui>"
+      )
+    ],
+    { shareLinkUrl }
+  );
+
+  await page.getByRole("button", { name: "Artifact actions" }).click();
+  const shareLinkAction = page.locator(
+    '.artifact-export-menu-item[data-action="create-share-link"]:visible'
+  );
+  await shareLinkAction.click();
+
+  await expect(shareLinkAction).toHaveText("Copied");
+  expect(controls.shareLinkRequests).toBe(1);
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            __copiedShareLink?: string;
+          }
+        ).__copiedShareLink
+    )
+  ).toBe(shareLinkUrl);
+  await expect(shareLinkAction).toHaveText("Share Link", { timeout: 3_000 });
 });

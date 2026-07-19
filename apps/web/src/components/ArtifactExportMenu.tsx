@@ -307,6 +307,10 @@ export function ArtifactExportMenu({
 
   const isBusy = activeAction !== null;
   const isInteractive = isOpen;
+  const hasCopiedShareLink =
+    status?.action === "create-share-link" &&
+    status.kind === "success" &&
+    !status.url;
 
   return (
     <div
@@ -320,23 +324,35 @@ export function ArtifactExportMenu({
         role="menu"
         aria-hidden={!isInteractive}
       >
-        {menuActions.map(({ action, icon: Icon, label }) => (
-          <button
-            className="artifact-export-menu-item"
-            type="button"
-            role="menuitem"
-            disabled={isBusy}
-            key={action}
-            tabIndex={isInteractive ? 0 : -1}
-            onClick={() => {
-              void runAction(action);
-            }}
-          >
-            <Icon size={14} strokeWidth={2} aria-hidden="true" />
-            <span>{label}</span>
-          </button>
-        ))}
-        {status ? (
+        {menuActions.map(({ action, icon: Icon, label }) => {
+          const isCopiedShareLink =
+            action === "create-share-link" && hasCopiedShareLink;
+          const ItemIcon = isCopiedShareLink ? Check : Icon;
+          return (
+            <button
+              className="artifact-export-menu-item"
+              data-action={action}
+              type="button"
+              role="menuitem"
+              disabled={isBusy}
+              key={action}
+              tabIndex={isInteractive ? 0 : -1}
+              onClick={() => {
+                void runAction(action);
+              }}
+            >
+              <ItemIcon size={14} strokeWidth={2} aria-hidden="true" />
+              <span
+                aria-live={
+                  action === "create-share-link" ? "polite" : undefined
+                }
+              >
+                {isCopiedShareLink ? "Copied" : label}
+              </span>
+            </button>
+          );
+        })}
+        {status && !hasCopiedShareLink ? (
           <span
             className={`artifact-export-status is-${status.kind}`}
             role={status.kind === "error" ? "alert" : "status"}

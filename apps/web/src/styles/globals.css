@@ -4463,7 +4463,7 @@ button {
   max-width: 75%;
   overflow: hidden;
   border: 0;
-  padding: 0;
+  padding: 0 2px 0 0;
   cursor: pointer;
   color: #a1a1aa;
   background: transparent;
