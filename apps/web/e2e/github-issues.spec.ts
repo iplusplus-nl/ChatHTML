@@ -658,6 +658,18 @@ test("streaming growth keeps the composer pinned and follows the artifact bottom
       timeout: 10_000
     })
     .toBeGreaterThan(700);
+  const viewport = page.locator(".message-list");
+  await expect
+    .poll(
+      () =>
+        viewport.evaluate((element) =>
+          Math.abs(
+            element.scrollHeight - element.clientHeight - element.scrollTop
+          )
+        ),
+      { timeout: 10_000 }
+    )
+    .toBeLessThanOrEqual(2);
   const samples = await page.evaluate(() =>
     (
       window as typeof window & {
@@ -669,6 +681,11 @@ test("streaming growth keeps the composer pinned and follows the artifact bottom
   const composerBottoms = samples.map((sample) => sample.composerBottom);
   const finalSample = samples.at(-1);
   const scrollPositions = samples.map((sample) => sample.viewportScrollTop);
+  const finalViewport = await viewport.evaluate((element) => ({
+    height: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    scrollTop: element.scrollTop
+  }));
 
   expect(Math.max(...composerTops) - Math.min(...composerTops)).toBeLessThanOrEqual(
     0.5
@@ -677,12 +694,12 @@ test("streaming growth keeps the composer pinned and follows the artifact bottom
     Math.max(...composerBottoms) - Math.min(...composerBottoms)
   ).toBeLessThanOrEqual(0.5);
   expect(finalSample).toBeDefined();
-  expect(finalSample!.viewportScrollTop).toBeGreaterThan(0);
+  expect(finalViewport.scrollTop).toBeGreaterThan(0);
   expect(
     Math.abs(
-      finalSample!.viewportScrollHeight -
-        finalSample!.viewportHeight -
-        finalSample!.viewportScrollTop
+      finalViewport.scrollHeight -
+        finalViewport.height -
+        finalViewport.scrollTop
     )
   ).toBeLessThanOrEqual(2);
   expect(
