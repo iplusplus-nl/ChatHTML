@@ -14,6 +14,7 @@ import { ChatShell } from "./components/ChatShell";
 import { AuthChoiceDialog } from "./components/AuthChoiceDialog";
 import { BugReportDialog } from "./components/BugReportDialog";
 import { LocalSessionMergeDialog } from "./components/LocalSessionMergeDialog";
+import { PopArtOnboardingDialog } from "./components/PopArtOnboardingDialog";
 import { SessionPersistenceStatus } from "./components/SessionPersistenceStatus";
 import { SessionSidebar } from "./components/SessionSidebar";
 import {
@@ -135,6 +136,11 @@ import { usePersistentThemeMode } from "./features/settings/usePersistentThemeMo
 import { useSessionRunSettings } from "./features/settings/useSessionRunSettings";
 import { selectContinueLocalApiSettings } from "./features/settings/settingsDraftModel";
 import { resolveAccountLoginApiSettings } from "./features/settings/appSettingsPolicy";
+import {
+  addPopArtStylePreference,
+  completePopArtOnboarding,
+  hasCompletedPopArtOnboarding
+} from "./features/settings/popArtOnboarding";
 import { useCloudAuthController } from "./features/auth/useCloudAuthController";
 import type { SessionSaveStatus } from "./features/sessions/sessionSaveCoordinator";
 import type {
@@ -241,6 +247,10 @@ export default function App() {
   const [isLocalMergeOpen, setIsLocalMergeOpen] = useState(false);
   const [isLocalMergeBusy, setIsLocalMergeBusy] = useState(false);
   const [localMergeError, setLocalMergeError] = useState<string | null>(null);
+  const [popArtOnboardingUserId, setPopArtOnboardingUserId] = useState<
+    string | null
+  >(null);
+  const popArtOnboardingHandledUserIdsRef = useRef(new Set<string>());
   const authenticatedUserIdRef = useRef<string | null>(null);
   const loginProviderDefaultUserIdRef = useRef<string | null>(null);
   const isAuthenticatedUserChanging =
@@ -501,6 +511,7 @@ export default function App() {
       setIsLocalMergeOpen(false);
       setIsLocalMergeBusy(false);
       setLocalMergeError(null);
+      setPopArtOnboardingUserId(null);
       authenticatedUserIdRef.current = nextUserId;
     }
   }, [authenticatedUser?.id, resetSessionState]);
@@ -524,6 +535,58 @@ export default function App() {
       resolveAccountLoginApiSettings(current, runtimeSettings)
     );
   }, [authenticatedUser?.id, runtimeSettings, updateApiSettings]);
+
+  useEffect(() => {
+    const userId = authenticatedUser?.id ?? null;
+    if (
+      !userId ||
+      isMemoryOwnerChanging ||
+      isAuthChoiceOpen ||
+      popArtOnboardingUserId === userId ||
+      popArtOnboardingHandledUserIdsRef.current.has(userId) ||
+      hasCompletedPopArtOnboarding(userId)
+    ) {
+      return;
+    }
+
+    setPopArtOnboardingUserId(userId);
+  }, [
+    authenticatedUser?.id,
+    isAuthChoiceOpen,
+    isMemoryOwnerChanging,
+    popArtOnboardingUserId
+  ]);
+
+  const finishPopArtOnboarding = useCallback(
+    (accepted: boolean) => {
+      const userId = popArtOnboardingUserId;
+      if (!userId) {
+        return;
+      }
+
+      popArtOnboardingHandledUserIdsRef.current.add(userId);
+      completePopArtOnboarding(userId);
+      if (
+        accepted &&
+        authenticatedUser?.id === userId &&
+        memoryOwnerId === userId
+      ) {
+        updateApiSettings((current) => ({
+          ...current,
+          userPreferencePrompt: addPopArtStylePreference(
+            current.userPreferencePrompt
+          )
+        }));
+      }
+      setPopArtOnboardingUserId(null);
+    },
+    [
+      authenticatedUser?.id,
+      memoryOwnerId,
+      popArtOnboardingUserId,
+      updateApiSettings
+    ]
+  );
 
   useEffect(() => {
     const handleBrowserWorkspaceChange = (event: StorageEvent) => {
@@ -685,6 +748,7 @@ export default function App() {
       !sessionsLoaded ||
       !sessionsHydrated ||
       !localStateAvailableToAccount ||
+      Boolean(popArtOnboardingUserId) ||
       isLocalMergeOpen ||
       hasKeptLocalWorkspace(
         authenticatedUser.id,
@@ -702,6 +766,7 @@ export default function App() {
     isLocalMergeOpen,
     localStateAvailableToAccount,
     localWorkspaceDecisionSignature,
+    popArtOnboardingUserId,
     sessionsHydrated,
     sessionsLoaded
   ]);
@@ -1564,7 +1629,17 @@ export default function App() {
           required={authRequired}
         />
       ) : null}
-      {isLocalMergeOpen && localStateAvailableToAccount ? (
+      {popArtOnboardingUserId &&
+      authenticatedUser?.id === popArtOnboardingUserId ? (
+        <PopArtOnboardingDialog
+          themeMode={themeMode}
+          onAccept={() => finishPopArtOnboarding(true)}
+          onDecline={() => finishPopArtOnboarding(false)}
+        />
+      ) : null}
+      {!popArtOnboardingUserId &&
+      isLocalMergeOpen &&
+      localStateAvailableToAccount ? (
         <LocalSessionMergeDialog
           themeMode={themeMode}
           sessionCount={localStateAvailableToAccount.sessions.length}
